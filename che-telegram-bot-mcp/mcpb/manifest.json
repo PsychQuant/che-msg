@@ -1,0 +1,27 @@
+{
+  "manifest_version": "0.3",
+  "name": "che-telegram-bot-mcp",
+  "version": "0.1.0",
+  "description": "Telegram Bot API MCP Server - send/read messages, manage groups, pin messages, set bot commands, and more",
+  "author": {
+    "name": "Che Cheng"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/kiki830621/che-telegram-bot-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kiki830621/che-telegram-bot-mcp"
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "server/CheTelegramBotMCP",
+    "mcp_config": {
+      "command": "$DIRNAME/server/CheTelegramBotMCP",
+      "args": [],
+      "env": {
+        "TELEGRAM_BOT_TOKEN": ""
+      }
+    }
+  },
+  "keywords": ["telegram", "bot", "messaging", "chat"]
+}
