@@ -1,0 +1,28 @@
+{
+  "manifest_version": "0.3",
+  "name": "che-telegram-all-mcp",
+  "version": "0.2.0",
+  "description": "Full Telegram client MCP Server via TDLib - read all chats, send messages as yourself, manage groups with your personal account",
+  "author": {
+    "name": "Che Cheng"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/kiki830621/che-telegram-all-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kiki830621/che-telegram-all-mcp"
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "server/CheTelegramAllMCP",
+    "mcp_config": {
+      "command": "$DIRNAME/server/CheTelegramAllMCP",
+      "args": [],
+      "env": {
+        "TELEGRAM_API_ID": "",
+        "TELEGRAM_API_HASH": ""
+      }
+    }
+  },
+  "keywords": ["telegram", "tdlib", "messaging", "chat", "personal"]
+}
