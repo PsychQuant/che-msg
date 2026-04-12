@@ -2,7 +2,7 @@
 
 Full Telegram client MCP Server powered by [TDLib](https://core.telegram.org/tdlib). Operate Telegram as **your personal account** — read all chats, send messages, manage groups, search history.
 
-> **Looking for the simpler Bot-only version?** See [che-telegram-bot-mcp](https://github.com/kiki830621/che-telegram-bot-mcp).
+> **Looking for the simpler Bot-only version?** See [che-telegram-bot-mcp](../che-telegram-bot-mcp/).
 
 ## Bot vs All: What's the difference?
 
@@ -32,8 +32,8 @@ Requires Swift 5.9+ and macOS 13+.
 > **First build will download ~300MB** of TDLibFramework binary. This is normal.
 
 ```bash
-git clone https://github.com/kiki830621/che-telegram-all-mcp.git
-cd che-telegram-all-mcp
+git clone https://github.com/kiki830621/che-msg.git
+cd che-msg/che-telegram-all-mcp
 swift build -c release
 ```
 

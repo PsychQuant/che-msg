@@ -7,10 +7,10 @@
     "name": "Che Cheng"
   },
   "license": "MIT",
-  "homepage": "https://github.com/kiki830621/che-telegram-bot-mcp",
+  "homepage": "https://github.com/kiki830621/che-msg/tree/main/che-telegram-bot-mcp",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kiki830621/che-telegram-bot-mcp"
+    "url": "https://github.com/kiki830621/che-msg"
   },
   "server": {
     "type": "binary",

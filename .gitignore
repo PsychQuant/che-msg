@@ -1,0 +1,14 @@
+# Swift
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+
+# Claude Code
+.remember/
+
+# mcpb build artifacts
+mcpb/server/*
+!mcpb/server/.gitkeep

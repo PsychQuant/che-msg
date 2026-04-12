@@ -24,8 +24,8 @@ By default, bots can only see commands (`/start`, `/help`, etc.) in groups. To r
 Requires Swift 5.9+ and macOS 13+.
 
 ```bash
-git clone https://github.com/kiki830621/che-telegram-bot-mcp.git
-cd che-telegram-bot-mcp
+git clone https://github.com/kiki830621/che-msg.git
+cd che-msg/che-telegram-bot-mcp
 swift build -c release
 ```
 
