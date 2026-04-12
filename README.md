@@ -23,10 +23,12 @@ Each MCP Server is an independent Swift Package. Pick the one that fits your use
 git clone https://github.com/kiki830621/che-msg.git
 cd che-msg
 
-# Build the one you need
+# Build MCP Server
 cd che-telegram-bot-mcp && swift build -c release
-# or
-cd che-telegram-all-mcp && swift build -c release
+
+# Or build CLI tool
+swift build -c release --product telegram-bot
+.build/release/telegram-bot --help
 ```
 
 See each server's README for installation and configuration details.
@@ -35,9 +37,12 @@ See each server's README for installation and configuration details.
 
 ```
 che-msg/
-├── che-telegram-bot-mcp/    # Telegram Bot API (30 tools)
-├── che-telegram-all-mcp/    # Telegram personal account via TDLib (28 tools)
-└── ...                      # More messaging MCPs planned
+├── che-telegram-bot-mcp/           # Telegram Bot API
+│   ├── TelegramBotAPI/             #   Pure HTTP client library
+│   ├── CheTelegramBotMCP/          #   MCP Server (30 tools)
+│   └── telegram-bot/               #   CLI tool (6 commands)
+├── che-telegram-all-mcp/           # Telegram personal account via TDLib (28 tools)
+└── ...                             # More messaging MCPs planned
 ```
 
 ## Roadmap
