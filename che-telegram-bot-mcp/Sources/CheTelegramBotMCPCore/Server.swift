@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import TelegramBotAPI
 
 public final class CheTelegramBotMCPServer {
     private let server: Server
@@ -582,7 +583,7 @@ public final class CheTelegramBotMCPServer {
 
             let jsonData = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
             let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-            return CallTool.Result(content: [.text(jsonString)], isError: false)
+            return CallTool.Result(content: [.text(text: jsonString, annotations: nil, _meta: nil)], isError: false)
 
         } catch {
             return errorResult(error.localizedDescription)
@@ -598,7 +599,7 @@ public final class CheTelegramBotMCPServer {
     }
 
     private func errorResult(_ message: String) -> CallTool.Result {
-        CallTool.Result(content: [.text("Error: \(message)")], isError: true)
+        CallTool.Result(content: [.text(text: "Error: \(message)", annotations: nil, _meta: nil)], isError: true)
     }
 
     // MARK: - Schema Builder Helpers
