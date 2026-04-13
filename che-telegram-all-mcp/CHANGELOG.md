@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0] - 2026-04-13
+
+### Added
+- New `TelegramAllLib` Swift package target — standalone TDLib wrapper, no MCP SDK dependency
+- New `telegram-all` CLI executable with 10 subcommands:
+  - Auth: `auth-status`, `auth-phone`, `auth-code`, `auth-password`
+  - Read: `me`, `chats`, `history`, `search`, `contacts`
+  - Write: `send`
+- Unit tests (`TelegramAllLibTests`, `CheTelegramAllMCPTests`)
+- E2E tests (`E2ETests`) for read/write operations against real Telegram accounts
+
+### Changed
+- **Architecture**: `TDLibClient.swift` extracted from `CheTelegramAllMCPCore` into independent `TelegramAllLib` target. MCP server is now a thin wrapper.
+- **MCP SDK** upgraded from 0.10.2 → 0.12.0 (fixes Swift 6.3 concurrency compatibility)
+- Server.swift updated to new `.text(text:annotations:_meta:)` API
+
+### Fixed
+- **Critical**: `JSONDecoder` now uses `.convertFromSnakeCase` strategy. Previously, all TDLib updates failed to decode (snake_case keys vs Swift camelCase), causing `authState` to never update from `waitingForParameters`. This made all read/write operations falsely report "Not authenticated".
+- TDLib verbose stdout logging suppressed via `td_execute("setLogVerbosityLevel", 0)` at init.
+
 ## [0.2.0] - 2026-02-10
 
 ### Added

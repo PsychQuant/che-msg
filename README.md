@@ -41,7 +41,10 @@ che-msg/
 │   ├── TelegramBotAPI/             #   Pure HTTP client library
 │   ├── CheTelegramBotMCP/          #   MCP Server (30 tools)
 │   └── telegram-bot/               #   CLI tool (6 commands)
-├── che-telegram-all-mcp/           # Telegram personal account via TDLib (28 tools)
+├── che-telegram-all-mcp/           # Telegram personal account via TDLib
+│   ├── TelegramAllLib/             #   TDLib wrapper library
+│   ├── CheTelegramAllMCP/          #   MCP Server (26 tools)
+│   └── telegram-all/               #   CLI tool (10 commands)
 └── ...                             # More messaging MCPs planned
 ```
 
