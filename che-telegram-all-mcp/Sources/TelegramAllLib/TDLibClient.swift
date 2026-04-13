@@ -1,5 +1,6 @@
 import Foundation
 import TDLibKit
+import TDLibFramework
 
 /// Manages a TDLib client session with authentication state tracking.
 public final class TDLibClient {
@@ -41,17 +42,24 @@ public final class TDLibClient {
         }
     }
 
-    public init() async throws {
+    public init(logVerbosity: Int = 0) async throws {
+        // Silence TDLib's stdout spam BEFORE creating any client.
+        // td_execute is synchronous, thread-safe, and doesn't need a client.
+        let logRequest = #"{"@type":"setLogVerbosityLevel","new_verbosity_level":\#(logVerbosity)}"#
+        _ = td_execute(logRequest)
+
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         dbPath = appSupport.appendingPathComponent("che-telegram-all-mcp/tdlib").path
         try FileManager.default.createDirectory(atPath: dbPath, withIntermediateDirectories: true)
 
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
         let weakRef = Weak()
         manager = TDLibClientManager()
         client = manager.createClient { data, _ in
             guard let strongSelf = weakRef.value else { return }
             do {
-                let update = try JSONDecoder().decode(Update.self, from: data)
+                let update = try decoder.decode(Update.self, from: data)
                 strongSelf.handleUpdate(update)
             } catch {
                 // Ignore decode errors for unknown updates

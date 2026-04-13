@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import TelegramAllLib
 
 public final class CheTelegramAllMCPServer {
     private let server: Server
@@ -28,7 +29,7 @@ public final class CheTelegramAllMCPServer {
 
     // MARK: - Tool Definitions
 
-    private static func defineTools() -> [Tool] {
+    static func defineTools() -> [Tool] {
         [
             // Authentication
             tool("auth_set_parameters",
@@ -434,7 +435,7 @@ public final class CheTelegramAllMCPServer {
                 return errorResult("Unknown tool: \(name)")
             }
 
-            return CallTool.Result(content: [.text(result)], isError: false)
+            return CallTool.Result(content: [.text(text: result, annotations: nil, _meta: nil)], isError: false)
 
         } catch {
             return errorResult(error.localizedDescription)
@@ -460,7 +461,7 @@ public final class CheTelegramAllMCPServer {
     }
 
     private func errorResult(_ message: String) -> CallTool.Result {
-        CallTool.Result(content: [.text("Error: \(message)")], isError: true)
+        CallTool.Result(content: [.text(text: "Error: \(message)", annotations: nil, _meta: nil)], isError: true)
     }
 
     // MARK: - Schema Builder Helpers

@@ -12,3 +12,5 @@ DerivedData/
 # mcpb build artifacts
 mcpb/server/*
 !mcpb/server/.gitkeep
+.spectra/
+openspec/.vector-search.db*
