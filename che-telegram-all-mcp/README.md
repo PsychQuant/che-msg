@@ -114,7 +114,7 @@ Done:   auth_status           →  Should show "ready"
 
 Session data is stored in: `~/Library/Application Support/che-telegram-all-mcp/tdlib/`
 
-## Tools (28)
+## Tools (27)
 
 ### Authentication (6)
 
@@ -143,11 +143,12 @@ Session data is stored in: `~/Library/Application Support/che-telegram-all-mcp/t
 | `get_chat` | Get details about a chat |
 | `search_chats` | Search chats by name |
 
-### Messages (6)
+### Messages (7)
 
 | Tool | Description |
 |------|-------------|
-| `get_chat_history` | Read message history |
+| `get_chat_history` | Read message history (single page, thin wrapper) |
+| `dump_chat_to_markdown` | Export full chat history to a `.md` file (auto-paginates + date filter + sender resolve + Markdown format). Writes to `output_path`, returns summary metadata. |
 | `send_message` | Send a text message |
 | `edit_message` | Edit your message |
 | `delete_messages` | Delete messages |
@@ -182,6 +183,73 @@ Once authenticated, you can ask Claude things like:
 - "Send 'I'll be late' to the family group"
 - "Forward the last message from Alice to my Saved Messages"
 - "Get my contact list"
+- "Dump my chat with 培鈞 from 2026-04-01 to 2026-04-15 to `/tmp/pei-chun-chat.md`" → triggers `dump_chat_to_markdown`
+
+### Dump chat to Markdown
+
+The `dump_chat_to_markdown` tool writes a single Markdown file per invocation and returns summary metadata. Example AI-facing call shape:
+
+```jsonc
+dump_chat_to_markdown({
+  "chat_id": 489601378,
+  "output_path": "/tmp/pei-chun-chat.md",
+  "max_messages": 5000,             // optional, default 5000
+  "since_date": "2026-03-01",        // optional
+  "until_date": "2026-04-15",        // optional
+  "self_label": "我"                 // optional, default "我"
+})
+```
+
+Response (summary metadata only — no Markdown body):
+
+```jsonc
+{
+  "path": "/tmp/pei-chun-chat.md",
+  "message_count": 327,
+  "date_range": { "since": "2026-03-01", "until": "2026-04-15" },
+  "senders": [{ "user_id": 12345, "display_name": "培鈞 徐" }, ...]
+}
+```
+
+Output Markdown format (excerpt):
+
+```markdown
+# 對話：培鈞 徐 (chat_id=489601378)
+匯出時間：2026-04-15 23:40:00　訊息數：327　since 2026-03-01　until 2026-04-15
+
+---
+
+## 2026-04-14
+
+**14:32 我**：
+到了嗎
+
+**14:33 培鈞 徐**：
+我隨時出發
+
+**14:35 培鈞 徐**：
+[photo]
+```
+
+### CLI: dump from the command line
+
+The same capability is exposed through `telegram-all history` flags — useful for scripting and testing outside MCP:
+
+```bash
+# Single page (original behavior, unchanged)
+telegram-all history 489601378 --limit 50
+
+# Auto-paginate and filter, print JSON
+telegram-all history 489601378 --max-messages 5000 --since 2026-03-01 --until 2026-04-15
+
+# Auto-paginate and dump to Markdown
+telegram-all history 489601378 \
+  --max-messages 5000 \
+  --since 2026-03-01 \
+  --until 2026-04-15 \
+  --self-label "che" \
+  --dump-markdown /tmp/pei-chun-chat.md
+```
 
 ## Architecture
 
@@ -189,9 +257,15 @@ Once authenticated, you can ask Claude things like:
 Sources/
 ├── CheTelegramAllMCP/
 │   └── main.swift              # Entry point
-└── CheTelegramAllMCPCore/
-    ├── Server.swift            # MCP Server (28 tools + dispatch)
-    └── TDLibClient.swift       # TDLib wrapper (auth + all operations)
+├── CheTelegramAllMCPCore/
+│   └── Server.swift            # MCP Server (27 tools + dispatch)
+├── TelegramAllLib/
+│   ├── TDLibClient.swift       # TDLib wrapper (auth + all operations)
+│   ├── MessageFilters.swift    # Pagination + date-filter pure helpers
+│   └── MarkdownExporter.swift  # dump_chat_to_markdown orchestrator
+└── telegram-all/
+    ├── TelegramAllCLI.swift    # ArgumentParser subcommands
+    └── AuthHelper.swift
 ```
 
 - **TDLib** via [TDLibKit](https://github.com/Swiftgram/TDLibKit) — native Swift wrapper

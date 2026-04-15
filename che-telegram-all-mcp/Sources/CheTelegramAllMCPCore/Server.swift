@@ -230,6 +230,24 @@ public final class CheTelegramAllMCPServer {
                     "user_id": prop("integer", "User ID to add"),
                  ],
                  required: ["chat_id", "user_id"]),
+
+            // History Export (heavy operation: paginates TDLib, writes Markdown file)
+            tool("dump_chat_to_markdown",
+                 description: """
+                 Export a chat's message history to a Markdown file. \
+                 Heavy operation — paginates TDLib, resolves sender names, writes to output_path. \
+                 Returns summary metadata (path, message_count, date_range, senders) — does NOT \
+                 return Markdown content in the response. Use get_chat_history for quick peeks.
+                 """,
+                 properties: [
+                    "chat_id": prop("integer", "Chat ID"),
+                    "output_path": prop("string", "Absolute filesystem path to write the .md file"),
+                    "max_messages": prop("integer", "Upper bound on messages fetched (default 5000)"),
+                    "since_date": prop("string", "Lower bound inclusive, ISO date YYYY-MM-DD (optional)"),
+                    "until_date": prop("string", "Upper bound inclusive, ISO date YYYY-MM-DD (optional)"),
+                    "self_label": prop("string", "Label for outgoing messages (default \"我\")"),
+                 ],
+                 required: ["chat_id", "output_path"]),
         ]
     }
 
@@ -431,6 +449,28 @@ public final class CheTelegramAllMCPServer {
                 }
                 result = try await tdlib.addChatMember(chatId: chatId, userId: userId)
 
+            // History Export
+            case "dump_chat_to_markdown":
+                guard let chatId = int64Arg(args, "chat_id") else {
+                    return errorResult("chat_id is required")
+                }
+                guard let outputPath = args["output_path"]?.stringValue else {
+                    return errorResult("output_path is required")
+                }
+                let maxMessages = args["max_messages"]?.intValue ?? 5000
+                let sinceDate = parseISODate(args["since_date"]?.stringValue)
+                let untilDate = parseISODate(args["until_date"]?.stringValue)
+                let selfLabel = args["self_label"]?.stringValue ?? "我"
+                let exporter = MarkdownExporter(client: tdlib)
+                result = try await exporter.dumpChatToMarkdown(
+                    chatId: chatId,
+                    outputPath: outputPath,
+                    maxMessages: maxMessages,
+                    sinceDate: sinceDate,
+                    untilDate: untilDate,
+                    selfLabel: selfLabel
+                )
+
             default:
                 return errorResult("Unknown tool: \(name)")
             }
@@ -462,6 +502,16 @@ public final class CheTelegramAllMCPServer {
 
     private func errorResult(_ message: String) -> CallTool.Result {
         CallTool.Result(content: [.text(text: "Error: \(message)", annotations: nil, _meta: nil)], isError: true)
+    }
+
+    /// Parse an ISO date string (`YYYY-MM-DD`) as the start of the day in the current
+    /// local timezone. Returns nil for nil input; throws via returning nil for invalid input.
+    private func parseISODate(_ s: String?) -> Foundation.Date? {
+        guard let s = s, !s.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        return formatter.date(from: s)
     }
 
     // MARK: - Schema Builder Helpers

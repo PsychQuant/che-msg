@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0] - 2026-04-15
+
+### Added
+- **New MCP tool `dump_chat_to_markdown`**: one-shot export of chat history to a Markdown file. Paginates TDLib internally, batch-resolves sender names, groups messages by day, and writes to a caller-supplied `output_path`. Returns summary metadata (`path`, `message_count`, `date_range`, `senders`) — does NOT return Markdown content in the MCP response (avoids context bloat). Supports `max_messages`, `since_date`, `until_date`, `self_label` parameters.
+- **Library `TDLibClient.getChatHistory` extended** with three optional parameters: `maxMessages: Int?`, `sinceDate: Date?`, `untilDate: Date?`. When `maxMessages` is non-nil the method auto-paginates (newest → oldest) with `sinceDate` early-terminate. Date filters apply independently of `maxMessages` and may be combined with single-page fetches.
+- **CLI `telegram-all history` flags**: `--max-messages`, `--since`, `--until`, `--dump-markdown <path>`, `--self-label`. Without `--dump-markdown` prints JSON as before; with the flag invokes the new exporter and prints summary metadata.
+- **New test suites**: `TDLibClientBackwardCompatTests`, `TDLibClientPaginationTests`, `TDLibClientDateFilterTests`, `MarkdownFormatTests`, `MarkdownSenderResolveTests`, `MarkdownExporterContractTests`, `ServerDumpChatToolTests`.
+- New capability spec: `openspec/specs/telegram-history-export/spec.md`.
+
+### Changed
+- Tool count: 26 → 27 (added `dump_chat_to_markdown`).
+- `TDLibClient.getChatHistory` signature gained three optional parameters. Existing three-parameter call sites (`chatId:limit:fromMessageId:`) are fully source-compatible — the default-nil parameters preserve original single-page behavior byte-for-byte.
+
+### Backward Compatibility
+- Existing `get_chat_history` MCP tool schema is unchanged (still three properties `chat_id` / `limit` / `from_message_id`; still `chat_id` required only).
+- Existing CLI `telegram-all history <chat_id>` still prints a single-page JSON array with no new flags required.
+
+### Design Notes
+- The middle-tier tool `get_chat_history_full` was deliberately NOT added — JSON-batch responses to MCP are never the AI's end goal (it always re-formats to Markdown), so the middle tier is dead surface. See `openspec/archive/*-add-chat-history-export/design.md`.
+
 ## [0.3.0] - 2026-04-13
 
 ### Added

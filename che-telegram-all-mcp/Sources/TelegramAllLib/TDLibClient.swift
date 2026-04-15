@@ -180,17 +180,74 @@ public final class TDLibClient {
         return toJSON(chatToDict(chat))
     }
 
-    public func getChatHistory(chatId: Int64, limit: Int = 50, fromMessageId: Int64 = 0) async throws -> String {
+    public func getChatHistory(
+        chatId: Int64,
+        limit: Int = 50,
+        fromMessageId: Int64 = 0,
+        maxMessages: Int? = nil,
+        sinceDate: Foundation.Date? = nil,
+        untilDate: Foundation.Date? = nil
+    ) async throws -> String {
         guard authState == .ready else { throw TDError.notAuthenticated }
-        let result = try await client.getChatHistory(
-            chatId: chatId,
-            fromMessageId: fromMessageId,
-            limit: limit,
-            offset: 0,
-            onlyLocal: false
-        )
-        let messages = result.messages?.map { messageToDict($0) } ?? []
-        return toJSON(messages)
+
+        // Backward-compatible single-page path: when no bulk/filter params are given,
+        // behave exactly as the prior implementation (one TDLib call, raw batch, no filtering).
+        if maxMessages == nil && sinceDate == nil && untilDate == nil {
+            let result = try await client.getChatHistory(
+                chatId: chatId,
+                fromMessageId: fromMessageId,
+                limit: limit,
+                offset: 0,
+                onlyLocal: false
+            )
+            let messages = result.messages?.map { messageToDict($0) } ?? []
+            return toJSON(messages)
+        }
+
+        // Single-page + date-filter path: one TDLib call, client-side date filter applied.
+        if maxMessages == nil {
+            let result = try await client.getChatHistory(
+                chatId: chatId,
+                fromMessageId: fromMessageId,
+                limit: limit,
+                offset: 0,
+                onlyLocal: false
+            )
+            let rawBatch = result.messages?.map { messageToDict($0) } ?? []
+            let filtered = filterMessagesByDate(rawBatch, since: sinceDate, until: untilDate)
+            return toJSON(filtered)
+        }
+
+        // Bulk pagination path: iterate TDLib calls until termination condition met.
+        let cap = maxMessages!
+        let pageSize = min(max(limit, 1), 100)
+        var accumulated: [[String: Any]] = []
+        var nextFromId: Int64 = fromMessageId
+
+        while accumulated.count < cap {
+            let result = try await client.getChatHistory(
+                chatId: chatId,
+                fromMessageId: nextFromId,
+                limit: pageSize,
+                offset: 0,
+                onlyLocal: false
+            )
+            let batch = result.messages?.map { messageToDict($0) } ?? []
+
+            let step = accumulatePaginationBatch(
+                current: accumulated,
+                newBatch: batch,
+                sinceDate: sinceDate,
+                untilDate: untilDate,
+                maxMessages: cap
+            )
+            accumulated = step.accumulated
+            if !step.shouldContinue { break }
+            guard let next = step.nextFromMessageId else { break }
+            nextFromId = next
+        }
+
+        return toJSON(accumulated)
     }
 
     public func searchChats(query: String, limit: Int = 20) async throws -> String {

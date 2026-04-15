@@ -96,13 +96,64 @@ extension TelegramAll {
         @Argument(help: "Chat ID")
         var chatID: Int64
 
-        @Option(name: .long, help: "Max messages (default 50)")
+        @Option(name: .long, help: "Page size per TDLib fetch (default 50)")
         var limit: Int = 50
+
+        @Option(name: .long, help: "Total cap for auto-pagination; omit for single page")
+        var maxMessages: Int?
+
+        @Option(name: .long, help: "Lower bound YYYY-MM-DD (inclusive)")
+        var since: String?
+
+        @Option(name: .long, help: "Upper bound YYYY-MM-DD (inclusive)")
+        var until: String?
+
+        @Option(name: .long, help: "If set, dump to this .md file instead of printing JSON")
+        var dumpMarkdown: String?
+
+        @Option(name: .long, help: "Label used for outgoing messages in markdown (default 我)")
+        var selfLabel: String = "我"
 
         func run() async throws {
             let client = try await TelegramAll.makeClient()
             try await TelegramAll.waitForAuth(client)
-            print(try await client.getChatHistory(chatId: chatID, limit: limit))
+
+            let sinceDate = try parseCLIDate(since, flagName: "--since")
+            let untilDate = try parseCLIDate(until, flagName: "--until")
+
+            if let path = dumpMarkdown {
+                let exporter = MarkdownExporter(client: client)
+                let summary = try await exporter.dumpChatToMarkdown(
+                    chatId: chatID,
+                    outputPath: path,
+                    maxMessages: maxMessages ?? 5000,
+                    sinceDate: sinceDate,
+                    untilDate: untilDate,
+                    selfLabel: selfLabel
+                )
+                print(summary)
+                return
+            }
+
+            print(try await client.getChatHistory(
+                chatId: chatID,
+                limit: limit,
+                fromMessageId: 0,
+                maxMessages: maxMessages,
+                sinceDate: sinceDate,
+                untilDate: untilDate
+            ))
+        }
+
+        private func parseCLIDate(_ s: String?, flagName: String) throws -> Foundation.Date? {
+            guard let s = s, !s.isEmpty else { return nil }
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            formatter.timeZone = TimeZone.current
+            guard let date = formatter.date(from: s) else {
+                throw ValidationError("\(flagName) must be YYYY-MM-DD; got \(s)")
+            }
+            return date
         }
     }
 
