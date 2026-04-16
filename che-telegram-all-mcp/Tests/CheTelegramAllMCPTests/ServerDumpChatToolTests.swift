@@ -66,16 +66,18 @@ final class ServerDumpChatToolTests: XCTestCase {
                        "dump_chat_to_markdown MUST require chat_id and output_path")
     }
 
-    // MARK: - get_chat_history unchanged (thin wrapper preserved)
+    // MARK: - get_chat_history schema (#3, #4)
 
-    func testGetChatHistorySchemaUnchanged() {
+    func testGetChatHistoryProperties() {
         guard let t = tool("get_chat_history"),
               let shape = schemaShape(of: t) else {
             XCTFail("get_chat_history schema missing")
             return
         }
-        XCTAssertEqual(shape.properties, ["chat_id", "limit", "from_message_id"],
-                       "get_chat_history MUST keep exactly three properties (thin wrapper contract)")
+        XCTAssertEqual(shape.properties, [
+            "chat_id", "limit", "from_message_id",
+            "since_date", "until_date", "max_messages",
+        ], "get_chat_history MUST expose six properties (#4)")
         XCTAssertEqual(shape.required, ["chat_id"],
                        "get_chat_history MUST require only chat_id")
     }

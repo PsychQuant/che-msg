@@ -115,6 +115,9 @@ public final class CheTelegramAllMCPServer {
                     "chat_id": prop("integer", "Chat ID"),
                     "limit": prop("integer", "Max messages to return (default 50)"),
                     "from_message_id": prop("integer", "Start from this message ID (0 = latest)"),
+                    "since_date": prop("string", "Lower bound inclusive, ISO date YYYY-MM-DD (optional)"),
+                    "until_date": prop("string", "Upper bound inclusive, ISO date YYYY-MM-DD (optional)"),
+                    "max_messages": prop("integer", "Total message cap — enables auto-pagination (optional)"),
                  ],
                  required: ["chat_id"]),
 
@@ -348,7 +351,16 @@ public final class CheTelegramAllMCPServer {
                 }
                 let limit = args["limit"]?.intValue ?? 50
                 let fromMsgId = int64Arg(args, "from_message_id") ?? 0
-                result = try await tdlib.getChatHistory(chatId: chatId, limit: limit, fromMessageId: fromMsgId)
+                let sinceDate = parseISODate(args["since_date"]?.stringValue)
+                let untilDate = parseISODate(args["until_date"]?.stringValue)
+                // When fetching from latest (fromMsgId == 0) and no explicit max_messages,
+                // default to bulk pagination to work around TDLib's partial first-page issue (#3).
+                let maxMessages = args["max_messages"]?.intValue
+                    ?? (fromMsgId == 0 ? limit : nil)
+                result = try await tdlib.getChatHistory(
+                    chatId: chatId, limit: limit, fromMessageId: fromMsgId,
+                    maxMessages: maxMessages, sinceDate: sinceDate, untilDate: untilDate
+                )
 
             case "send_message":
                 guard let chatId = int64Arg(args, "chat_id"),
