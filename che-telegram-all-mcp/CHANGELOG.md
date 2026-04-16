@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1] - 2026-04-16
+
+### Fixed
+- **`get_chat_history` first-call bug (#3)**: When `from_message_id` is 0, the MCP handler now defaults `maxMessages` to `limit`, triggering the bulk pagination path. This fixes the issue where the first call only returned 1 message due to TDLib's partial local cache.
+
+### Changed
+- **`get_chat_history` schema expanded (#4)**: Added three optional parameters: `since_date` (YYYY-MM-DD), `until_date` (YYYY-MM-DD), `max_messages` (integer). These wire through to `TDLibClient.getChatHistory`'s existing `sinceDate`/`untilDate`/`maxMessages` support, which was previously only accessible via `dump_chat_to_markdown` and the CLI.
+- Updated `openspec/specs/telegram-history-export/spec.md` to reflect the expanded schema (previously mandated exactly three properties).
+
 ## [0.4.0] - 2026-04-15
 
 ### Added

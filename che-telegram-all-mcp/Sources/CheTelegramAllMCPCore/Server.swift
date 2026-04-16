@@ -117,7 +117,7 @@ public final class CheTelegramAllMCPServer {
                     "from_message_id": prop("integer", "Start from this message ID (0 = latest)"),
                     "since_date": prop("string", "Lower bound inclusive, ISO date YYYY-MM-DD (optional)"),
                     "until_date": prop("string", "Upper bound inclusive, ISO date YYYY-MM-DD (optional)"),
-                    "max_messages": prop("integer", "Total message cap — enables auto-pagination (optional)"),
+                    "max_messages": prop("integer", "Total message cap — enables auto-pagination. Defaults to limit when from_message_id=0"),
                  ],
                  required: ["chat_id"]),
 

@@ -218,20 +218,30 @@ code:
 -->
 
 ---
-### Requirement: `get_chat_history` MCP tool remains a thin wrapper
+### Requirement: `get_chat_history` MCP tool supports filtering and auto-pagination
 
-The existing `get_chat_history` MCP tool SHALL continue to expose exactly three parameters: `chat_id`, `limit`, `from_message_id`. The tool schema MUST NOT add `max_messages`, `since_date`, `until_date`, or `auto_paginate` parameters. The tool's runtime behavior MUST be byte-for-byte equivalent to its prior implementation: one TDLib call per invocation, raw message JSON returned.
+The `get_chat_history` MCP tool SHALL expose six parameters: `chat_id`, `limit`, `from_message_id`, `since_date`, `until_date`, `max_messages`. Only `chat_id` is required; all others are optional.
 
-#### Scenario: Schema unchanged
+When `from_message_id` is 0 (latest) and `max_messages` is not specified, the tool SHALL default `max_messages` to `limit` to trigger bulk pagination, working around TDLib's partial first-page behavior. When `from_message_id` is non-zero, the tool SHALL perform a single TDLib call (backward-compatible manual pagination).
+
+> **History**: Prior to #3/#4, this tool was a thin wrapper with exactly three parameters. The constraint was relaxed to fix the first-page bug (#3) and expose TDLibClient's existing date filtering and pagination capabilities (#4).
+
+#### Scenario: Schema with six properties
 
 - **WHEN** an MCP client requests the tool list
-- **THEN** the `get_chat_history` tool entry lists exactly `chat_id`, `limit`, `from_message_id` as properties
+- **THEN** the `get_chat_history` tool entry lists `chat_id`, `limit`, `from_message_id`, `since_date`, `until_date`, `max_messages` as properties
 
-#### Scenario: Behavior unchanged
+#### Scenario: Auto-pagination for latest messages
 
-- **WHEN** an MCP client invokes `get_chat_history(chat_id: 123, limit: 50)`
+- **WHEN** an MCP client invokes `get_chat_history(chat_id: 123, limit: 50)` (from_message_id defaults to 0)
+- **THEN** the server uses bulk pagination (maxMessages=50) to ensure up to 50 messages are returned
+- **AND** returns the message JSON array
+
+#### Scenario: Manual pagination unchanged
+
+- **WHEN** an MCP client invokes `get_chat_history(chat_id: 123, limit: 50, from_message_id: 999)`
 - **THEN** the server performs one TDLib call
-- **AND** returns the raw message JSON array without pagination or filtering
+- **AND** returns the raw message JSON array without auto-pagination
 
 
 <!-- @trace
