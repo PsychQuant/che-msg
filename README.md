@@ -20,7 +20,7 @@ Each MCP Server is an independent Swift Package. Pick the one that fits your use
 
 ```bash
 # Clone
-git clone https://github.com/kiki830621/che-msg.git
+git clone https://github.com/PsychQuant/che-msg.git
 cd che-msg
 
 # Build MCP Server

@@ -22,4 +22,4 @@ This extension communicates with:
 ## Contact
 
 For questions about this privacy policy, please open an issue at:
-https://github.com/kiki830621/che-telegram-bot-mcp/issues
+https://github.com/PsychQuant/che-msg/issues

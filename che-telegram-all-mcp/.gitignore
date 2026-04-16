@@ -8,3 +8,6 @@ DerivedData/
 # Build artifacts (distributed via GitHub Release)
 mcpb/server/*
 !mcpb/server/.gitkeep
+
+# Build artifacts
+*.mcpb

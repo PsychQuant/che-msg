@@ -14,3 +14,4 @@ mcpb/server/*
 !mcpb/server/.gitkeep
 .spectra/
 openspec/.vector-search.db*
+*.mcpb

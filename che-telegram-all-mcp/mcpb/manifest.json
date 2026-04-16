@@ -1,16 +1,16 @@
 {
   "manifest_version": "0.3",
   "name": "che-telegram-all-mcp",
-  "version": "0.2.0",
+  "version": "0.4.1",
   "description": "Full Telegram client MCP Server via TDLib - read all chats, send messages as yourself, manage groups with your personal account",
   "author": {
     "name": "Che Cheng"
   },
   "license": "MIT",
-  "homepage": "https://github.com/kiki830621/che-msg/tree/main/che-telegram-all-mcp",
+  "homepage": "https://github.com/PsychQuant/che-msg/tree/main/che-telegram-all-mcp",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kiki830621/che-msg"
+    "url": "https://github.com/PsychQuant/che-msg"
   },
   "server": {
     "type": "binary",

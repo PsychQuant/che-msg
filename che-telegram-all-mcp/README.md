@@ -32,7 +32,7 @@ Requires Swift 5.9+ and macOS 13+.
 > **First build will download ~300MB** of TDLibFramework binary. This is normal.
 
 ```bash
-git clone https://github.com/kiki830621/che-msg.git
+git clone https://github.com/PsychQuant/che-msg.git
 cd che-msg/che-telegram-all-mcp
 swift build -c release
 ```
