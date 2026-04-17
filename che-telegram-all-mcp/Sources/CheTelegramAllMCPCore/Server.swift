@@ -14,7 +14,7 @@ public final class CheTelegramAllMCPServer {
 
         server = Server(
             name: "che-telegram-all-mcp",
-            version: "0.2.0",
+            version: "0.4.2",
             capabilities: .init(tools: .init())
         )
 
@@ -362,8 +362,15 @@ public final class CheTelegramAllMCPServer {
                 // When fetching from latest (fromMsgId == 0) and no explicit max_messages,
                 // default to bulk pagination to work around TDLib's partial first-page issue (#3).
                 let explicitMaxMessages = args["max_messages"]?.intValue
-                if let mm = explicitMaxMessages, mm <= 0 {
-                    return errorResult("max_messages must be positive; got \(mm)")
+                if let mm = explicitMaxMessages {
+                    if mm <= 0 {
+                        return errorResult("max_messages must be positive; got \(mm)")
+                    }
+                    if mm > 10_000 {
+                        return errorResult(
+                            "max_messages exceeds 10_000 cap; got \(mm). Use since_date/until_date to narrow the range."
+                        )
+                    }
                 }
                 let maxMessages = explicitMaxMessages ?? (fromMsgId == 0 ? limit : nil)
                 result = try await tdlib.getChatHistory(
@@ -481,6 +488,11 @@ public final class CheTelegramAllMCPServer {
                 let maxMessages = args["max_messages"]?.intValue ?? 5000
                 if maxMessages <= 0 {
                     return errorResult("max_messages must be positive; got \(maxMessages)")
+                }
+                if maxMessages > 10_000 {
+                    return errorResult(
+                        "max_messages exceeds 10_000 cap; got \(maxMessages). Use since_date/until_date to narrow the range."
+                    )
                 }
                 let sinceDate: Date?
                 let untilDate: Date?

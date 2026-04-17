@@ -48,11 +48,20 @@ internal func parseISODate(_ s: String?) throws -> Date? {
 ///
 /// Without this helper, `until_date: "2026-04-17"` would parse to
 /// 2026-04-17 00:00:00 and exclude all messages later that day (#5-A1).
+///
+/// Implementation note: constructs end-of-day from wall-clock components
+/// (year/month/day + hour=23/min=59/sec=59) rather than adding 23h59m59s
+/// to start-of-day. The additive approach breaks on DST fall-back days
+/// (e.g. America/New_York 2026-11-01 has 25 hours; +23:59:59 from
+/// 00:00:00 EDT lands at 22:59:59 EST, excluding the real 23:00-23:59
+/// window). Wall-clock construction lets Calendar resolve DST naturally.
 internal func parseUntilDate(_ s: String?) throws -> Date? {
     guard let startOfDay = try parseISODate(s) else { return nil }
-    // End of day = start + 1 day - 1 second = 23:59:59 local
-    return Calendar.current.date(
-        byAdding: DateComponents(hour: 23, minute: 59, second: 59),
-        to: startOfDay
-    )
+    let calendar = Calendar.current
+    var components = calendar.dateComponents([.year, .month, .day], from: startOfDay)
+    components.hour = 23
+    components.minute = 59
+    components.second = 59
+    components.timeZone = calendar.timeZone
+    return calendar.date(from: components)
 }

@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "che-telegram-all-mcp",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Full Telegram client MCP Server via TDLib - read all chats, send messages as yourself, manage groups with your personal account",
   "author": {
     "name": "Che Cheng"

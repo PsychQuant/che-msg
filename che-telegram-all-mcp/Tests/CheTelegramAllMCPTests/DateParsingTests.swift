@@ -72,6 +72,49 @@ final class DateParsingTests: XCTestCase {
         XCTAssertThrowsError(try parseUntilDate("not-a-date"))
     }
 
+    // MARK: - Semantic-invalid dates (regex allows shape, DateFormatter rejects value)
+
+    func testParseISODateRejectsMonthOutOfRange() {
+        XCTAssertThrowsError(try parseISODate("2026-13-01"),
+                             "month 13 should be rejected")
+        XCTAssertThrowsError(try parseISODate("2026-00-01"),
+                             "month 00 should be rejected")
+    }
+
+    func testParseISODateRejectsDayOutOfRange() {
+        XCTAssertThrowsError(try parseISODate("2026-02-30"),
+                             "Feb 30 should be rejected")
+        XCTAssertThrowsError(try parseISODate("2025-02-29"),
+                             "Feb 29 in non-leap year should be rejected")
+    }
+
+    func testParseISODateAcceptsLeapDay() throws {
+        // 2024 is a leap year
+        XCTAssertNotNil(try parseISODate("2024-02-29"))
+    }
+
+    // MARK: - DST safety (#5 verify finding)
+
+    /// Construct end-of-day across DST fall-back boundary. Previously failed
+    /// when parseUntilDate added +23h59m59s to start-of-day on a 25-hour day
+    /// (excluding real 23:00-23:59 window). Fix constructs from wall-clock
+    /// components directly, so Calendar resolves DST correctly.
+    func testParseUntilDateOnDSTFallBackDay() throws {
+        // 2026-11-01 is a DST fall-back day in America/New_York (EDT → EST).
+        // This test uses current timezone — it serves as a regression guard
+        // for any locale that sees this as a DST day; in tz without DST it
+        // just confirms 23:59:59 behavior.
+        let until = try parseUntilDate("2026-11-01")!
+        let components = Calendar.current.dateComponents(
+            [.hour, .minute, .second],
+            from: until
+        )
+        XCTAssertEqual(components.hour, 23,
+                       "hour must be 23 even on DST boundary day")
+        XCTAssertEqual(components.minute, 59)
+        XCTAssertEqual(components.second, 59)
+    }
+
     // MARK: - Semantic contract: a message at end of `until_date` day is included
 
     func testMessageAt23_59_59IsIncluded() throws {
