@@ -2,16 +2,22 @@
 
 ## [0.4.2] - 2026-04-17
 
+### Fixed
+- **DST fall-back bug in `parseUntilDate`** (verification blocker from logic reviewer): Previously used `Calendar.date(byAdding: DateComponents(hour:23,min:59,sec:59), to: startOfDay)` which breaks on DST fall-back days (25-hour day) — messages at 23:00-23:59 were excluded, defeating the "whole day inclusive" contract. Now constructs end-of-day from wall-clock components (year/month/day + hour=23/min=59/sec=59) so Calendar resolves DST correctly.
+- **Version string in `Server(version:)` synced**: Previously hard-coded `"0.2.0"`, now matches CHANGELOG `0.4.2`.
+- **`mcpb/manifest.json` version synced** to `0.4.2`.
+
 ### Changed
 - **`until_date` now includes the whole day (#5-A1)**: `"2026-04-17"` parses to 2026-04-17 23:59:59 local time instead of 00:00:00. Messages sent anywhere on 2026-04-17 are now included in the filter, matching the schema's "inclusive" description.
 - **`parseISODate` throws on invalid format (#5-A2)**: Non-empty strings that don't match `YYYY-MM-DD` now throw `DateParseError` instead of silently returning nil. MCP handlers catch and return `errorResult("Date format invalid: ...")`. Regex pre-check (`^\d{4}-\d{2}-\d{2}$`) guards against `DateFormatter`'s lenient-even-when-disabled parsing of `/` separators.
 - **`max_messages` hard-capped at 10_000 (#6-B1)**: `TDLibClient.getChatHistory` caps bulk pagination at 10_000 messages regardless of caller input. Warning logged to stderr when cap applied. Prevents runaway pagination from accidentally large values.
 - **`max_messages <= 0` returns error (#6-B2)**: `get_chat_history` and `dump_chat_to_markdown` MCP handlers reject non-positive `max_messages` with clear error message, instead of silently returning an empty array.
+- **Handler-level `max_messages > 10_000` explicit reject** (verification finding): Previously the cap only surfaced via stderr warning, which is invisible to MCP callers over stdio JSON-RPC. Handlers now reject with `errorResult("max_messages exceeds 10_000 cap...")` so callers see the constraint. TDLibClient internal cap kept as defense-in-depth.
 
 ### Added
 - `Sources/CheTelegramAllMCPCore/DateParsing.swift` — new module with pure `parseISODate` and `parseUntilDate` functions (module-level internal, directly testable without server class).
 - `DateParseError` type with descriptive message including the invalid input.
-- 10 new unit tests in `DateParsingTests.swift` covering nil/empty/valid/invalid inputs plus semantic contract tests (end-of-day inclusion).
+- 14 new unit tests in `DateParsingTests.swift`: nil/empty/valid/invalid inputs, semantic contract tests (end-of-day inclusion / next-day exclusion), semantic-invalid dates (`2026-13-01`, `2026-02-30`, `2025-02-29`), leap-year acceptance (`2024-02-29`), and DST fall-back regression guard.
 
 ### Removed
 - Old `parseISODate` private method on `CheTelegramAllMCPServer` (replaced by module-level throwing version).
