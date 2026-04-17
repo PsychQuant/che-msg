@@ -219,7 +219,18 @@ public final class TDLibClient {
         }
 
         // Bulk pagination path: iterate TDLib calls until termination condition met.
-        let cap = maxMessages!
+        // Hard cap: 10_000 messages. Prevents runaway pagination from accidentally or
+        // maliciously large `max_messages` values (each page = one TDLib roundtrip).
+        // Rationale: 10k covers near-all realistic use cases; larger exports should use
+        // `dump_chat_to_markdown` with explicit date bounds instead of unbounded pagination.
+        let requested = maxMessages!
+        let cap = min(requested, 10_000)
+        if requested > 10_000 {
+            fputs(
+                "warning: TDLibClient.getChatHistory capped maxMessages \(requested) → \(cap) (#6)\n",
+                stderr
+            )
+        }
         let pageSize = min(max(limit, 1), 100)
         var accumulated: [[String: Any]] = []
         var nextFromId: Int64 = fromMessageId

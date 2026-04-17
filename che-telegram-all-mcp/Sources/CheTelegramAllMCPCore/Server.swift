@@ -116,7 +116,7 @@ public final class CheTelegramAllMCPServer {
                     "limit": prop("integer", "Max messages to return (default 50)"),
                     "from_message_id": prop("integer", "Start from this message ID (0 = latest)"),
                     "since_date": prop("string", "Lower bound inclusive, ISO date YYYY-MM-DD (optional)"),
-                    "until_date": prop("string", "Upper bound inclusive, ISO date YYYY-MM-DD (optional)"),
+                    "until_date": prop("string", "Upper bound inclusive — includes whole day (23:59:59 local). ISO date YYYY-MM-DD (optional)"),
                     "max_messages": prop("integer", "Total message cap — enables auto-pagination. Defaults to limit when from_message_id=0"),
                  ],
                  required: ["chat_id"]),
@@ -247,7 +247,7 @@ public final class CheTelegramAllMCPServer {
                     "output_path": prop("string", "Absolute filesystem path to write the .md file"),
                     "max_messages": prop("integer", "Upper bound on messages fetched (default 5000)"),
                     "since_date": prop("string", "Lower bound inclusive, ISO date YYYY-MM-DD (optional)"),
-                    "until_date": prop("string", "Upper bound inclusive, ISO date YYYY-MM-DD (optional)"),
+                    "until_date": prop("string", "Upper bound inclusive — includes whole day (23:59:59 local). ISO date YYYY-MM-DD (optional)"),
                     "self_label": prop("string", "Label for outgoing messages (default \"我\")"),
                  ],
                  required: ["chat_id", "output_path"]),
@@ -351,12 +351,21 @@ public final class CheTelegramAllMCPServer {
                 }
                 let limit = args["limit"]?.intValue ?? 50
                 let fromMsgId = int64Arg(args, "from_message_id") ?? 0
-                let sinceDate = parseISODate(args["since_date"]?.stringValue)
-                let untilDate = parseISODate(args["until_date"]?.stringValue)
+                let sinceDate: Date?
+                let untilDate: Date?
+                do {
+                    sinceDate = try parseISODate(args["since_date"]?.stringValue)
+                    untilDate = try parseUntilDate(args["until_date"]?.stringValue)
+                } catch let e as DateParseError {
+                    return errorResult(e.description)
+                }
                 // When fetching from latest (fromMsgId == 0) and no explicit max_messages,
                 // default to bulk pagination to work around TDLib's partial first-page issue (#3).
-                let maxMessages = args["max_messages"]?.intValue
-                    ?? (fromMsgId == 0 ? limit : nil)
+                let explicitMaxMessages = args["max_messages"]?.intValue
+                if let mm = explicitMaxMessages, mm <= 0 {
+                    return errorResult("max_messages must be positive; got \(mm)")
+                }
+                let maxMessages = explicitMaxMessages ?? (fromMsgId == 0 ? limit : nil)
                 result = try await tdlib.getChatHistory(
                     chatId: chatId, limit: limit, fromMessageId: fromMsgId,
                     maxMessages: maxMessages, sinceDate: sinceDate, untilDate: untilDate
@@ -470,8 +479,17 @@ public final class CheTelegramAllMCPServer {
                     return errorResult("output_path is required")
                 }
                 let maxMessages = args["max_messages"]?.intValue ?? 5000
-                let sinceDate = parseISODate(args["since_date"]?.stringValue)
-                let untilDate = parseISODate(args["until_date"]?.stringValue)
+                if maxMessages <= 0 {
+                    return errorResult("max_messages must be positive; got \(maxMessages)")
+                }
+                let sinceDate: Date?
+                let untilDate: Date?
+                do {
+                    sinceDate = try parseISODate(args["since_date"]?.stringValue)
+                    untilDate = try parseUntilDate(args["until_date"]?.stringValue)
+                } catch let e as DateParseError {
+                    return errorResult(e.description)
+                }
                 let selfLabel = args["self_label"]?.stringValue ?? "我"
                 let exporter = MarkdownExporter(client: tdlib)
                 result = try await exporter.dumpChatToMarkdown(
@@ -514,16 +532,6 @@ public final class CheTelegramAllMCPServer {
 
     private func errorResult(_ message: String) -> CallTool.Result {
         CallTool.Result(content: [.text(text: "Error: \(message)", annotations: nil, _meta: nil)], isError: true)
-    }
-
-    /// Parse an ISO date string (`YYYY-MM-DD`) as the start of the day in the current
-    /// local timezone. Returns nil for nil input; throws via returning nil for invalid input.
-    private func parseISODate(_ s: String?) -> Foundation.Date? {
-        guard let s = s, !s.isEmpty else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone.current
-        return formatter.date(from: s)
     }
 
     // MARK: - Schema Builder Helpers
