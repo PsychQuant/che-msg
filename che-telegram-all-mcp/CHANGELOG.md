@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.2] - 2026-04-17
+
+### Changed
+- **`until_date` now includes the whole day (#5-A1)**: `"2026-04-17"` parses to 2026-04-17 23:59:59 local time instead of 00:00:00. Messages sent anywhere on 2026-04-17 are now included in the filter, matching the schema's "inclusive" description.
+- **`parseISODate` throws on invalid format (#5-A2)**: Non-empty strings that don't match `YYYY-MM-DD` now throw `DateParseError` instead of silently returning nil. MCP handlers catch and return `errorResult("Date format invalid: ...")`. Regex pre-check (`^\d{4}-\d{2}-\d{2}$`) guards against `DateFormatter`'s lenient-even-when-disabled parsing of `/` separators.
+- **`max_messages` hard-capped at 10_000 (#6-B1)**: `TDLibClient.getChatHistory` caps bulk pagination at 10_000 messages regardless of caller input. Warning logged to stderr when cap applied. Prevents runaway pagination from accidentally large values.
+- **`max_messages <= 0` returns error (#6-B2)**: `get_chat_history` and `dump_chat_to_markdown` MCP handlers reject non-positive `max_messages` with clear error message, instead of silently returning an empty array.
+
+### Added
+- `Sources/CheTelegramAllMCPCore/DateParsing.swift` — new module with pure `parseISODate` and `parseUntilDate` functions (module-level internal, directly testable without server class).
+- `DateParseError` type with descriptive message including the invalid input.
+- 10 new unit tests in `DateParsingTests.swift` covering nil/empty/valid/invalid inputs plus semantic contract tests (end-of-day inclusion).
+
+### Removed
+- Old `parseISODate` private method on `CheTelegramAllMCPServer` (replaced by module-level throwing version).
+
 ## [0.4.1] - 2026-04-16
 
 ### Fixed
