@@ -346,36 +346,21 @@ public final class CheTelegramAllMCPServer {
 
             // Message Operations
             case "get_chat_history":
-                guard let chatId = int64Arg(args, "chat_id") else {
-                    return errorResult("chat_id is required")
-                }
-                let limit = args["limit"]?.intValue ?? 50
-                let fromMsgId = int64Arg(args, "from_message_id") ?? 0
-                let sinceDate: Date?
-                let untilDate: Date?
+                let parsed: GetChatHistoryArgs
                 do {
-                    sinceDate = try parseISODate(args["since_date"]?.stringValue)
-                    untilDate = try parseUntilDate(args["until_date"]?.stringValue)
+                    parsed = try parseGetChatHistoryArgs(args)
+                } catch let e as HandlerArgError {
+                    return errorResult(e.description)
                 } catch let e as DateParseError {
                     return errorResult(e.description)
                 }
-                // When fetching from latest (fromMsgId == 0) and no explicit max_messages,
-                // default to bulk pagination to work around TDLib's partial first-page issue (#3).
-                let explicitMaxMessages = args["max_messages"]?.intValue
-                if let mm = explicitMaxMessages {
-                    if mm <= 0 {
-                        return errorResult("max_messages must be positive; got \(mm)")
-                    }
-                    if mm > 10_000 {
-                        return errorResult(
-                            "max_messages exceeds 10_000 cap; got \(mm). Use since_date/until_date to narrow the range."
-                        )
-                    }
-                }
-                let maxMessages = explicitMaxMessages ?? (fromMsgId == 0 ? limit : nil)
                 result = try await tdlib.getChatHistory(
-                    chatId: chatId, limit: limit, fromMessageId: fromMsgId,
-                    maxMessages: maxMessages, sinceDate: sinceDate, untilDate: untilDate
+                    chatId: parsed.chatId,
+                    limit: parsed.limit,
+                    fromMessageId: parsed.fromMessageId,
+                    maxMessages: parsed.maxMessages,
+                    sinceDate: parsed.sinceDate,
+                    untilDate: parsed.untilDate
                 )
 
             case "send_message":

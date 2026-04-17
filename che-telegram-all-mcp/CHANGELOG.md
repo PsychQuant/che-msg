@@ -2,6 +2,9 @@
 
 ## [0.4.2] - 2026-04-17
 
+### Refactored
+- **Extract `parseGetChatHistoryArgs` pure function (#7)**: Argument parsing + validation logic for `get_chat_history` handler is now in `Sources/CheTelegramAllMCPCore/HandlerArgs.swift`, testable without a live TDLib connection. Handler became 16 lines (down from 35). Introduces `GetChatHistoryArgs` struct and `HandlerArgError` for structured validation failures. 11 new unit tests lock down the #3 fromMsgId==0 auto-pagination rule, #4 param wiring, and #5/#6 validation boundaries.
+
 ### Fixed
 - **DST fall-back bug in `parseUntilDate`** (verification blocker from logic reviewer): Previously used `Calendar.date(byAdding: DateComponents(hour:23,min:59,sec:59), to: startOfDay)` which breaks on DST fall-back days (25-hour day) — messages at 23:00-23:59 were excluded, defeating the "whole day inclusive" contract. Now constructs end-of-day from wall-clock components (year/month/day + hour=23/min=59/sec=59) so Calendar resolves DST correctly.
 - **Version string in `Server(version:)` synced**: Previously hard-coded `"0.2.0"`, now matches CHANGELOG `0.4.2`.
