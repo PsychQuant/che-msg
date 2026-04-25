@@ -2,6 +2,49 @@ import Foundation
 import TDLibKit
 import TDLibFramework
 
+// MARK: - File-scope helpers (testable seams)
+
+/// Configures the `JSONDecoder` used to decode TDLib `Update` broadcast payloads.
+///
+/// CRITICAL invariant — `keyDecodingStrategy` MUST be `.convertFromSnakeCase`. TDLib
+/// emits snake_case keys (`authorization_state`, `chat_id`, etc.), Swift Codable
+/// types use camelCase. Without this strategy every `Update` decode silently fails
+/// inside `TDLibClient`'s callback `do/catch`, freezing `authState` at
+/// `.waitingForParameters`. This was the v0.2.0 critical bug.
+///
+/// Exposed at file scope so `JSONDecoderRegressionTests` can verify the contract
+/// without instantiating `TDLibClient` (TDLib's receive loop is process-global).
+internal func makeUpdateDecoder() -> JSONDecoder {
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    return decoder
+}
+
+/// Maps a `Swift.Error` thrown by a TDLib auth call into either a structured
+/// `TDLibClient.TDError.tdlibError(code:message:)` or a silent return (code 406).
+///
+/// Per the TDLib protocol contract documented in
+/// `Sources/TDLibKit/Generated/Models/Error.swift`:
+/// > "If the error code is 406, the error message must not be processed in any
+/// >  way and must not be displayed to the user."
+///
+/// Exposed at file scope so `TDLibAuthErrorTests` can verify the mapping
+/// without instantiating `TDLibClient`.
+///
+/// - Parameter error: The error caught from a TDLibKit auth call.
+/// - Throws: `TDLibClient.TDError.tdlibError(code:message:)` for any TDLibKit
+///   error other than code 406; rethrows non-TDLibKit errors unchanged.
+internal func mapTDLibError(_ error: Swift.Error) throws {
+    guard let td = error as? TDLibKit.Error else {
+        throw error
+    }
+    guard td.code != 406 else {
+        // Silent-ignore per TDLib protocol. Caller treats this as success.
+        return
+    }
+    throw TDLibClient.TDError.tdlibError(code: td.code, message: td.message)
+}
+
 /// Manages a TDLib client session with authentication state tracking.
 public final class TDLibClient {
     private let manager: TDLibClientManager
@@ -31,13 +74,13 @@ public final class TDLibClient {
     public enum TDError: LocalizedError {
         case notAuthenticated
         case missingCredentials(String)
-        case tdlibError(String)
+        case tdlibError(code: Int, message: String)
 
         public var errorDescription: String? {
             switch self {
             case .notAuthenticated: return "Not authenticated. Use auth_set_parameters, auth_send_phone, and auth_send_code first."
             case .missingCredentials(let msg): return "Missing: \(msg)"
-            case .tdlibError(let msg): return "TDLib error: \(msg)"
+            case .tdlibError(let code, let message): return "TDLib error \(code): \(message)"
             }
         }
     }
@@ -52,8 +95,7 @@ public final class TDLibClient {
         dbPath = appSupport.appendingPathComponent("che-telegram-all-mcp/tdlib").path
         try FileManager.default.createDirectory(atPath: dbPath, withIntermediateDirectories: true)
 
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let decoder = makeUpdateDecoder()
         let weakRef = Weak()
         manager = TDLibClientManager()
         client = manager.createClient { data, _ in
@@ -127,34 +169,50 @@ public final class TDLibClient {
     // MARK: - Authentication
 
     public func setParameters(apiId: Int, apiHash: String) async throws {
-        _ = try await client.setTdlibParameters(
-            apiHash: apiHash,
-            apiId: apiId,
-            applicationVersion: "0.1.0",
-            databaseDirectory: dbPath,
-            databaseEncryptionKey: Data(),
-            deviceModel: "macOS",
-            filesDirectory: dbPath + "/files",
-            systemLanguageCode: Locale.current.language.languageCode?.identifier ?? "en",
-            systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-            useChatInfoDatabase: true,
-            useFileDatabase: true,
-            useMessageDatabase: true,
-            useSecretChats: false,
-            useTestDc: false
-        )
+        do {
+            _ = try await client.setTdlibParameters(
+                apiHash: apiHash,
+                apiId: apiId,
+                applicationVersion: "0.1.0",
+                databaseDirectory: dbPath,
+                databaseEncryptionKey: Data(),
+                deviceModel: "macOS",
+                filesDirectory: dbPath + "/files",
+                systemLanguageCode: Locale.current.language.languageCode?.identifier ?? "en",
+                systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+                useChatInfoDatabase: true,
+                useFileDatabase: true,
+                useMessageDatabase: true,
+                useSecretChats: false,
+                useTestDc: false
+            )
+        } catch {
+            try mapTDLibError(error)
+        }
     }
 
     public func sendPhoneNumber(_ phoneNumber: String) async throws {
-        _ = try await client.setAuthenticationPhoneNumber(phoneNumber: phoneNumber, settings: nil)
+        do {
+            _ = try await client.setAuthenticationPhoneNumber(phoneNumber: phoneNumber, settings: nil)
+        } catch {
+            try mapTDLibError(error)
+        }
     }
 
     public func sendAuthCode(_ code: String) async throws {
-        _ = try await client.checkAuthenticationCode(code: code)
+        do {
+            _ = try await client.checkAuthenticationCode(code: code)
+        } catch {
+            try mapTDLibError(error)
+        }
     }
 
     public func sendPassword(_ password: String) async throws {
-        _ = try await client.checkAuthenticationPassword(password: password)
+        do {
+            _ = try await client.checkAuthenticationPassword(password: password)
+        } catch {
+            try mapTDLibError(error)
+        }
     }
 
     public func getAuthState() -> String {

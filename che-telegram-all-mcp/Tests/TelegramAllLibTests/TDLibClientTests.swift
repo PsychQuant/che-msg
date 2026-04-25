@@ -33,8 +33,11 @@ final class TDLibClientTests: XCTestCase {
     }
 
     func testTDErrorTDLibError() {
-        let error = TDLibClient.TDError.tdlibError("connection timeout")
-        XCTAssertTrue(error.localizedDescription.contains("connection timeout"))
+        let error = TDLibClient.TDError.tdlibError(code: 500, message: "connection timeout")
+        XCTAssertTrue(error.localizedDescription.contains("500"),
+                      "errorDescription must include the numeric code")
+        XCTAssertTrue(error.localizedDescription.contains("connection timeout"),
+                      "errorDescription must include the original message")
     }
 
     // MARK: - Sendable Conformance

@@ -14,7 +14,7 @@ public final class CheTelegramAllMCPServer {
 
         server = Server(
             name: "che-telegram-all-mcp",
-            version: "0.4.2",
+            version: "0.4.3",
             capabilities: .init(tools: .init())
         )
 
@@ -504,6 +504,8 @@ public final class CheTelegramAllMCPServer {
 
             return CallTool.Result(content: [.text(text: result, annotations: nil, _meta: nil)], isError: false)
 
+        } catch TDLibClient.TDError.tdlibError(let code, let message) {
+            return tdlibErrorResult(code: code, message: message)
         } catch {
             return errorResult(error.localizedDescription)
         }

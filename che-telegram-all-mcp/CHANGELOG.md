@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.3] - 2026-04-25
+
+### Fixed
+- **TDLib auth error masking — `che-telegram-all-mcp#1` Issue C primary**: Previously `TDLibClient.setParameters` / `sendPhoneNumber` / `sendAuthCode` / `sendPassword` propagated `TDLibKit.Error` as opaque `"TDLibKit.Error error 1"` strings via `Swift.Error.localizedDescription`, hiding the actual TDLib `code` and `message`. Callers could not distinguish flood-wait (code 420 `FLOOD_WAIT_X`), invalid code (400 `PHONE_CODE_INVALID`), or internal errors. Now wrapped in `do/catch` that maps `TDLibKit.Error` → `TDError.tdlibError(code: Int, message: String)` with discrete fields preserved.
+
+### Changed
+- **BREAKING — `TDLibClient.TDError.tdlibError` enum case shape**: from `tdlibError(String)` to `tdlibError(code: Int, message: String)`. Internal API only — no public consumers outside this package. All call sites updated.
+- **MCP response error serialization for auth tools**: `Server.handleToolCall` now catches `TDError.tdlibError(code:message:)` separately from generic errors and serializes as structured JSON `{"type":"tdlib_error","code":<int>,"message":<string>}` with `isError: true`. AI agents can now parse error code + message without regex on free-text. Non-auth errors continue to use the existing plain-text `errorResult` helper.
+
+### Added
+- **TDLib protocol code 406 silent-ignore rule**: per TDLib protocol contract ("If the error code is 406, the error message must not be processed in any way and must not be displayed to the user"), the four auth methods now silently swallow code 406 errors. Other TDLib codes propagate as structured `TDError.tdlibError`.
+- **`TelegramAllLib.makeUpdateDecoder()`** (file-scope internal helper): factored out the `JSONDecoder` configuration used for TDLib `Update` payloads so a regression test can verify `keyDecodingStrategy == .convertFromSnakeCase` without instantiating `TDLibClient` (TDLib's receive loop is process-global).
+- **`TelegramAllLib.mapTDLibError(_:)`** (file-scope internal helper): pure function for TDLibKit error → `TDError.tdlibError` mapping, including the code 406 silent-ignore branch. Testable without a live TDLib connection.
+- **`CheTelegramAllMCPCore.tdlibErrorResult(code:message:)`** (file-scope internal helper): pure function constructing structured MCP error responses. Testable without instantiating the server.
+- **New tests** (14 cases): `TDLibAuthErrorTests` (mapping + silent-ignore + non-TDLib passthrough), `JSONDecoderRegressionTests` (snake_case decode regression guard, locks down v0.2.0 critical bug fix), `AuthErrorResponseTests` (structured MCP response shape).
+- **New capability spec**: `openspec/specs/telegram-auth-error-reporting/` (added by spectra change `improve-tdlib-auth-error-handling`).
+
+### Notes
+- Out of scope: auto-set `Task` race fix (`che-telegram-all-mcp#1` Issue C tertiary) tracked separately.
+- Issues A + B from `che-telegram-all-mcp#1` were fixed in v0.3.0 (snake_case decoder); release of that fix as a prebuilt binary is a separate hotfix.
+
 ## [0.4.2] - 2026-04-17
 
 ### Refactored
