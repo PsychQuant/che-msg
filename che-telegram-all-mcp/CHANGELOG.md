@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-04-26
 
 ### Added
 - **`auth_run` MCP tool — state-machine driver**: A single tool drives the auth flow by one step per call. Optional args `phone` / `code` / `password` route to the matching TDLib method based on current `authState`. When env vars are present (`TELEGRAM_API_ID`/`HASH`, `TELEGRAM_PHONE`, `TELEGRAM_2FA_PASSWORD`), auto-fire handles those steps; SMS verification code is **never** auto-fired (one-shot delivery rule, must be supplied via the `code` arg). Replaces the per-step manual workflow with a single agent-friendly entry point. The legacy `auth_set_parameters` / `auth_send_phone` / `auth_send_code` / `auth_send_password` tools remain as escape hatches.

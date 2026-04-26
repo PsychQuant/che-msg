@@ -14,7 +14,7 @@ public final class CheTelegramAllMCPServer {
 
         server = Server(
             name: "che-telegram-all-mcp",
-            version: "0.4.3",
+            version: "0.5.0",
             capabilities: .init(tools: .init())
         )
 
