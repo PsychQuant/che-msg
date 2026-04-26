@@ -263,6 +263,45 @@ final class ServerHandlerLogicTests: XCTestCase {
                        "default limit should be 50")
     }
 
+    // MARK: - #12 backward-compat: numeric-string chat_id / from_message_id
+
+    /// `int64ArgValue` accepts `.string("123")` for callers that quote integers
+    /// in JSON (legacy MCP clients). Lock this dual-path so a refactor that
+    /// drops string fallback would be caught.
+    func testChatIdAsStringAccepted() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .string("100"),
+        ])
+        XCTAssertEqual(parsed.chatId, 100)
+    }
+
+    func testFromMessageIdAsStringAccepted() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "from_message_id": .string("12345"),
+        ])
+        XCTAssertEqual(parsed.fromMessageId, 12345)
+    }
+
+    /// Non-numeric string for required `chat_id` falls back to nil → throws
+    /// "chat_id is required" (the field is treated as missing).
+    func testChatIdAsStringInvalidThrows() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .string("not-a-number"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id is required")
+        }
+    }
+
+    func testDumpChatIdAsStringAccepted() throws {
+        let parsed = try parseDumpChatToMarkdownArgs([
+            "chat_id": .string("100"),
+            "output_path": .string("/tmp/x.md"),
+        ])
+        XCTAssertEqual(parsed.chatId, 100)
+    }
+
     // MARK: - #13: parseDumpChatToMarkdownArgs
 
     func testDumpRequiresChatId() {
