@@ -46,14 +46,7 @@ internal func parseGetChatHistoryArgs(_ args: [String: Value]) throws -> GetChat
 
     let explicit = args["max_messages"]?.intValue
     if let mm = explicit {
-        if mm <= 0 {
-            throw HandlerArgError(message: "max_messages must be positive; got \(mm)")
-        }
-        if mm > 10_000 {
-            throw HandlerArgError(
-                message: "max_messages exceeds 10_000 cap; got \(mm). Use since_date/until_date to narrow the range."
-            )
-        }
+        try validateMaxMessagesCap(mm)
     }
     // #3 fix: when fromMsgId == 0 and caller didn't specify, default to limit
     // so we enter the bulk pagination path and avoid TDLib's partial first page.
@@ -67,6 +60,21 @@ internal func parseGetChatHistoryArgs(_ args: [String: Value]) throws -> GetChat
         sinceDate: sinceDate,
         untilDate: untilDate
     )
+}
+
+/// Shared `max_messages` cap policy. Both `parseGetChatHistoryArgs` and
+/// `parseDumpChatToMarkdownArgs` enforce the same 0 / 10_000 invariant
+/// (#13). Single source of truth so a future cap policy change (e.g.
+/// tightening to 5_000 or relaxing for paid tier) propagates atomically.
+internal func validateMaxMessagesCap(_ value: Int) throws {
+    if value <= 0 {
+        throw HandlerArgError(message: "max_messages must be positive; got \(value)")
+    }
+    if value > 10_000 {
+        throw HandlerArgError(
+            message: "max_messages exceeds 10_000 cap; got \(value). Use since_date/until_date to narrow the range."
+        )
+    }
 }
 
 /// Module-level Int64 arg extraction. Single source of truth — formerly
