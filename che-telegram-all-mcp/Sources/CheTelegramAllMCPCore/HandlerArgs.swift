@@ -62,6 +62,57 @@ internal func parseGetChatHistoryArgs(_ args: [String: Value]) throws -> GetChat
     )
 }
 
+/// Parsed arguments for the `dump_chat_to_markdown` MCP tool (#13).
+/// Mirrors the `GetChatHistoryArgs` pattern from #7 — extracts inline
+/// validation out of `Server.swift` so the parsing/validation rules
+/// (chat_id required, output_path required, 0/10_000 cap, ISO date
+/// parsing) are unit-testable without a live TDLib connection.
+internal struct DumpChatToMarkdownArgs {
+    let chatId: Int64
+    let outputPath: String
+    let maxMessages: Int
+    let sinceDate: Date?
+    let untilDate: Date?
+    let selfLabel: String
+}
+
+/// Parse and validate the args dictionary for `dump_chat_to_markdown`.
+///
+/// Rules encoded here:
+/// - `chat_id` is required
+/// - `output_path` is required
+/// - `max_messages` defaults to 5000 (different from `get_chat_history`
+///   which auto-derives from `limit` via the #3 fromMsgId==0 rule)
+/// - `max_messages` must be > 0 and <= 10_000 (shared with
+///   `parseGetChatHistoryArgs` via `validateMaxMessagesCap`)
+/// - `since_date` / `until_date` parse via `parseISODate` /
+///   `parseUntilDate` which throw `DateParseError` on invalid format
+/// - `self_label` defaults to `"我"` (Mandarin "I/me")
+internal func parseDumpChatToMarkdownArgs(_ args: [String: Value]) throws -> DumpChatToMarkdownArgs {
+    guard let chatId = int64ArgValue(args, "chat_id") else {
+        throw HandlerArgError(message: "chat_id is required")
+    }
+    guard let outputPath = args["output_path"]?.stringValue else {
+        throw HandlerArgError(message: "output_path is required")
+    }
+    let maxMessages = args["max_messages"]?.intValue ?? 5000
+    try validateMaxMessagesCap(maxMessages)
+
+    let sinceDate = try parseISODate(args["since_date"]?.stringValue)
+    let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
+
+    let selfLabel = args["self_label"]?.stringValue ?? "我"
+
+    return DumpChatToMarkdownArgs(
+        chatId: chatId,
+        outputPath: outputPath,
+        maxMessages: maxMessages,
+        sinceDate: sinceDate,
+        untilDate: untilDate,
+        selfLabel: selfLabel
+    )
+}
+
 /// Shared `max_messages` cap policy. Both `parseGetChatHistoryArgs` and
 /// `parseDumpChatToMarkdownArgs` enforce the same 0 / 10_000 invariant
 /// (#13). Single source of truth so a future cap policy change (e.g.

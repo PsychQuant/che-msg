@@ -168,4 +168,118 @@ final class ServerHandlerLogicTests: XCTestCase {
         XCTAssertEqual(parsed.limit, 50,
                        "default limit should be 50")
     }
+
+    // MARK: - #13: parseDumpChatToMarkdownArgs
+
+    func testDumpRequiresChatId() {
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "output_path": .string("/tmp/x.md"),
+        ]))
+    }
+
+    func testDumpRequiresOutputPath() {
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+        ]))
+    }
+
+    func testDumpDefaultMaxMessagesIs5000() throws {
+        let parsed = try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+        ])
+        XCTAssertEqual(parsed.chatId, 100)
+        XCTAssertEqual(parsed.outputPath, "/tmp/x.md")
+        XCTAssertEqual(parsed.maxMessages, 5000,
+                       "default max_messages for dump_chat_to_markdown is 5000 (different from get_chat_history)")
+    }
+
+    func testDumpDefaultSelfLabel() throws {
+        let parsed = try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+        ])
+        XCTAssertEqual(parsed.selfLabel, "我", "default self_label is 我")
+    }
+
+    func testDumpExplicitSelfLabel() throws {
+        let parsed = try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "self_label": .string("Alice"),
+        ])
+        XCTAssertEqual(parsed.selfLabel, "Alice")
+    }
+
+    /// Boundary parity with #15-C2 — dump handler must enforce the same
+    /// upward cap. Without this, future cap policy changes in
+    /// `validateMaxMessagesCap` could silently drift here.
+    func testDumpMaxMessagesAt10001Rejected() {
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "max_messages": .int(10_001),
+        ]))
+    }
+
+    func testDumpMaxMessagesAt10000Accepted() throws {
+        let parsed = try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "max_messages": .int(10_000),
+        ])
+        XCTAssertEqual(parsed.maxMessages, 10_000)
+    }
+
+    /// Symmetric downward boundary parity with #15 DA finding.
+    func testDumpMaxMessagesAt9999Accepted() throws {
+        let parsed = try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "max_messages": .int(9_999),
+        ])
+        XCTAssertEqual(parsed.maxMessages, 9_999)
+    }
+
+    func testDumpMaxMessagesRejectsZeroOrNegative() {
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "max_messages": .int(0),
+        ]))
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "max_messages": .int(-1),
+        ]))
+    }
+
+    func testDumpInvalidDateThrows() {
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "since_date": .string("2026/04/17"),
+        ]))
+    }
+
+    /// Parity with #15-C3 — until_date must hit end-of-day with full
+    /// year/month/day assertions to catch TZ drift bugs.
+    func testDumpUntilDateUsesEndOfDay() throws {
+        let parsed = try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "until_date": .string("2026-04-17"),
+        ])
+        XCTAssertNotNil(parsed.untilDate)
+        let components = Calendar.current.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second],
+            from: parsed.untilDate!
+        )
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 4)
+        XCTAssertEqual(components.day, 17)
+        XCTAssertEqual(components.hour, 23)
+        XCTAssertEqual(components.minute, 59)
+        XCTAssertEqual(components.second, 59)
+    }
 }

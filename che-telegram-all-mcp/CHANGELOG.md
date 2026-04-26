@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.2] - 2026-04-26
+
+Internal refactor and test hardening — no behavior change for MCP callers.
+
+### Refactored
+- **`parseDumpChatToMarkdownArgs` pure function (#13)**: `dump_chat_to_markdown` handler in `Server.swift` (lines 510-532) duplicated the entire validation block from `get_chat_history` — `chat_id` guard, `max_messages` 0/10_000 cap (verbatim), `parseISODate`/`parseUntilDate` with `DateParseError` catch — flagged in #7 verify by Devil's Advocate as silent-drift risk. Extracted `DumpChatToMarkdownArgs` struct + `parseDumpChatToMarkdownArgs(_ args:) throws` mirroring the #7 pattern; handler shrinks from 27 lines of inline validation to 15 lines of parse-then-call.
+- **`validateMaxMessagesCap` shared helper (#13)**: The 0/10_000 cap rule was duplicated between `parseGetChatHistoryArgs` and `dump_chat_to_markdown`'s inline validation. Extracted to a module-level helper so future cap policy changes (e.g. tightening for free tier) propagate atomically to both handlers.
+
+### Test
+- **10 new `parseDumpChatToMarkdownArgs` tests** in `ServerHandlerLogicTests`: required-field guards (`chat_id`, `output_path`), defaults (`max_messages=5000`, `self_label="我"`), boundary parity with #15-C2 (`testDumpMaxMessagesAt10001Rejected`, `testDumpMaxMessagesAt10000Accepted`), symmetric downward parity with #15 DA finding (`testDumpMaxMessagesAt9999Accepted`), zero/negative rejection, invalid date format, and `until_date` end-of-day with full year/month/day assertions (#15-C3 parity). Plus `testDumpExplicitSelfLabel` covering the override path.
+- Test count: 139 → 150.
+
 ## [0.5.1] - 2026-04-26
 
 Internal refactor and test hardening — no behavior change for MCP callers.

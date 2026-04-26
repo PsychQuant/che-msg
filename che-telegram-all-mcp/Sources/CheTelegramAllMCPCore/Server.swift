@@ -507,38 +507,22 @@ public final class CheTelegramAllMCPServer {
 
             // History Export
             case "dump_chat_to_markdown":
-                guard let chatId = int64ArgValue(args, "chat_id") else {
-                    return errorResult("chat_id is required")
-                }
-                guard let outputPath = args["output_path"]?.stringValue else {
-                    return errorResult("output_path is required")
-                }
-                let maxMessages = args["max_messages"]?.intValue ?? 5000
-                if maxMessages <= 0 {
-                    return errorResult("max_messages must be positive; got \(maxMessages)")
-                }
-                if maxMessages > 10_000 {
-                    return errorResult(
-                        "max_messages exceeds 10_000 cap; got \(maxMessages). Use since_date/until_date to narrow the range."
-                    )
-                }
-                let sinceDate: Date?
-                let untilDate: Date?
+                let parsed: DumpChatToMarkdownArgs
                 do {
-                    sinceDate = try parseISODate(args["since_date"]?.stringValue)
-                    untilDate = try parseUntilDate(args["until_date"]?.stringValue)
+                    parsed = try parseDumpChatToMarkdownArgs(args)
+                } catch let e as HandlerArgError {
+                    return errorResult(e.description)
                 } catch let e as DateParseError {
                     return errorResult(e.description)
                 }
-                let selfLabel = args["self_label"]?.stringValue ?? "我"
                 let exporter = MarkdownExporter(client: tdlib)
                 result = try await exporter.dumpChatToMarkdown(
-                    chatId: chatId,
-                    outputPath: outputPath,
-                    maxMessages: maxMessages,
-                    sinceDate: sinceDate,
-                    untilDate: untilDate,
-                    selfLabel: selfLabel
+                    chatId: parsed.chatId,
+                    outputPath: parsed.outputPath,
+                    maxMessages: parsed.maxMessages,
+                    sinceDate: parsed.sinceDate,
+                    untilDate: parsed.untilDate,
+                    selfLabel: parsed.selfLabel
                 )
 
             default:
