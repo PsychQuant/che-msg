@@ -102,6 +102,64 @@ final class ServerHandlerLogicTests: XCTestCase {
         XCTAssertEqual(parsed.maxMessages, 9_999)
     }
 
+    // MARK: - #8 A1 (subsumes #20): max_messages type enforcement
+
+    /// `.string("100")` should be coerced to 100 (consistent with int64ArgValue's
+    /// dual-path semantics for chat_id) — pre-existing behavior for callers that
+    /// quote integers in JSON.
+    func testMaxMessagesAsStringAccepted() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "max_messages": .string("100"),
+        ])
+        XCTAssertEqual(parsed.maxMessages, 100)
+    }
+
+    /// `.string("0")` MUST throw — old behavior silently fell back to the
+    /// default (limit for get_chat_history, 5000 for dump), bypassing the
+    /// `<= 0` cap entirely (#8 A1, #20).
+    func testMaxMessagesAsStringZeroRejected() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "max_messages": .string("0"),
+        ]))
+    }
+
+    /// Non-numeric string must throw with explicit error (caller intent
+    /// ambiguous — silent fallback was the bug).
+    func testMaxMessagesAsStringInvalidRejected() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "max_messages": .string("not-a-number"),
+        ]))
+    }
+
+    /// `.double(20000.0)` MUST throw — old behavior silently fell back to
+    /// default (5000) and bypassed the cap. The user's explicit 20000 was
+    /// silently ignored. Symmetric to string case (#20 DA finding).
+    func testMaxMessagesAsDoubleRejected() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "max_messages": .double(20000.0),
+        ]))
+    }
+
+    func testDumpMaxMessagesAsStringZeroRejected() {
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "max_messages": .string("0"),
+        ]))
+    }
+
+    func testDumpMaxMessagesAsDoubleRejected() {
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "max_messages": .double(20000.0),
+        ]))
+    }
+
     // MARK: - #4: date parsing
 
     func testSinceDateValidParsed() throws {

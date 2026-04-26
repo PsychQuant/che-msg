@@ -44,10 +44,7 @@ internal func parseGetChatHistoryArgs(_ args: [String: Value]) throws -> GetChat
     let sinceDate = try parseISODate(args["since_date"]?.stringValue)
     let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
 
-    let explicit = args["max_messages"]?.intValue
-    if let mm = explicit {
-        try validateMaxMessagesCap(mm)
-    }
+    let explicit = try parseMaxMessages(args)
     // #3 fix: when fromMsgId == 0 and caller didn't specify, default to limit
     // so we enter the bulk pagination path and avoid TDLib's partial first page.
     let maxMessages = explicit ?? (fromMessageId == 0 ? limit : nil)
@@ -95,8 +92,7 @@ internal func parseDumpChatToMarkdownArgs(_ args: [String: Value]) throws -> Dum
     guard let outputPath = args["output_path"]?.stringValue else {
         throw HandlerArgError(message: "output_path is required")
     }
-    let maxMessages = args["max_messages"]?.intValue ?? 5000
-    try validateMaxMessagesCap(maxMessages)
+    let maxMessages = try parseMaxMessages(args) ?? 5000
 
     let sinceDate = try parseISODate(args["since_date"]?.stringValue)
     let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
@@ -111,6 +107,41 @@ internal func parseDumpChatToMarkdownArgs(_ args: [String: Value]) throws -> Dum
         untilDate: untilDate,
         selfLabel: selfLabel
     )
+}
+
+/// Parse and validate the optional `max_messages` arg.
+///
+/// Subsumes #20 + closes #8 A1: previously
+/// `args["max_messages"]?.intValue ?? default` silently fell back to the
+/// default when the value was a `.string("0")` or `.double(20000.0)`,
+/// completely bypassing the cap check. The user's explicit (but
+/// type-mismatched) request was silently ignored.
+///
+/// Resolution order (mirrors `int64ArgValue`'s dual-path semantics):
+/// 1. Key absent → return `nil` (caller applies its own default).
+/// 2. `.int(n)` → `n` (after cap check).
+/// 3. `.string(s)` → `Int(s)` strict base-10 parse (after cap check).
+/// 4. Anything else (`.double`, `.bool`, `.array`, `.object`, `.null`,
+///    or string that fails parse) → throw `HandlerArgError("max_messages
+///    must be an integer")`.
+///
+/// All accepted values pass through `validateMaxMessagesCap` — no value
+/// can leak through that bypasses the 0 / 10_000 invariant.
+internal func parseMaxMessages(_ args: [String: Value]) throws -> Int? {
+    guard let raw = args["max_messages"] else { return nil }
+    let parsed: Int?
+    if let n = raw.intValue {
+        parsed = n
+    } else if let s = raw.stringValue, let n = Int(s) {
+        parsed = n
+    } else {
+        parsed = nil
+    }
+    guard let value = parsed else {
+        throw HandlerArgError(message: "max_messages must be an integer")
+    }
+    try validateMaxMessagesCap(value)
+    return value
 }
 
 /// Shared `max_messages` cap policy. Both `parseGetChatHistoryArgs` and
