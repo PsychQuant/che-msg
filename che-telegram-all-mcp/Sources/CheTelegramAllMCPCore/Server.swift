@@ -361,7 +361,7 @@ public final class CheTelegramAllMCPServer {
                 result = try await tdlib.getMe()
 
             case "get_user":
-                guard let userId = int64Arg(args, "user_id") else {
+                guard let userId = int64ArgValue(args, "user_id") else {
                     return errorResult("user_id is required")
                 }
                 result = try await tdlib.getUser(userId: userId)
@@ -375,7 +375,7 @@ public final class CheTelegramAllMCPServer {
                 result = try await tdlib.getChats(limit: limit)
 
             case "get_chat":
-                guard let chatId = int64Arg(args, "chat_id") else {
+                guard let chatId = int64ArgValue(args, "chat_id") else {
                     return errorResult("chat_id is required")
                 }
                 result = try await tdlib.getChat(chatId: chatId)
@@ -407,23 +407,23 @@ public final class CheTelegramAllMCPServer {
                 )
 
             case "send_message":
-                guard let chatId = int64Arg(args, "chat_id"),
+                guard let chatId = int64ArgValue(args, "chat_id"),
                       let text = args["text"]?.stringValue else {
                     return errorResult("chat_id and text are required")
                 }
-                let replyTo = int64Arg(args, "reply_to_message_id")
+                let replyTo = int64ArgValue(args, "reply_to_message_id")
                 result = try await tdlib.sendMessage(chatId: chatId, text: text, replyToMessageId: replyTo)
 
             case "edit_message":
-                guard let chatId = int64Arg(args, "chat_id"),
-                      let messageId = int64Arg(args, "message_id"),
+                guard let chatId = int64ArgValue(args, "chat_id"),
+                      let messageId = int64ArgValue(args, "message_id"),
                       let text = args["text"]?.stringValue else {
                     return errorResult("chat_id, message_id, and text are required")
                 }
                 result = try await tdlib.editMessage(chatId: chatId, messageId: messageId, text: text)
 
             case "delete_messages":
-                guard let chatId = int64Arg(args, "chat_id"),
+                guard let chatId = int64ArgValue(args, "chat_id"),
                       let msgIds = int64ArrayArg(args, "message_ids") else {
                     return errorResult("chat_id and message_ids are required")
                 }
@@ -431,15 +431,15 @@ public final class CheTelegramAllMCPServer {
                 result = try await tdlib.deleteMessages(chatId: chatId, messageIds: msgIds, revoke: revoke)
 
             case "forward_messages":
-                guard let chatId = int64Arg(args, "chat_id"),
-                      let fromChatId = int64Arg(args, "from_chat_id"),
+                guard let chatId = int64ArgValue(args, "chat_id"),
+                      let fromChatId = int64ArgValue(args, "from_chat_id"),
                       let msgIds = int64ArrayArg(args, "message_ids") else {
                     return errorResult("chat_id, from_chat_id, and message_ids are required")
                 }
                 result = try await tdlib.forwardMessages(chatId: chatId, fromChatId: fromChatId, messageIds: msgIds)
 
             case "search_messages":
-                guard let chatId = int64Arg(args, "chat_id"),
+                guard let chatId = int64ArgValue(args, "chat_id"),
                       let query = args["query"]?.stringValue else {
                     return errorResult("chat_id and query are required")
                 }
@@ -448,43 +448,43 @@ public final class CheTelegramAllMCPServer {
 
             // Group Management
             case "get_chat_members":
-                guard let chatId = int64Arg(args, "chat_id") else {
+                guard let chatId = int64ArgValue(args, "chat_id") else {
                     return errorResult("chat_id is required")
                 }
                 let limit = args["limit"]?.intValue ?? 200
                 result = try await tdlib.getChatMembers(chatId: chatId, limit: limit)
 
             case "pin_message":
-                guard let chatId = int64Arg(args, "chat_id"),
-                      let messageId = int64Arg(args, "message_id") else {
+                guard let chatId = int64ArgValue(args, "chat_id"),
+                      let messageId = int64ArgValue(args, "message_id") else {
                     return errorResult("chat_id and message_id are required")
                 }
                 let silent = args["disable_notification"]?.boolValue ?? false
                 result = try await tdlib.pinMessage(chatId: chatId, messageId: messageId, disableNotification: silent)
 
             case "unpin_message":
-                guard let chatId = int64Arg(args, "chat_id"),
-                      let messageId = int64Arg(args, "message_id") else {
+                guard let chatId = int64ArgValue(args, "chat_id"),
+                      let messageId = int64ArgValue(args, "message_id") else {
                     return errorResult("chat_id and message_id are required")
                 }
                 result = try await tdlib.unpinMessage(chatId: chatId, messageId: messageId)
 
             case "set_chat_title":
-                guard let chatId = int64Arg(args, "chat_id"),
+                guard let chatId = int64ArgValue(args, "chat_id"),
                       let title = args["title"]?.stringValue else {
                     return errorResult("chat_id and title are required")
                 }
                 result = try await tdlib.setChatTitle(chatId: chatId, title: title)
 
             case "set_chat_description":
-                guard let chatId = int64Arg(args, "chat_id"),
+                guard let chatId = int64ArgValue(args, "chat_id"),
                       let desc = args["description"]?.stringValue else {
                     return errorResult("chat_id and description are required")
                 }
                 result = try await tdlib.setChatDescription(chatId: chatId, description: desc)
 
             case "mark_as_read":
-                guard let chatId = int64Arg(args, "chat_id"),
+                guard let chatId = int64ArgValue(args, "chat_id"),
                       let msgIds = int64ArrayArg(args, "message_ids") else {
                     return errorResult("chat_id and message_ids are required")
                 }
@@ -499,15 +499,15 @@ public final class CheTelegramAllMCPServer {
                 result = try await tdlib.createGroup(title: title, userIds: userIds)
 
             case "add_chat_member":
-                guard let chatId = int64Arg(args, "chat_id"),
-                      let userId = int64Arg(args, "user_id") else {
+                guard let chatId = int64ArgValue(args, "chat_id"),
+                      let userId = int64ArgValue(args, "user_id") else {
                     return errorResult("chat_id and user_id are required")
                 }
                 result = try await tdlib.addChatMember(chatId: chatId, userId: userId)
 
             // History Export
             case "dump_chat_to_markdown":
-                guard let chatId = int64Arg(args, "chat_id") else {
+                guard let chatId = int64ArgValue(args, "chat_id") else {
                     return errorResult("chat_id is required")
                 }
                 guard let outputPath = args["output_path"]?.stringValue else {
@@ -556,11 +556,8 @@ public final class CheTelegramAllMCPServer {
 
     // MARK: - Helpers
 
-    private func int64Arg(_ args: [String: Value], _ key: String) -> Int64? {
-        if let n = args[key]?.intValue { return Int64(n) }
-        if let s = args[key]?.stringValue { return Int64(s) }
-        return nil
-    }
+    // Note: `int64Arg` was unified with `HandlerArgs.int64ArgValue` per #15-C1.
+    // All call sites now use the module-level `int64ArgValue` directly.
 
     private func int64ArrayArg(_ args: [String: Value], _ key: String) -> [Int64]? {
         guard let arr = args[key]?.arrayValue else { return nil }

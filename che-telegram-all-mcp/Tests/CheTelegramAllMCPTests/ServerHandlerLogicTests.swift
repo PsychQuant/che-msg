@@ -75,6 +75,17 @@ final class ServerHandlerLogicTests: XCTestCase {
         XCTAssertEqual(parsed.maxMessages, 10_000)
     }
 
+    /// Boundary regression for #15-C2 — first value above the cap (10_001)
+    /// must be rejected. Without this test an off-by-one change like
+    /// `if mm > 10_001` would silently widen the cap (10_000 still accepted,
+    /// 50_000 still rejected, but 10_001 leaks through).
+    func testMaxMessagesAt10001Rejected() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "max_messages": .int(10_001),
+        ]))
+    }
+
     // MARK: - #4: date parsing
 
     func testSinceDateValidParsed() throws {
@@ -99,10 +110,16 @@ final class ServerHandlerLogicTests: XCTestCase {
             "until_date": .string("2026-04-17"),
         ])
         XCTAssertNotNil(parsed.untilDate)
+        // #15-C3: assert year/month/day too — without these a TZ drift bug
+        // could shift `until_date` to a different calendar day while keeping
+        // hour/min/sec at 23:59:59 (same wall clock, wrong date).
         let components = Calendar.current.dateComponents(
-            [.hour, .minute, .second],
+            [.year, .month, .day, .hour, .minute, .second],
             from: parsed.untilDate!
         )
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 4)
+        XCTAssertEqual(components.day, 17)
         XCTAssertEqual(components.hour, 23)
         XCTAssertEqual(components.minute, 59)
         XCTAssertEqual(components.second, 59)

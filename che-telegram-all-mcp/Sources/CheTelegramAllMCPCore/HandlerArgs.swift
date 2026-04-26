@@ -69,9 +69,16 @@ internal func parseGetChatHistoryArgs(_ args: [String: Value]) throws -> GetChat
     )
 }
 
-/// Module-internal Int64 arg extraction, mirroring the Server's private helper
-/// so parse function has no instance dependency.
-private func int64ArgValue(_ args: [String: Value], _ key: String) -> Int64? {
+/// Module-level Int64 arg extraction. Single source of truth — formerly
+/// duplicated as `int64Arg` in `Server.swift`; consolidated here per #15-C1
+/// (DRY) so any future change (e.g. trimming whitespace, rejecting hex)
+/// automatically applies to all 21+ handlers.
+///
+/// Resolution order:
+/// 1. Native `.int(n)` → `Int64(n)`
+/// 2. `.string(s)` fallback → `Int64(s)` (strict base-10, rejects hex/scientific/whitespace)
+/// 3. Otherwise nil (key missing, .null, .bool, .double, .array, .object)
+internal func int64ArgValue(_ args: [String: Value], _ key: String) -> Int64? {
     guard let value = args[key] else { return nil }
     if let n = value.intValue { return Int64(n) }
     if let s = value.stringValue { return Int64(s) }

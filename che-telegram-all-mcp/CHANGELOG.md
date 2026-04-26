@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Refactored
+- **`int64ArgValue` consolidated as single source of truth (#15-C1)**: `Server.int64Arg` (private, 21+ callers) was a verbatim duplicate of `HandlerArgs.int64ArgValue` (private, 2 callers — added by #7 with a comment acknowledging the drift risk). Removed the Server copy, promoted the HandlerArgs one to `internal`, and updated all 21 Server call sites. Future tweaks (e.g. trimming whitespace, accepting hex prefix) now apply uniformly across all handlers.
+
+### Test
+- **`testMaxMessagesAt10001Rejected` boundary regression (#15-C2)**: Existing tests covered `10_000` (accept) and `50_000` (reject) but not the first off-by-one value `10_001`. An accidental `if mm > 10_001` change would have slipped through the gap. New test locks the `> 10_000` boundary inclusive.
+- **`testUntilDateUsesEndOfDay` extended with year/month/day assertions (#15-C3)**: Previously asserted only `hour=23/min=59/sec=59` — a TZ drift that shifted the parsed date to a different calendar day would still pass (same wall clock, wrong date). Now asserts the full date + time tuple.
+
 ## [0.5.0] - 2026-04-26
 
 ### Added
