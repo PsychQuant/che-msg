@@ -118,27 +118,22 @@ internal func parseDumpChatToMarkdownArgs(_ args: [String: Value]) throws -> Dum
 /// completely bypassing the cap check. The user's explicit (but
 /// type-mismatched) request was silently ignored.
 ///
-/// Resolution order (mirrors `int64ArgValue`'s dual-path semantics):
+/// Resolution order via MCP SDK's `Int(_:strict:false)` (Value.swift:320):
 /// 1. Key absent → return `nil` (caller applies its own default).
-/// 2. `.int(n)` → `n` (after cap check).
-/// 3. `.string(s)` → `Int(s)` strict base-10 parse (after cap check).
-/// 4. Anything else (`.double`, `.bool`, `.array`, `.object`, `.null`,
-///    or string that fails parse) → throw `HandlerArgError("max_messages
-///    must be an integer")`.
+/// 2. `.int(n)` → `n`.
+/// 3. `.double(d)` where `Int(exactly: d) != nil` → `n` (whole-number
+///    doubles like `5000.0` are accepted; this matters for JS / Python
+///    callers whose JSON encoders emit integers as `5000.0` per JSON
+///    spec).
+/// 4. `.string(s)` → `Int(s)` strict base-10 parse.
+/// 5. Anything else (`.double(0.5)`, `.bool`, `.array`, `.object`,
+///    `.null`, or invalid string) → throw `HandlerArgError`.
 ///
 /// All accepted values pass through `validateMaxMessagesCap` — no value
 /// can leak through that bypasses the 0 / 10_000 invariant.
 internal func parseMaxMessages(_ args: [String: Value]) throws -> Int? {
     guard let raw = args["max_messages"] else { return nil }
-    let parsed: Int?
-    if let n = raw.intValue {
-        parsed = n
-    } else if let s = raw.stringValue, let n = Int(s) {
-        parsed = n
-    } else {
-        parsed = nil
-    }
-    guard let value = parsed else {
+    guard let value = Int(raw, strict: false) else {
         throw HandlerArgError(message: "max_messages must be an integer")
     }
     try validateMaxMessagesCap(value)
