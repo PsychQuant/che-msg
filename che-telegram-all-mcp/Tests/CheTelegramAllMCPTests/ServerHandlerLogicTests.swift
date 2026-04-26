@@ -1,6 +1,7 @@
 import XCTest
 import MCP
 @testable import CheTelegramAllMCPCore
+import TelegramAllLib
 
 /// Tests for `get_chat_history` argument parsing — the pure function
 /// `parseGetChatHistoryArgs` extracted from the MCP handler.
@@ -50,21 +51,34 @@ final class ServerHandlerLogicTests: XCTestCase {
     }
 
     func testMaxMessagesRejectsZeroOrNegative() {
+        // #11: error message text is part of the MCP contract — assert prefix
         XCTAssertThrowsError(try parseGetChatHistoryArgs([
             "chat_id": .int(100),
             "max_messages": .int(0),
-        ]))
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "max_messages must be positive; got 0")
+        }
         XCTAssertThrowsError(try parseGetChatHistoryArgs([
             "chat_id": .int(100),
             "max_messages": .int(-5),
-        ]))
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "max_messages must be positive; got -5")
+        }
     }
 
     func testMaxMessagesRejectsOverCap() {
+        // #11: assert exact contract message
         XCTAssertThrowsError(try parseGetChatHistoryArgs([
             "chat_id": .int(100),
             "max_messages": .int(50_000),
-        ]))
+        ])) { error in
+            XCTAssertEqual(
+                (error as? HandlerArgError)?.description,
+                "max_messages exceeds 10_000 cap; got 50000. Use since_date/until_date to narrow the range."
+            )
+        }
     }
 
     func testMaxMessagesAtCapAccepted() throws {
@@ -138,10 +152,14 @@ final class ServerHandlerLogicTests: XCTestCase {
     /// default (5000) and bypassed the cap. The user's explicit 20000 was
     /// silently ignored. Symmetric to string case (#20 DA finding).
     func testMaxMessagesAsDoubleRejected() {
+        // #11: assert exact contract message for type-mismatch error introduced by #8 A1
         XCTAssertThrowsError(try parseGetChatHistoryArgs([
             "chat_id": .int(100),
             "max_messages": .double(20000.0),
-        ]))
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "max_messages must be an integer")
+        }
     }
 
     func testDumpMaxMessagesAsStringZeroRejected() {
@@ -200,23 +218,41 @@ final class ServerHandlerLogicTests: XCTestCase {
     }
 
     func testInvalidDateFormatThrows() {
+        // #11: error message text is part of the MCP contract
         XCTAssertThrowsError(try parseGetChatHistoryArgs([
             "chat_id": .int(100),
             "since_date": .string("2026/04/17"),
-        ]))
+        ])) { error in
+            XCTAssertEqual(
+                (error as? DateParseError)?.description,
+                "Date format invalid: expected YYYY-MM-DD, got \"2026/04/17\""
+            )
+        }
         XCTAssertThrowsError(try parseGetChatHistoryArgs([
             "chat_id": .int(100),
             "until_date": .string("not-a-date"),
-        ]))
+        ])) { error in
+            XCTAssertEqual(
+                (error as? DateParseError)?.description,
+                "Date format invalid: expected YYYY-MM-DD, got \"not-a-date\""
+            )
+        }
     }
 
     // MARK: - Required field validation
 
     func testMissingChatIdThrows() {
-        XCTAssertThrowsError(try parseGetChatHistoryArgs([:]))
+        // #11: assert exact contract message
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([:])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id is required")
+        }
         XCTAssertThrowsError(try parseGetChatHistoryArgs([
             "limit": .int(50),
-        ]))
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id is required")
+        }
     }
 
     // MARK: - Defaults
@@ -230,15 +266,23 @@ final class ServerHandlerLogicTests: XCTestCase {
     // MARK: - #13: parseDumpChatToMarkdownArgs
 
     func testDumpRequiresChatId() {
+        // #11: assert exact contract message
         XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
             "output_path": .string("/tmp/x.md"),
-        ]))
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id is required")
+        }
     }
 
     func testDumpRequiresOutputPath() {
+        // #11: assert exact contract message
         XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
             "chat_id": .int(100),
-        ]))
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "output_path is required")
+        }
     }
 
     func testDumpDefaultMaxMessagesIs5000() throws {
