@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.3] - 2026-04-26
+
+Type-safety + CLI-MCP parity hardening.
+
+### Fixed
+- **`max_messages` type enforcement (#8 A1, subsumes #20)**: `args["max_messages"]?.intValue ?? default` previously fell back to the default whenever the value was `.string("0")` or `.double(20000.0)` — the cap check (`<= 0` / `> 10_000`) was completely bypassed and the user's explicit (but type-mismatched) value was silently ignored. New `parseMaxMessages` helper mirrors `int64ArgValue`'s dual-path semantics: `.int(n)` → n, `.string(s)` → strict base-10 `Int(s)`, anything else → throws `HandlerArgError("max_messages must be an integer")`. All accepted values pass through `validateMaxMessagesCap`. Affects both `parseGetChatHistoryArgs` and `parseDumpChatToMarkdownArgs`.
+- **CLI / MCP date parity (#8 A2)**: `telegram-all` CLI's `parseCLIDate` had two divergences from MCP — no regex pre-check (`DateFormatter` silently accepted `2026/04/17`) and `--until` parsed to start-of-day (excluded the day's later messages). Lifted `parseISODate` / `parseUntilDate` / `DateParseError` from `CheTelegramAllMCPCore` to `TelegramAllLib` (lower-level shared dep) and exposed as `public`. CLI now picks since-bound vs until-bound semantics via `endOfDay` flag in a 6-line wrapper.
+
+### Test
+- **6 new tests for `max_messages` type enforcement**: `testMaxMessagesAsStringAccepted` (`.string("100")` → 100), `testMaxMessagesAsStringZeroRejected` (no silent fallback), `testMaxMessagesAsStringInvalidRejected`, `testMaxMessagesAsDoubleRejected`, plus `testDumpMaxMessagesAsStringZeroRejected` and `testDumpMaxMessagesAsDoubleRejected` for parity.
+- **Error message contract assertions (#11)**: 7 existing throws-based tests upgraded to assert exact error message text via the throws-error trailing closure. Future refactors that swap precise messages (e.g. `"max_messages must be positive; got 0"`) for vague ones (e.g. `"invalid arg"`) will now be caught — MCP callers may rely on substring match for error classification.
+- **4 new backward-compat tests (#12)**: `testChatIdAsStringAccepted`, `testFromMessageIdAsStringAccepted`, `testChatIdAsStringInvalidThrows`, `testDumpChatIdAsStringAccepted` lock `int64ArgValue`'s dual-path acceptance of `.string("123")` for callers that quote integers in JSON.
+- Test count: 150 → **160** (+10).
+
+### Refactored
+- **`DateParsing.swift` moved to `TelegramAllLib`** (#8 A2): separate file, public API, single source of truth for ISO-date parsing and end-of-day construction. Both `CheTelegramAllMCPCore` and `telegram-all` (CLI) now import from `TelegramAllLib`. No behavior change for MCP callers.
+
 ## [0.5.2] - 2026-04-26
 
 Internal refactor and test hardening — no behavior change for MCP callers.
