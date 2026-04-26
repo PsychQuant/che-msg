@@ -155,7 +155,10 @@ extension TelegramAll {
             do {
                 return try endOfDay ? parseUntilDate(s) : parseISODate(s)
             } catch let e as DateParseError {
-                throw ValidationError("\(flagName) \(e.description)")
+                // Reuse old phrasing for CLI UX. Don't quote DateParseError's
+                // own description verbatim — the resulting "--since Date format
+                // invalid: ..." reads like the flag is named "--since Date".
+                throw ValidationError("\(flagName) must be YYYY-MM-DD; got \(e.input)")
             }
         }
     }
