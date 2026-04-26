@@ -1,13 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.1] - 2026-04-26
+
+Internal refactor and test hardening — no behavior change for MCP callers.
 
 ### Refactored
 - **`int64ArgValue` consolidated as single source of truth (#15-C1)**: `Server.int64Arg` (private, 21+ callers) was a verbatim duplicate of `HandlerArgs.int64ArgValue` (private, 2 callers — added by #7 with a comment acknowledging the drift risk). Removed the Server copy, promoted the HandlerArgs one to `internal`, and updated all 21 Server call sites. Future tweaks (e.g. trimming whitespace, accepting hex prefix) now apply uniformly across all handlers.
 
 ### Test
-- **`testMaxMessagesAt10001Rejected` boundary regression (#15-C2)**: Existing tests covered `10_000` (accept) and `50_000` (reject) but not the first off-by-one value `10_001`. An accidental `if mm > 10_001` change would have slipped through the gap. New test locks the `> 10_000` boundary inclusive.
-- **`testUntilDateUsesEndOfDay` extended with year/month/day assertions (#15-C3)**: Previously asserted only `hour=23/min=59/sec=59` — a TZ drift that shifted the parsed date to a different calendar day would still pass (same wall clock, wrong date). Now asserts the full date + time tuple.
+- **`testMaxMessagesAt10001Rejected` upward boundary regression (#15-C2)**: Existing tests covered `10_000` (accept) and `50_000` (reject) but not the first off-by-one value `10_001`. An accidental `if mm > 10_001` change would have slipped through the gap. New test locks the `> 10_000` upper boundary.
+- **`testMaxMessagesAt9999Accepted` downward boundary regression (#15 verify)**: Symmetric guard for downward mutations of the cap (e.g. `if mm > 9_998` would shrink the cap silently). Added during /idd-verify after Devil's Advocate flagged that the upward-only test left half the boundary exposed.
+- **`testUntilDateUsesEndOfDay` extended with year/month/day assertions (#15-C3)**: Previously asserted only `hour=23/min=59/sec=59` — a TZ drift that shifted the parsed date to a different calendar day would still pass (same wall clock, wrong date). Now asserts the full date + time tuple. Note: this is a round-trip consistency test (producer + consumer both use `Calendar.current`), so it catches *asymmetric* TZ regressions but not symmetric ones — see #16 follow-up.
 
 ## [0.5.0] - 2026-04-26
 

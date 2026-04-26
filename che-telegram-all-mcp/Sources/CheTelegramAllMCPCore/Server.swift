@@ -556,9 +556,6 @@ public final class CheTelegramAllMCPServer {
 
     // MARK: - Helpers
 
-    // Note: `int64Arg` was unified with `HandlerArgs.int64ArgValue` per #15-C1.
-    // All call sites now use the module-level `int64ArgValue` directly.
-
     private func int64ArrayArg(_ args: [String: Value], _ key: String) -> [Int64]? {
         guard let arr = args[key]?.arrayValue else { return nil }
         let result = arr.compactMap { value -> Int64? in

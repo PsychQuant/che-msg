@@ -86,6 +86,22 @@ final class ServerHandlerLogicTests: XCTestCase {
         ]))
     }
 
+    /// Symmetric downward boundary guard. Devil's-Advocate finding from #15
+    /// verify: testMaxMessagesAt10001Rejected only catches mutations that
+    /// *widen* the cap (e.g. `> 10_500`). A mutation that *shrinks* the cap
+    /// (`if mm >= 10_000` or `if mm > 9_999`) would make 10_000 throw too,
+    /// but the existing testMaxMessagesAtCapAccepted catches that case for
+    /// the boundary itself. This test seals the next-lower value (9_999),
+    /// catching any mutation that pushes the cap down to 9_999 or below
+    /// (e.g. `> 9_998`).
+    func testMaxMessagesAt9999Accepted() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "max_messages": .int(9_999),
+        ])
+        XCTAssertEqual(parsed.maxMessages, 9_999)
+    }
+
     // MARK: - #4: date parsing
 
     func testSinceDateValidParsed() throws {
