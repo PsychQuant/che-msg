@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`auth_run` MCP tool — state-machine driver**: A single tool drives the auth flow by one step per call. Optional args `phone` / `code` / `password` route to the matching TDLib method based on current `authState`. When env vars are present (`TELEGRAM_API_ID`/`HASH`, `TELEGRAM_PHONE`, `TELEGRAM_2FA_PASSWORD`), auto-fire handles those steps; SMS verification code is **never** auto-fired (one-shot delivery rule, must be supplied via the `code` arg). Replaces the per-step manual workflow with a single agent-friendly entry point. The legacy `auth_set_parameters` / `auth_send_phone` / `auth_send_code` / `auth_send_password` tools remain as escape hatches.
+- **`auth_status` structured response**: returns `{state, next_step, last_error}` where `next_step` is either `null` (ready/closed) or `{tool, required_args, hint}` describing the next caller action. `last_error` surfaces auto-fire failures (e.g., `FLOOD_WAIT_30`) as `{type, code, message}` so AI agents can recover programmatically.
+- **`autoSendPhoneIfAvailable()`**: third step of the auto-fire chain. When TDLib advances to `WaitPhoneNumber` and `TELEGRAM_PHONE` is in the process environment, the client invokes `sendPhoneNumber(...)` through the coalesced path. Combined with existing `autoSetParametersIfAvailable` and `autoSendPasswordIfAvailable`, the chain now covers params + phone + password (3 of 4 auth steps); SMS code remains caller-only.
+- **`TaskFieldHolder` + `coalesceTask(holder:body:)`** (`Sources/TelegramAllLib/AuthCoalescing.swift`): Coalesced Task pattern — concurrent callers of the same auth method share a single in-flight TDLib request and observe the same outcome. Eliminates the auto-fire vs manual race that previously triggered duplicate TDLib calls when both fired in the same window.
+- **`decideAutoFire(state:env...)` + `AutoFireAction`** (`Sources/TelegramAllLib/AutoFire.swift`): pure routing function for the auto-fire chain — testable without `ProcessInfo` mocking or `TDLibClient` instantiation.
+- **`decideAuthRunAction(state:phone:code:password:env...)` + `AuthRunAction`** (`Sources/CheTelegramAllMCPCore/AuthResponses.swift`): pure routing function for the `auth_run` MCP tool — testable without server instance.
+- **`authStatusResult(state:lastError:)`** (`Sources/CheTelegramAllMCPCore/AuthResponses.swift`): structured response builder for `auth_status` and `auth_run`.
+- **`TDLibClient.getLastAutoFireError()` accessor**: returns the most recent `TDError.tdlibError` from an auto-fire path; cleared automatically when a fresh auto-fire begins or `authState` advances to `.ready`.
+- **6 new test files / 46 new test cases**: `AuthCoalescingTests` (concurrency contract), `AuthStateLockingTests` (lock primitive), `AuthRunHandlerTests` (state-machine routing), `AuthStatusNextStepTests` (response shape), `AutoFireChainTests` (env-driven auto-fire decisions), tool-count regression updates.
+- **New capability spec**: `openspec/specs/telegram-auth-coordination/` (added by spectra change `improve-auth-coordination-and-auto-flow`); modified `openspec/specs/telegram-auth-error-reporting/` to cover auto-fire failure surfacing.
+
+### Changed
+- **BREAKING — `TDLibClient.authState` direct access removed**: was `public private(set) var authState: AuthState`, now `private var authState`. Callers MUST use `getAuthState() -> AuthState` (lock-protected). Internal-only API; no public consumers outside this package. All call sites updated (Server, CLI, E2ETests).
+- **`OSAllocatedUnfairLock` protects all mutable auth state**: `authState`, `cachedApiId`, `cachedApiHash`, `lastAutoFireError`, and the four per-method task holders. Reads via `getAuthState()` are atomic — never observe a torn enum value. Replaces the implicit single-thread assumption that conflicted with TDLib's process-global callback thread.
+- **Auto-fire paths use `do/catch` instead of `try?`**: caught `TDError.tdlibError(...)` is persisted to `lastAutoFireError` for surfacing via `auth_status`. Previous `try?` discarded all errors silently, so `FLOOD_WAIT` / invalid credentials never reached the caller.
+
+### Notes
+- Closes `che-telegram-all-mcp#2` (auto-set Task race fix) and `che-telegram-all-mcp#4` (SSH-friendly auto-flow), which were merged into a single SDD.
+- `che-telegram-all-mcp#3` (cross-machine session sync) remains a separate effort.
+
 ## [0.4.3] - 2026-04-25
 
 ### Fixed

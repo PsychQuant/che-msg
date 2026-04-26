@@ -46,12 +46,12 @@ final class TelegramE2ETests: XCTestCase {
                 // Workaround: TDLibClient init has a race condition where the first
                 // authorizationStateWaitTdlibParameters update may be dropped.
                 try await Task.sleep(nanoseconds: 500_000_000)
-                if c.authState == .waitingForParameters {
+                if c.getAuthState() == .waitingForParameters {
                     try await c.setParameters(apiId: apiId, apiHash: apiHash)
                 }
                 // Wait for auth to reach ready (session must exist from prior login)
                 for _ in 0..<150 {
-                    if c.authState == .ready { break }
+                    if c.getAuthState() == .ready { break }
                     try await Task.sleep(nanoseconds: 200_000_000)
                 }
                 sharedClient = c
@@ -68,15 +68,16 @@ final class TelegramE2ETests: XCTestCase {
         guard env["TELEGRAM_API_ID"] != nil, env["TELEGRAM_API_HASH"] != nil else {
             throw XCTSkip("TELEGRAM_API_ID / TELEGRAM_API_HASH not set — skipping E2E tests")
         }
-        guard let c = Self.sharedClient, c.authState == .ready else {
-            throw XCTSkip("Auth not ready (state: \(Self.sharedClient?.authState.rawValue ?? "nil")). Run auth flow first.")
+        guard let c = Self.sharedClient, c.getAuthState() == .ready else {
+            throw XCTSkip("Auth not ready (state: \(Self.sharedClient?.getAuthState().rawValue ?? "nil")). Run auth flow first.")
         }
     }
 
     // MARK: - Auth
 
     func testAuthStatusIsReady() {
-        XCTAssertEqual(client.authState, .ready)
+        let state: TDLibClient.AuthState = client.getAuthState()
+        XCTAssertEqual(state, .ready)
     }
 
     // MARK: - Read: get_me

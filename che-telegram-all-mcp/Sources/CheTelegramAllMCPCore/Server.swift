@@ -62,8 +62,17 @@ public final class CheTelegramAllMCPServer {
                  required: ["password"]),
 
             tool("auth_status",
-                 description: "Check current authentication status",
+                 description: "Check current authentication status. Returns {state, next_step, last_error} where next_step describes what to call next (or null when ready) and last_error reports any auto-fire failure.",
                  properties: [:], required: []),
+
+            tool("auth_run",
+                 description: "Drive the authentication state machine by one step. Call repeatedly with optional args until state == 'ready'. Auto-fires from env vars (TELEGRAM_API_ID/HASH, TELEGRAM_PHONE, TELEGRAM_2FA_PASSWORD) when present; otherwise returns next_step.required_args identifying what to provide. SMS verification code MUST be supplied via the 'code' arg (never auto-fired).",
+                 properties: [
+                    "phone": prop("string", "Phone number (international format) — only honored when state == waitingForPhoneNumber"),
+                    "code": prop("string", "SMS verification code — only honored when state == waitingForCode"),
+                    "password": prop("string", "2FA password — only honored when state == waitingForPassword"),
+                 ],
+                 required: []),
 
             tool("logout",
                  description: "Log out from Telegram",
@@ -280,24 +289,24 @@ public final class CheTelegramAllMCPServer {
                     return errorResult("api_id and api_hash are required")
                 }
                 try await tdlib.setParameters(apiId: apiId, apiHash: apiHash)
-                result = "{\"status\": \"\(tdlib.authState.rawValue)\", \"next_step\": \"Use auth_send_phone to send your phone number\"}"
+                result = "{\"status\": \"\(tdlib.getAuthState().rawValue)\", \"next_step\": \"Use auth_send_phone to send your phone number\"}"
 
             case "auth_send_phone":
                 guard let phone = args["phone_number"]?.stringValue else {
                     return errorResult("phone_number is required")
                 }
                 try await tdlib.sendPhoneNumber(phone)
-                result = "{\"status\": \"\(tdlib.authState.rawValue)\", \"next_step\": \"Use auth_send_code with the code you received\"}"
+                result = "{\"status\": \"\(tdlib.getAuthState().rawValue)\", \"next_step\": \"Use auth_send_code with the code you received\"}"
 
             case "auth_send_code":
                 guard let code = args["code"]?.stringValue else {
                     return errorResult("code is required")
                 }
                 try await tdlib.sendAuthCode(code)
-                if tdlib.authState == .waitingForPassword {
+                if tdlib.getAuthState() == .waitingForPassword {
                     result = "{\"status\": \"waitingForPassword\", \"next_step\": \"Use auth_send_password with your 2FA password\"}"
                 } else {
-                    result = "{\"status\": \"\(tdlib.authState.rawValue)\"}"
+                    result = "{\"status\": \"\(tdlib.getAuthState().rawValue)\"}"
                 }
 
             case "auth_send_password":
@@ -305,10 +314,44 @@ public final class CheTelegramAllMCPServer {
                     return errorResult("password is required")
                 }
                 try await tdlib.sendPassword(password)
-                result = "{\"status\": \"\(tdlib.authState.rawValue)\"}"
+                result = "{\"status\": \"\(tdlib.getAuthState().rawValue)\"}"
 
             case "auth_status":
-                result = "{\"status\": \"\(tdlib.authState.rawValue)\"}"
+                return authStatusResult(
+                    state: tdlib.getAuthState(),
+                    lastError: tdlib.getLastAutoFireError()
+                )
+
+            case "auth_run":
+                let env = ProcessInfo.processInfo.environment
+                let action = decideAuthRunAction(
+                    state: tdlib.getAuthState(),
+                    phone: args["phone"]?.stringValue,
+                    code: args["code"]?.stringValue,
+                    password: args["password"]?.stringValue,
+                    envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init),
+                    envApiHash: env["TELEGRAM_API_HASH"],
+                    envPhone: env["TELEGRAM_PHONE"],
+                    envPassword: env["TELEGRAM_2FA_PASSWORD"]
+                )
+                switch action {
+                case .callSetParameters(let apiId, let apiHash):
+                    try await tdlib.setParameters(apiId: apiId, apiHash: apiHash)
+                case .callSendPhone(let phone):
+                    try await tdlib.sendPhoneNumber(phone)
+                case .callSendCode(let code):
+                    try await tdlib.sendAuthCode(code)
+                case .callSendPassword(let password):
+                    try await tdlib.sendPassword(password)
+                case .noOpReady, .needsArgs:
+                    break
+                case .errorClosed:
+                    return errorResult("Authentication session is closed. Restart the MCP server to retry.")
+                }
+                return authStatusResult(
+                    state: tdlib.getAuthState(),
+                    lastError: tdlib.getLastAutoFireError()
+                )
 
             case "logout":
                 result = try await tdlib.logout()

@@ -7,7 +7,7 @@ final class CheTelegramAllMCPTests: XCTestCase {
 
     func testToolCount() {
         let tools = CheTelegramAllMCPServer.defineTools()
-        XCTAssertEqual(tools.count, 27)
+        XCTAssertEqual(tools.count, 28)
     }
 
     func testAllExpectedToolsExist() {
@@ -17,7 +17,7 @@ final class CheTelegramAllMCPTests: XCTestCase {
         let expected: Set<String> = [
             // Auth
             "auth_set_parameters", "auth_send_phone", "auth_send_code",
-            "auth_send_password", "auth_status", "logout",
+            "auth_send_password", "auth_status", "auth_run", "logout",
             // User
             "get_me", "get_user", "get_contacts",
             // Chats

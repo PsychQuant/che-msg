@@ -34,11 +34,11 @@ final class DumpChatToMarkdownE2ETests: XCTestCase {
             do {
                 let c = try await TDLibClient()
                 try await Task.sleep(nanoseconds: 500_000_000)
-                if c.authState == .waitingForParameters {
+                if c.getAuthState() == .waitingForParameters {
                     try await c.setParameters(apiId: apiId, apiHash: apiHash)
                 }
                 for _ in 0..<150 {
-                    if c.authState == .ready { break }
+                    if c.getAuthState() == .ready { break }
                     try await Task.sleep(nanoseconds: 200_000_000)
                 }
                 sharedClient = c

@@ -27,10 +27,10 @@ extension TelegramAll {
 
     static func waitForAuth(_ client: TDLibClient) async throws {
         for _ in 0..<50 {
-            if client.authState == .ready { return }
+            if client.getAuthState() == .ready { return }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        throw ValidationError("Authentication not ready (state: \(client.authState.rawValue)). Run auth flow first.")
+        throw ValidationError("Authentication not ready (state: \(client.getAuthState().rawValue)). Run auth flow first.")
     }
 }
 

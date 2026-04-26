@@ -94,22 +94,41 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TELEGRAM_API_ID` | Yes | Telegram API ID (numeric) |
-| `TELEGRAM_API_HASH` | Yes | Telegram API hash (string) |
-| `TELEGRAM_2FA_PASSWORD` | No | 2FA password (auto-entered if set) |
+| `TELEGRAM_API_ID` | Yes | Telegram API ID (numeric). Auto-fired when state is `waitingForParameters`. |
+| `TELEGRAM_API_HASH` | Yes | Telegram API hash (string). Auto-fired alongside `TELEGRAM_API_ID`. |
+| `TELEGRAM_PHONE` | No | Phone number in international format (e.g., `+886912345678`). Auto-fired when state is `waitingForPhoneNumber`. Useful for SSH / remote setup. |
+| `TELEGRAM_2FA_PASSWORD` | No | 2FA password. Auto-fired when state is `waitingForPassword`. |
 
-> If env vars are not set, you can still use the `auth_set_parameters` tool to provide credentials at runtime.
+> SMS verification code is **never** auto-fired from environment — it must be supplied via `auth_run(code: "...")` or `auth_send_code(code: "...")` in a one-shot delivery.
+>
+> If env vars are not set, you can still drive the flow manually via `auth_run` (or the per-step `auth_set_parameters` / `auth_send_phone` / `auth_send_password` tools).
 
 ## Authentication Flow
 
 Authentication is a **one-time process**. After the first login, TDLib stores the session locally and you won't need to authenticate again.
+
+### Recommended: `auth_run` (single tool, repeat until ready)
+
+Set env vars for the steps you want auto-fired (`TELEGRAM_API_ID` / `TELEGRAM_API_HASH` / `TELEGRAM_PHONE` / `TELEGRAM_2FA_PASSWORD`), then call `auth_run` repeatedly:
+
+```
+auth_run                 →  fires auto-set params (if env present)
+auth_run                 →  fires auto-send phone (if env present)
+auth_run(code: "12345")  →  caller MUST supply SMS code
+auth_run                 →  fires auto-send 2FA password (if env present)
+auth_run                 →  state == "ready"
+```
+
+Each call returns `{state, next_step, last_error}`. `next_step.required_args` tells you exactly which arg the next call needs. `last_error` surfaces auto-fire failures (e.g., `FLOOD_WAIT_30`).
+
+### Legacy: per-step manual flow
 
 ```
 Step 1: auth_set_parameters  →  Provide api_id and api_hash
 Step 2: auth_send_phone      →  Provide your phone number (+886...)
 Step 3: auth_send_code        →  Enter the code received in Telegram
 Step 3b: auth_send_password   →  (Only if 2FA is enabled)
-Done:   auth_status           →  Should show "ready"
+Done:   auth_status           →  Should show {state: "ready", next_step: null}
 ```
 
 Session data is stored in: `~/Library/Application Support/che-telegram-all-mcp/tdlib/`
