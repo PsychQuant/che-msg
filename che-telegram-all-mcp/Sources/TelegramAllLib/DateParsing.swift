@@ -6,6 +6,11 @@ public struct DateParseError: Error, CustomStringConvertible {
     public let input: String
     public let expected: String
 
+    public init(input: String, expected: String) {
+        self.input = input
+        self.expected = expected
+    }
+
     public var description: String {
         "Date format invalid: expected \(expected), got \"\(input)\""
     }
@@ -20,7 +25,7 @@ public struct DateParseError: Error, CustomStringConvertible {
 /// The throwing behavior is deliberate: silent-nil on invalid input (previous
 /// behavior) was a UX footgun — a typo like `"2026/04/17"` silently disabled
 /// the filter (#5-A2).
-internal func parseISODate(_ s: String?) throws -> Date? {
+public func parseISODate(_ s: String?) throws -> Date? {
     guard let s = s, !s.isEmpty else { return nil }
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd"
@@ -55,7 +60,7 @@ internal func parseISODate(_ s: String?) throws -> Date? {
 /// (e.g. America/New_York 2026-11-01 has 25 hours; +23:59:59 from
 /// 00:00:00 EDT lands at 22:59:59 EST, excluding the real 23:00-23:59
 /// window). Wall-clock construction lets Calendar resolve DST naturally.
-internal func parseUntilDate(_ s: String?) throws -> Date? {
+public func parseUntilDate(_ s: String?) throws -> Date? {
     guard let startOfDay = try parseISODate(s) else { return nil }
     let calendar = Calendar.current
     var components = calendar.dateComponents([.year, .month, .day], from: startOfDay)

@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import TelegramAllLib
 
 /// Parsed arguments for the `get_chat_history` MCP tool.
 /// Isolated from the MCP handler so we can unit-test the parsing/validation

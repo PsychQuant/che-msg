@@ -1,5 +1,6 @@
 import XCTest
 @testable import CheTelegramAllMCPCore
+import TelegramAllLib
 
 /// Tests for ISO date parsing helpers used by `get_chat_history` and
 /// `dump_chat_to_markdown`. Covers #5-A1 (until_date inclusive semantics)

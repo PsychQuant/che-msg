@@ -118,8 +118,8 @@ extension TelegramAll {
             let client = try await TelegramAll.makeClient()
             try await TelegramAll.waitForAuth(client)
 
-            let sinceDate = try parseCLIDate(since, flagName: "--since")
-            let untilDate = try parseCLIDate(until, flagName: "--until")
+            let sinceDate = try parseCLIDate(since, flagName: "--since", endOfDay: false)
+            let untilDate = try parseCLIDate(until, flagName: "--until", endOfDay: true)
 
             if let path = dumpMarkdown {
                 let exporter = MarkdownExporter(client: client)
@@ -145,15 +145,18 @@ extension TelegramAll {
             ))
         }
 
-        private func parseCLIDate(_ s: String?, flagName: String) throws -> Foundation.Date? {
-            guard let s = s, !s.isEmpty else { return nil }
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            formatter.timeZone = TimeZone.current
-            guard let date = formatter.date(from: s) else {
-                throw ValidationError("\(flagName) must be YYYY-MM-DD; got \(s)")
+        /// Wraps `TelegramAllLib.parseISODate` / `parseUntilDate` so CLI shares
+        /// the same regex pre-check + DST-safe end-of-day logic as MCP (#8 A2).
+        /// The `endOfDay` flag selects between since-bound (start-of-day) and
+        /// until-bound (23:59:59 inclusive) semantics — fixes prior CLI bug
+        /// where `--until 2026-04-17` parsed to 00:00:00 and dropped the day's
+        /// later messages.
+        private func parseCLIDate(_ s: String?, flagName: String, endOfDay: Bool) throws -> Foundation.Date? {
+            do {
+                return try endOfDay ? parseUntilDate(s) : parseISODate(s)
+            } catch let e as DateParseError {
+                throw ValidationError("\(flagName) \(e.description)")
             }
-            return date
         }
     }
 
