@@ -6,13 +6,25 @@ public struct DateParseError: Error, CustomStringConvertible {
     public let input: String
     public let expected: String
 
+    /// Cap reflected input at 128 chars to prevent response-size amplification
+    /// (#10 C1). Caller sending a 1MB string would otherwise produce a 1MB
+    /// errorResult body — minor concern, but worth bounding for log capture
+    /// and streaming clients.
+    private static let inputDisplayCap = 128
+
     public init(input: String, expected: String) {
         self.input = input
         self.expected = expected
     }
 
     public var description: String {
-        "Date format invalid: expected \(expected), got \"\(input)\""
+        let displayed: String
+        if input.count > Self.inputDisplayCap {
+            displayed = String(input.prefix(Self.inputDisplayCap)) + "...(truncated)"
+        } else {
+            displayed = input
+        }
+        return "Date format invalid: expected \(expected), got \"\(displayed)\""
     }
 }
 

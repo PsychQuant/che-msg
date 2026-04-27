@@ -147,4 +147,46 @@ final class DateParsingTests: XCTestCase {
         components.timeZone = TimeZone.current
         return Calendar.current.date(from: components)!
     }
+
+    // MARK: - #10 C1: input truncation in DateParseError.description
+
+    /// Long input strings get truncated to 128 chars + "...(truncated)" marker
+    /// to prevent response-size amplification when caller sends 1MB strings.
+    func testDateParseErrorTruncatesLongInput() {
+        let longInput = String(repeating: "x", count: 200)
+        let err = DateParseError(input: longInput, expected: "YYYY-MM-DD")
+        XCTAssertTrue(err.description.contains("...(truncated)"),
+                      "200-char input should produce truncate marker")
+        // The reflected payload should be capped at 128 chars + marker, far less than 200
+        XCTAssertLessThan(err.description.count, 200 + 50,
+                          "description should not echo 200-char input verbatim")
+    }
+
+    /// Boundary: exactly 128 chars stays untouched.
+    func testDateParseErrorAt128CharsNoTruncate() {
+        let exactly128 = String(repeating: "y", count: 128)
+        let err = DateParseError(input: exactly128, expected: "YYYY-MM-DD")
+        XCTAssertFalse(err.description.contains("...(truncated)"),
+                       "128 chars exactly should not trigger truncation")
+        XCTAssertTrue(err.description.contains(exactly128),
+                      "128-char input should be reflected fully")
+    }
+
+    /// Boundary: 129 chars triggers truncation.
+    func testDateParseErrorAt129CharsTruncated() {
+        let exactly129 = String(repeating: "z", count: 129)
+        let err = DateParseError(input: exactly129, expected: "YYYY-MM-DD")
+        XCTAssertTrue(err.description.contains("...(truncated)"),
+                      "129 chars should trigger truncation")
+    }
+
+    /// Short input (existing #11 contract case) must not regress — `2026/04/17`
+    /// is 10 chars, well below threshold.
+    func testDateParseErrorShortInputUntouched() {
+        let err = DateParseError(input: "2026/04/17", expected: "YYYY-MM-DD")
+        XCTAssertEqual(
+            err.description,
+            "Date format invalid: expected YYYY-MM-DD, got \"2026/04/17\""
+        )
+    }
 }

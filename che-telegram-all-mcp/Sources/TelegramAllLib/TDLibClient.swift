@@ -399,7 +399,7 @@ public final class TDLibClient {
         let cap = min(requested, 10_000)
         if requested > 10_000 {
             fputs(
-                "warning: TDLibClient.getChatHistory capped maxMessages \(requested) → \(cap) (#6)\n",
+                "warning: TDLibClient.getChatHistory capped maxMessages \(requested) -> \(cap) (#6)\n",
                 stderr
             )
         }
