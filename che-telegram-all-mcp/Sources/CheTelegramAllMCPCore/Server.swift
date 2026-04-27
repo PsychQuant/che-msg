@@ -392,10 +392,8 @@ public final class CheTelegramAllMCPServer {
                 let parsed: GetChatHistoryArgs
                 do {
                     parsed = try parseGetChatHistoryArgs(args)
-                } catch let e as HandlerArgError {
-                    return errorResult(e.description)
-                } catch let e as DateParseError {
-                    return errorResult(e.description)
+                } catch {
+                    return errorResultFromParse(error)
                 }
                 result = try await tdlib.getChatHistory(
                     chatId: parsed.chatId,
@@ -510,10 +508,8 @@ public final class CheTelegramAllMCPServer {
                 let parsed: DumpChatToMarkdownArgs
                 do {
                     parsed = try parseDumpChatToMarkdownArgs(args)
-                } catch let e as HandlerArgError {
-                    return errorResult(e.description)
-                } catch let e as DateParseError {
-                    return errorResult(e.description)
+                } catch {
+                    return errorResultFromParse(error)
                 }
                 let exporter = MarkdownExporter(client: tdlib)
                 result = try await exporter.dumpChatToMarkdown(

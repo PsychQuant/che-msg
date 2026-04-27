@@ -22,6 +22,32 @@ internal struct HandlerArgError: Error, CustomStringConvertible {
     var description: String { message }
 }
 
+/// Single source of truth for converting parse-stage errors to a `CallTool.Result`
+/// with `isError: true`. Replaces the duplicated catch chain pattern in
+/// `Server.swift` for `get_chat_history` and `dump_chat_to_markdown` handlers.
+///
+/// Handles both error types (#5 `DateParseError` from TelegramAllLib, #4
+/// `HandlerArgError` from this module). Anything else falls back to
+/// `localizedDescription` — defensive, but should not be hit in practice
+/// since both parsers only throw these two types.
+///
+/// Extracted per #14 / #18 to make the catch chain unit-testable without a
+/// live `TDLibClient` instance.
+internal func errorResultFromParse(_ error: Error) -> CallTool.Result {
+    let message: String
+    if let e = error as? HandlerArgError {
+        message = e.description
+    } else if let e = error as? DateParseError {
+        message = e.description
+    } else {
+        message = error.localizedDescription
+    }
+    return CallTool.Result(
+        content: [.text(text: "Error: \(message)", annotations: nil, _meta: nil)],
+        isError: true
+    )
+}
+
 /// Parse and validate the args dictionary for `get_chat_history`.
 ///
 /// Rules encoded here (each has a corresponding test in `ServerHandlerLogicTests`):
