@@ -44,6 +44,7 @@ internal func parseGetChatHistoryArgs(_ args: [String: Value]) throws -> GetChat
 
     let sinceDate = try parseISODate(args["since_date"]?.stringValue)
     let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
+    try validateDateRange(sinceDate, untilDate)
 
     let explicit = try parseMaxMessages(args)
     // #3 fix: when fromMsgId == 0 and caller didn't specify, default to limit
@@ -97,6 +98,7 @@ internal func parseDumpChatToMarkdownArgs(_ args: [String: Value]) throws -> Dum
 
     let sinceDate = try parseISODate(args["since_date"]?.stringValue)
     let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
+    try validateDateRange(sinceDate, untilDate)
 
     let selfLabel = args["self_label"]?.stringValue ?? "我"
 
@@ -138,6 +140,18 @@ internal func parseMaxMessages(_ args: [String: Value]) throws -> Int? {
     }
     try validateMaxMessagesCap(value)
     return value
+}
+
+/// Sanity check the `since_date <= until_date` invariant (#10 C2).
+/// Both bounds nil-tolerant: only checks when both are provided.
+///
+/// Pre-#10, an inverted range silently filtered to empty result with no
+/// error feedback — debugging hell. Throws loudly so the caller sees the
+/// mistake immediately.
+internal func validateDateRange(_ since: Date?, _ until: Date?) throws {
+    if let s = since, let u = until, s > u {
+        throw HandlerArgError(message: "since_date must be earlier than until_date")
+    }
 }
 
 /// Shared `max_messages` cap policy. Both `parseGetChatHistoryArgs` and

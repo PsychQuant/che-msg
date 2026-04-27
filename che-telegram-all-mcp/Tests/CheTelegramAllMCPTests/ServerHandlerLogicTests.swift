@@ -221,6 +221,65 @@ final class ServerHandlerLogicTests: XCTestCase {
         XCTAssertEqual(parsed.maxMessages, 8000)
     }
 
+    // MARK: - #10 C2: since_date / until_date range sanity check
+
+    /// `since > until` previously silently filtered to empty result with no
+    /// error. New: throws "since_date must be earlier than until_date".
+    func testSinceAfterUntilThrows() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "since_date": .string("2026-12-31"),
+            "until_date": .string("2026-01-01"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "since_date must be earlier than until_date")
+        }
+    }
+
+    /// Boundary: same date → since at 00:00 < until at 23:59:59, should pass.
+    func testSinceEqualsUntilSameDayAccepted() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "since_date": .string("2026-04-17"),
+            "until_date": .string("2026-04-17"),
+        ])
+        XCTAssertNotNil(parsed.sinceDate)
+        XCTAssertNotNil(parsed.untilDate)
+    }
+
+    /// Only since: range check skipped (no upper bound to compare).
+    func testOnlySinceAccepted() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "since_date": .string("2026-04-17"),
+        ])
+        XCTAssertNotNil(parsed.sinceDate)
+        XCTAssertNil(parsed.untilDate)
+    }
+
+    /// Only until: range check skipped.
+    func testOnlyUntilAccepted() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "until_date": .string("2026-04-17"),
+        ])
+        XCTAssertNil(parsed.sinceDate)
+        XCTAssertNotNil(parsed.untilDate)
+    }
+
+    /// Dump parser parity for #10 C2.
+    func testDumpSinceAfterUntilThrows() {
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+            "since_date": .string("2026-12-31"),
+            "until_date": .string("2026-01-01"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "since_date must be earlier than until_date")
+        }
+    }
+
     // MARK: - #4: date parsing
 
     func testSinceDateValidParsed() throws {
