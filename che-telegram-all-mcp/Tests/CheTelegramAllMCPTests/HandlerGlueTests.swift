@@ -54,6 +54,40 @@ final class HandlerGlueTests: XCTestCase {
         )
     }
 
+    /// Verify-stage Devil's Advocate F2: `HandlerArgError` had no message
+    /// truncation (DateParseError got #10 C1 protection but HandlerArgError
+    /// did not). `errorResultFromParse` caps any message at 256 chars +
+    /// "...(truncated)" marker as belt-and-suspenders.
+    func testErrorResultFromParseCapsLongHandlerArgErrorMessage() {
+        let longMessage = String(repeating: "x", count: 500)
+        let error = HandlerArgError(message: longMessage)
+        let result = errorResultFromParse(error)
+        guard case let .text(text, _, _) = result.content[0] else {
+            XCTFail("expected .text content")
+            return
+        }
+        XCTAssertTrue(text.contains("...(truncated)"),
+                      "500-char HandlerArgError message should be truncated")
+        XCTAssertLessThan(text.count, 350,
+                          "capped message + Error: prefix + marker should be well below 500 chars")
+    }
+
+    /// Boundary: exactly at cap (256 chars) should NOT be truncated — caller
+    /// gets the full message they crafted within the limit.
+    func testErrorResultFromParseAtCapNotTruncated() {
+        let exactly256 = String(repeating: "y", count: 256)
+        let error = HandlerArgError(message: exactly256)
+        let result = errorResultFromParse(error)
+        guard case let .text(text, _, _) = result.content[0] else {
+            XCTFail("expected .text content")
+            return
+        }
+        XCTAssertFalse(text.contains("...(truncated)"),
+                       "exactly 256 chars should not trigger truncation")
+        XCTAssertTrue(text.contains(exactly256),
+                      "256-char message should be fully reflected")
+    }
+
     /// Defensive — neither parser throws non-Handler/Date errors today, but
     /// if a future refactor introduces one, the catch chain falls back to
     /// `localizedDescription` rather than crashing.

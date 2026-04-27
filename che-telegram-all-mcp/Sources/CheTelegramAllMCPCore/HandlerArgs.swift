@@ -32,15 +32,28 @@ internal struct HandlerArgError: Error, CustomStringConvertible {
 /// since both parsers only throw these two types.
 ///
 /// Extracted per #14 / #18 to make the catch chain unit-testable without a
-/// live `TDLibClient` instance.
+/// live `TDLibClient` instance. Per #14 verify-stage Devil's Advocate F2,
+/// the final message is also capped at `messageLengthCap` (256 chars +
+/// truncation marker) to plug the asymmetric protection gap — `DateParseError`
+/// already self-truncates input at 128 chars (#10 C1), but `HandlerArgError`
+/// has no such guard. This belt-and-suspenders cap protects against future
+/// HandlerArgError messages that might reflect long user input.
+internal let messageLengthCap = 256
+
 internal func errorResultFromParse(_ error: Error) -> CallTool.Result {
-    let message: String
+    let rawMessage: String
     if let e = error as? HandlerArgError {
-        message = e.description
+        rawMessage = e.description
     } else if let e = error as? DateParseError {
-        message = e.description
+        rawMessage = e.description
     } else {
-        message = error.localizedDescription
+        rawMessage = error.localizedDescription
+    }
+    let message: String
+    if rawMessage.count > messageLengthCap {
+        message = String(rawMessage.prefix(messageLengthCap)) + "...(truncated)"
+    } else {
+        message = rawMessage
     }
     return CallTool.Result(
         content: [.text(text: "Error: \(message)", annotations: nil, _meta: nil)],

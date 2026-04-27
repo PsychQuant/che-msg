@@ -6,7 +6,9 @@ Input hardening + handler glue testability + log-format polish.
 
 ### Fixed
 - **`since_date <= until_date` sanity check (#10 C2)**: Inverted range previously silently filtered to empty result with no error feedback — opaque debugging experience. Now both `parseGetChatHistoryArgs` and `parseDumpChatToMarkdownArgs` throw `HandlerArgError("since_date must be earlier than until_date")` via shared `validateDateRange(_:_:)` helper. Nil-tolerant: only triggers when both bounds provided.
+  - **Note (verify-DA F3 — error precedence)**: `validateDateRange` runs **before** `parseMaxMessages` in both parsers. If a request simultaneously has `since > until` AND invalid `max_messages`, callers in 0.5.4+ receive the date-range error first; in 0.5.3, they would have received the max_messages error. Behavior change for callers that depend on specific error message routing.
 - **`DateParseError.description` input truncation (#10 C1)**: Reflected input is now capped at 128 chars + `"...(truncated)"` marker. Prevents response-size amplification when callers send pathologically large strings (e.g. 1MB blob → was 1MB error body, now ~150 bytes). Existing short-input contract assertions (`"2026/04/17"` etc.) unchanged since 10 chars < 128 threshold.
+- **`errorResultFromParse` final message cap at 256 chars (verify-DA F2)**: Asymmetric protection gap — `DateParseError` self-truncates at 128 chars (#10 C1) but `HandlerArgError` had no such guard. Future `HandlerArgError(message: "invalid output_path: \(longPath)")` could reflect 1MB user input. Now `errorResultFromParse` caps any final message at 256 chars + `"...(truncated)"` belt-and-suspenders, regardless of source error type.
 
 ### Refactored
 - **`errorResultFromParse(_:) -> CallTool.Result` shared helper (#14, subsumes #18)**: Server.swift's `get_chat_history` and `dump_chat_to_markdown` handlers each had a 3-line catch chain converting `HandlerArgError` / `DateParseError` to `errorResult`. Both now delegate to a single module-level helper in HandlerArgs.swift. Future handlers using parser pure functions (#7 / #13 pattern) can adopt the same one-liner. Defensive fallback to `localizedDescription` for unknown error types.
@@ -16,7 +18,8 @@ Input hardening + handler glue testability + log-format polish.
 - **6 new HandlerGlueTests (#14, subsumes #18)**: `testHandlerArgErrorBecomesIsErrorTrue`, `testDateParseErrorBecomesIsErrorTrue`, `testUnknownErrorFallsBackToLocalizedDescription`, `testGetChatHistoryGlueChatIdMissing`, `testDumpToMarkdownGlueOutputPathMissing`, `testGetChatHistoryGlueInvalidDate`. Lock the catch-chain wiring so refactors that change error type or routing trip immediately.
 - **5 new since/until range tests (#10 C2)**: `testSinceAfterUntilThrows`, `testSinceEqualsUntilSameDayAccepted`, `testOnlySinceAccepted`, `testOnlyUntilAccepted`, `testDumpSinceAfterUntilThrows`.
 - **4 new DateParseError truncation tests (#10 C1)**: boundary at 128/129 chars, no-truncate guarantee, short-input contract preserved.
-- Test count: 163 → **178** (+15).
+- **2 new HandlerGlueTests for verify-DA F2** (in-scope fix): `testErrorResultFromParseCapsLongHandlerArgErrorMessage`, `testErrorResultFromParseAtCapNotTruncated`.
+- Test count: 163 → **180** (+17).
 
 ### Won't fix (#9 B2 — superseded)
 `DateParseError` visibility downgrade from `public` to `internal` was originally requested in #5/#6 verify, but `#8 A2` (commit `b7e7899`) intentionally promoted it to `public` so CLI and MCP can share the same type across `TelegramAllLib` / `CheTelegramAllMCPCore` boundary. Reverting would break CLI build.
