@@ -2,6 +2,19 @@ import Foundation
 import MCP
 import TelegramAllLib
 
+/// Format elapsed wall-clock since `start` and emit to stderr with `[startup]`
+/// prefix. Used by `CheTelegramAllMCPServer.init` when
+/// `CHE_TELEGRAM_LOG_STARTUP=1` to attribute cold-start latency (#29).
+///
+/// File-scope (not a method) so it does not leak into the public API surface
+/// of `CheTelegramAllMCPServer`. stdout is reserved for MCP JSON-RPC traffic;
+/// startup logs go strictly to stderr.
+private func logStartupDuration(_ phase: String, since start: DispatchTime) {
+    let elapsedNs = DispatchTime.now().uptimeNanoseconds &- start.uptimeNanoseconds
+    let seconds = Double(elapsedNs) / 1_000_000_000.0
+    fputs(String(format: "[startup] %@=%.3fs\n", phase, seconds), stderr)
+}
+
 public final class CheTelegramAllMCPServer {
     private let server: Server
     private let transport: StdioTransport
@@ -9,8 +22,24 @@ public final class CheTelegramAllMCPServer {
     private let tdlib: TDLibClient
 
     public init() async throws {
+        // Diagnostic hook (#29): when CHE_TELEGRAM_LOG_STARTUP=1, print
+        // per-phase wall-clock to stderr so we can attribute the ~10s cold
+        // start (TDLib framework load? tools registration? handler wiring?).
+        // stderr is safe — MCP stdio uses stdout for JSON-RPC. Default off.
+        let logStartup = ProcessInfo.processInfo.environment["CHE_TELEGRAM_LOG_STARTUP"] == "1"
+        let totalStart = DispatchTime.now()
+
+        let tdlibStart = DispatchTime.now()
         tdlib = try await TDLibClient()
+        if logStartup {
+            logStartupDuration("tdlib_init", since: tdlibStart)
+        }
+
+        let toolsStart = DispatchTime.now()
         tools = Self.defineTools()
+        if logStartup {
+            logStartupDuration("tools_define", since: toolsStart)
+        }
 
         server = Server(
             name: "che-telegram-all-mcp",
@@ -19,7 +48,13 @@ public final class CheTelegramAllMCPServer {
         )
 
         transport = StdioTransport()
+
+        let registerStart = DispatchTime.now()
         await registerHandlers()
+        if logStartup {
+            logStartupDuration("register_handlers", since: registerStart)
+            logStartupDuration("total", since: totalStart)
+        }
     }
 
     public func run() async throws {
