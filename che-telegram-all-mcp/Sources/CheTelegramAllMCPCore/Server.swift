@@ -9,10 +9,23 @@ import TelegramAllLib
 /// File-scope (not a method) so it does not leak into the public API surface
 /// of `CheTelegramAllMCPServer`. stdout is reserved for MCP JSON-RPC traffic;
 /// startup logs go strictly to stderr.
-private func logStartupDuration(_ phase: String, since start: DispatchTime) {
+internal func logStartupDuration(_ phase: String, since start: DispatchTime) {
     let elapsedNs = DispatchTime.now().uptimeNanoseconds &- start.uptimeNanoseconds
     let seconds = Double(elapsedNs) / 1_000_000_000.0
     fputs(String(format: "[startup] %@=%.3fs\n", phase, seconds), stderr)
+}
+
+/// Decide whether `CheTelegramAllMCPServer.init` should emit startup timing
+/// lines. Pure function — takes the env dictionary explicitly so unit tests
+/// can pin the truthy contract without touching `ProcessInfo`.
+///
+/// Strict `== "1"` (no `"true"` / `"yes"` / `"TRUE"` aliases): matches the
+/// help text exactly + avoids surprising behavior from typos like `=truee`
+/// silently disabling logging. The verify-29 audit confirmed that loosening
+/// this would force re-coordination across help text and Claude Code env
+/// docs.
+internal func shouldLogStartup(env: [String: String]) -> Bool {
+    return env["CHE_TELEGRAM_LOG_STARTUP"] == "1"
 }
 
 public final class CheTelegramAllMCPServer {
@@ -26,13 +39,24 @@ public final class CheTelegramAllMCPServer {
         // per-phase wall-clock to stderr so we can attribute the ~10s cold
         // start (TDLib framework load? tools registration? handler wiring?).
         // stderr is safe — MCP stdio uses stdout for JSON-RPC. Default off.
-        let logStartup = ProcessInfo.processInfo.environment["CHE_TELEGRAM_LOG_STARTUP"] == "1"
+        //
+        // Failure-path observability (#29 verify F2): each phase wraps in
+        // do/catch so a throw still emits its phase line (with `_FAILED`
+        // suffix) before re-throwing. Without this, the diagnostic story
+        // only covers the success path — but the user reaching for this
+        // env var is exactly the user with a slow init that may be
+        // throwing.
+        let logStartup = shouldLogStartup(env: ProcessInfo.processInfo.environment)
         let totalStart = DispatchTime.now()
 
         let tdlibStart = DispatchTime.now()
-        tdlib = try await TDLibClient()
-        if logStartup {
-            logStartupDuration("tdlib_init", since: tdlibStart)
+        do {
+            tdlib = try await TDLibClient()
+            if logStartup { logStartupDuration("tdlib_init", since: tdlibStart) }
+        } catch {
+            if logStartup { logStartupDuration("tdlib_init_FAILED", since: tdlibStart) }
+            if logStartup { logStartupDuration("total_FAILED", since: totalStart) }
+            throw error
         }
 
         let toolsStart = DispatchTime.now()
