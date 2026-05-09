@@ -8,6 +8,10 @@ public enum CLIAction: Equatable {
     case showHelp
     /// Default: spawn the MCP server (stdio JSON-RPC + TDLib).
     case runServer
+    /// Unknown `-`-prefixed flag — print error to stderr, exit 2. No TDLib init.
+    /// Non-flag positionals (paths, config names) still fall through to runServer
+    /// so historical callers passing positional args are not broken.
+    case unknownFlag(String)
 }
 
 /// Pure argv parser + help text holder. Lives in `CheTelegramAllMCPCore` (not in
@@ -61,19 +65,32 @@ public enum CLIBootstrap {
     /// dependency on `ProcessInfo` or `CommandLine` (caller must inject argv
     /// for testability).
     ///
-    /// - Parameter args: full argv including binary name at index 0. Unknown
-    ///   first arguments fall through to `.runServer` rather than erroring,
-    ///   because the MCP server itself ignores argv beyond [0] — adding strict
-    ///   validation here would only break callers that historically passed
-    ///   harmless flags.
+    /// - Parameter args: full argv including binary name at index 0.
+    ///
+    /// Rejection policy (#29 verify F3):
+    /// - Recognized flags (`--version`, `-v`, `--help`, `-h`) dispatch to their
+    ///   action.
+    /// - Unrecognized `-`-prefixed strings return `.unknownFlag` — the user
+    ///   asserted "this is a flag" by typing the dash, so a typo like
+    ///   `--versoin` should fail loudly with an error message rather than
+    ///   silently entering stdio MCP mode (which then hangs on stdin).
+    /// - Non-flag positional arguments (no leading `-`) still fall through to
+    ///   `.runServer`. This preserves backward compat for any caller that
+    ///   historically passed paths or config names as the first argument —
+    ///   the MCP server itself ignores argv beyond [0], so the positional
+    ///   is harmless.
     public static func parse(_ args: [String]) -> CLIAction {
         guard args.count > 1 else { return .runServer }
-        switch args[1] {
+        let first = args[1]
+        switch first {
         case "--version", "-v":
             return .showVersion
         case "--help", "-h":
             return .showHelp
         default:
+            if first.hasPrefix("-") {
+                return .unknownFlag(first)
+            }
             return .runServer
         }
     }

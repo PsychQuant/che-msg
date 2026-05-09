@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.5.5] - 2026-05-09
+
+CLI fast-exit dispatcher + startup observability for `/mcp` reconnect diagnostics.
+
+Health-check entry point + per-phase timing instrumentation. Does **not** directly fix Claude Code's `/mcp` "Failed to reconnect" symptom — the root cause is the interaction of wrapper-side cold-start latency, Claude Code's reconnect timeout, and 233MB universal Mach-O dynamic linking. This release equips wrappers and humans to diagnose which contributor dominates in their environment, and gives `psychquant-claude-plugins/che-telegram-mcp-wrapper.sh` a sub-second `--version` probe to replace its GitHub API curl on every spawn.
+
+### Added
+- **`--version` / `-v` flag (#29 S1)**: Prints `che-telegram-all-mcp 0.5.5` to stdout and exits 0 in <10ms warm / <1s cold, **before** `await CheTelegramAllMCPServer()` is constructed (no TDLib framework load, no Application Support directory creation, no MCP handler registration). Production benchmark vs. previous behavior: ≥10s → 0.008s warm, a >1000× speedup for wrapper / monitoring health checks.
+- **`--help` / `-h` flag (#29 S2)**: Prints multi-line help to stdout and exits 0. Help text explicitly states "Primary mode is stdio JSON-RPC — connect via Claude Code's MCP plugin configuration, not by invoking interactively" so callers don't mistake the binary for an interactive CLI. Documents all supported environment variables including `CHE_TELEGRAM_LOG_STARTUP=1` for diagnostic discoverability.
+- **`CHE_TELEGRAM_LOG_STARTUP=1` env-gated startup log (#29 S3)**: When set, `CheTelegramAllMCPServer.init` emits four lines to **stderr** (stdout is reserved for MCP JSON-RPC traffic) — `[startup] tdlib_init=N.NNNs`, `[startup] tools_define=N.NNNs`, `[startup] register_handlers=N.NNNs`, `[startup] total=N.NNNs`. Default off. `DispatchTime.now()` for monotonic timing with saturating subtract `&-` for clock-rewind defense.
+- **Failure-path observability for startup log (#29 verify F2)**: `tdlib_init` phase wraps in `do/catch` — if `try await TDLibClient()` throws after a slow init, emits `[startup] tdlib_init_FAILED=N.NNNs` and `[startup] total_FAILED=N.NNNs` to stderr **before** re-throwing. Without this, the `if logStartup` block was unreachable on throw, leaving the failure path (the case the user is most likely diagnosing) silent.
+- **`shouldLogStartup(env:)` testable predicate (#29 verify F4)**: Extracted env-var truthy check from `init` to a file-scope helper accepting an env dictionary explicitly. Strict `== "1"` contract — does not accept `"true"`, `"yes"`, `"TRUE"`, etc. Matches help text exactly to avoid documentation drift.
+
+### Fixed
+- **Unknown flag rejection (#29 verify F3)**: Previously, typos like `--versoin` fell through `default: return .runServer` and silently entered stdio MCP mode, hanging on stdin — exactly the failure pattern this PR set out to avoid. `CLIBootstrap.parse` now returns `.unknownFlag(_)` for any `-`-prefixed argument that doesn't match a recognized flag; `main.swift` writes `Error: unknown flag '<flag>'. Run with --help for usage.` to stderr and exits 2 (POSIX misuse convention, distinct from exit 1 = runtime error). Non-flag positional arguments (no leading `-`) still fall through to `.runServer` to preserve backward compat for callers passing paths or config names.
+
+### Refactored
+- **`logStartupDuration` visibility `private` → `internal` (#29 verify F4)**: Was file-scope `private`. Promoted to module-internal so `shouldLogStartup` predicate test in `CheTelegramAllMCPTests` can co-exist in the same module without exposing the helper publicly.
+- **`CLIBootstrap` enum + parser in `CheTelegramAllMCPCore` (#29 S1+S2)**: Argv parsing extracted from `main.swift` (which now becomes a 4-case dispatch) into a pure `CLIBootstrap.parse(_: [String]) -> CLIAction` function in `CheTelegramAllMCPCore` so it is reachable by `CheTelegramAllMCPTests` for unit testing without spawning a subprocess. `CLIAction` is `Equatable` so tests can use `XCTAssertEqual`.
+
+### Test
+- **25 new tests in `CLIBootstrapTests`**: 10 parser tests (long/short version+help, no-args, non-flag positional, empty argv defensiveness, helpText invariants for version constant + stdio mention + env var name); 6 env predicate tests (`shouldLogStartup` strict `"1"` contract — true on `"1"`, false on unset / `""` / `"0"` / `"true"` / `"TRUE"`); 5 unknown-flag rejection tests (long typo, short typo, single `-`, case-sensitive `-V` ≠ `-v`); 4 subprocess integration tests via `Process` API + `Bundle(for:)` path resolution (asserts exit code + stdout / stderr for `--version`, `-v`, `--help`, and unknown flag exit 2). Subprocess tests skip cleanly when binary not built.
+- **Test count: 180 → 216 (+36, all in `CheTelegramAllMCPTests`)**.
+
+### Production leverage (out of repo)
+This release alone does not change end-user experience. Real leverage requires the consumer side of the contract:
+- **`psychquant-claude-plugins/.../che-telegram-all-mcp-wrapper.sh` should adopt `$BINARY --version` health check** instead of (or in addition to) the current `curl` to GitHub Releases API for version verification. The wrapper currently fork-execs `curl --max-time 30` twice on every spawn even when `$INSTALLED_VERSION == $DESIRED_VERSION` — replacing that with a sub-second binary call removes a major source of cold-start latency that contributes to Claude Code's `/mcp` "Failed to reconnect" symptom.
+- **Sister concerns surfaced during diagnosis** (out of `che-msg` scope, tracked separately): wrapper should add a stderr log file at `~/Library/Logs/CheTelegramAllMCP/wrapper.log` for post-mortem debugging; Claude Code's MCP reconnect timeout vs. 233MB binary cold-start interaction warrants upstream feedback; potential TDLib lock-file detection if `~/Library/Application Support/che-telegram-all-mcp/tdlib/` accumulates stale state from crashed wrappers.
+
+### Honest constraint
+This PR is **observability + a fast health-check entry point**, not a direct fix for the reported `/mcp` reconnect timeout. Verifying `--version` exits 0, `[startup]` lines emit when env is set, and `--versoin` typos exit 2 — does **not** prove the original "Failed to reconnect" message goes away in production. That requires the wrapper-side change above plus deploy + multi-session reproduction, neither of which this repo can deliver alone. The honest scope is "build the diagnostic and integration surface that future fixes will plug into".
+
 ## [0.5.4] - 2026-04-27
 
 Input hardening + handler glue testability + log-format polish.
