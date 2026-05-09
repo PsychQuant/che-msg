@@ -36,16 +36,51 @@ final class CLIBootstrapTests: XCTestCase {
         XCTAssertEqual(CLIBootstrap.parse(["binary"]), .runServer)
     }
 
-    func testUnknownFirstArgReturnsRunServer() {
-        // Unknown args fall through to runServer; the MCP server itself is
-        // stdio-driven and ignores argv beyond [0].
-        XCTAssertEqual(CLIBootstrap.parse(["binary", "--unknown"]), .runServer)
+    func testNonFlagPositionalReturnsRunServer() {
+        // Non-flag positional (no leading `-`) falls through to runServer.
+        // Preserves backward compat for callers passing paths/config names.
+        XCTAssertEqual(CLIBootstrap.parse(["binary", "config.json"]), .runServer)
     }
 
     func testEmptyArgsReturnsRunServer() {
         // Defensive: argv[0] missing shouldn't crash. Real OS always provides
         // it, but the parser must not assume.
         XCTAssertEqual(CLIBootstrap.parse([]), .runServer)
+    }
+
+    // MARK: - Unknown flag rejection (#29 verify F3)
+
+    /// `-`-prefixed strings that aren't recognized flags must return
+    /// `.unknownFlag(_)` so the dispatcher in `main.swift` can exit 2 with a
+    /// clear error message. The previous fallthrough-to-runServer behavior
+    /// caused typos like `--versoin` to silently enter stdio MCP mode and
+    /// hang on stdin — exactly the failure pattern the PR was supposed to
+    /// avoid.
+
+    func testLongDashTypoReturnsUnknownFlag() {
+        XCTAssertEqual(CLIBootstrap.parse(["binary", "--versoin"]), .unknownFlag("--versoin"))
+    }
+
+    func testLongDashUnrecognizedReturnsUnknownFlag() {
+        XCTAssertEqual(CLIBootstrap.parse(["binary", "--debug"]), .unknownFlag("--debug"))
+    }
+
+    func testShortDashUnrecognizedReturnsUnknownFlag() {
+        // Single-letter unknown short flag.
+        XCTAssertEqual(CLIBootstrap.parse(["binary", "-x"]), .unknownFlag("-x"))
+    }
+
+    func testShortDashUppercaseVPreservesCaseSensitive() {
+        // `-V` is NOT `-v`; verify case-sensitive contract is preserved by
+        // F3 fix path (i.e., `-V` falls into unknown branch, not version).
+        XCTAssertEqual(CLIBootstrap.parse(["binary", "-V"]), .unknownFlag("-V"))
+    }
+
+    func testBareDashAloneReturnsUnknownFlag() {
+        // Lone `-` is conventional for "stdin", but this binary doesn't
+        // support it. Treat as unknown flag for explicitness rather than
+        // silently entering server mode.
+        XCTAssertEqual(CLIBootstrap.parse(["binary", "-"]), .unknownFlag("-"))
     }
 
     // MARK: - Help text content
@@ -191,6 +226,23 @@ final class CLIBootstrapTests: XCTestCase {
         XCTAssertTrue(
             result.stdout.lowercased().contains("stdio") || result.stdout.lowercased().contains("json-rpc"),
             "stdout must surface stdio/json-rpc mode; got: \(result.stdout)"
+        )
+    }
+
+    func testBinaryUnknownFlagExits2WithStderrMessage() throws {
+        // F3 end-to-end: typo on a recognized flag must produce exit 2 +
+        // stderr error, not silently enter stdio mode and hang.
+        guard let result = try runBinary(["--versoin"]) else {
+            throw XCTSkip("CheTelegramAllMCP binary not built — skip subprocess test")
+        }
+        XCTAssertEqual(result.exitCode, 2, "exit 2 expected for unknown flag (POSIX misuse convention)")
+        XCTAssertTrue(
+            result.stderr.contains("--versoin") && result.stderr.lowercased().contains("unknown"),
+            "stderr must name the offending flag and say 'unknown'; got: \(result.stderr)"
+        )
+        XCTAssertTrue(
+            result.stderr.contains("--help"),
+            "stderr should hint at --help for usage; got: \(result.stderr)"
         )
     }
 }
