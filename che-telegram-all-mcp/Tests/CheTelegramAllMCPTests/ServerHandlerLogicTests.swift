@@ -385,14 +385,45 @@ final class ServerHandlerLogicTests: XCTestCase {
         XCTAssertEqual(parsed.fromMessageId, 12345)
     }
 
-    /// Non-numeric string for required `chat_id` falls back to nil → throws
-    /// "chat_id is required" (the field is treated as missing).
+    /// #22: non-numeric string for `chat_id` now throws a type-mismatch
+    /// error instead of the misleading "chat_id is required". Pre-#22,
+    /// `int64ArgValue` silently returned nil on parse-fail, so the caller
+    /// threw "is required" — leading the user to check args structure
+    /// instead of value type. Post-#22, `int64ArgValueStrict` distinguishes
+    /// absent (nil → caller decides) vs. wrong type (throws with quoted
+    /// value for debug clarity).
     func testChatIdAsStringInvalidThrows() {
         XCTAssertThrowsError(try parseGetChatHistoryArgs([
             "chat_id": .string("not-a-number"),
         ])) { error in
             XCTAssertEqual((error as? HandlerArgError)?.description,
-                           "chat_id is required")
+                           "chat_id must be an integer; got \"not-a-number\"")
+        }
+    }
+
+    /// #22 parity for `from_message_id` — same type-mismatch handling via
+    /// `int64ArgValueStrict`. Without this test, a regression that re-narrows
+    /// strictness only to `chat_id` could go unnoticed.
+    func testFromMessageIdAsStringInvalidThrows() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "from_message_id": .string("garbage"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "from_message_id must be an integer; got \"garbage\"")
+        }
+    }
+
+    /// #22 parity for `parseDumpChatToMarkdownArgs.chat_id` — confirms the
+    /// strict-helper upgrade applied to both parsers, not just
+    /// `parseGetChatHistoryArgs`.
+    func testDumpChatIdAsStringInvalidThrows() {
+        XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
+            "chat_id": .string("not-a-number"),
+            "output_path": .string("/tmp/x.md"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id must be an integer; got \"not-a-number\"")
         }
     }
 
@@ -524,5 +555,81 @@ final class ServerHandlerLogicTests: XCTestCase {
         XCTAssertEqual(components.hour, 23)
         XCTAssertEqual(components.minute, 59)
         XCTAssertEqual(components.second, 59)
+    }
+
+    // MARK: - #23: parseDumpChatToMarkdownArgs default-5000 cap
+
+    /// #23: when `max_messages` is omitted, default 5000 still flows through
+    /// `validateMaxMessagesCap`. Pre-#23, the default literal 5000 silently
+    /// bypassed the cap (since `parseMaxMessages` only validated explicit
+    /// args). Currently `cap = 10_000 > 5000`, so the explicit default
+    /// passes; this test locks the structural invariant that the default
+    /// path is gated by the cap. If a future policy reduces the cap below
+    /// 5000, this test will (intentionally) start failing — that's the
+    /// signal to also update the default literal in lockstep with the cap.
+    func testParseDumpDefaultMaxMessagesRespectsCap() throws {
+        let parsed = try parseDumpChatToMarkdownArgs([
+            "chat_id": .int(100),
+            "output_path": .string("/tmp/x.md"),
+        ])
+        XCTAssertEqual(parsed.maxMessages, 5000,
+                       "default max_messages must remain 5000 (and pass cap)")
+    }
+
+    // MARK: - #25: parseLimit (numeric arg strictness)
+
+    /// #25: `parseLimit` rejects non-numeric strings (parity with
+    /// `parseMaxMessages` #8 A1). Pre-#25, `args["limit"]?.intValue ?? 50`
+    /// silently fell back to 50 for `.string("not-a-number")`.
+    func testLimitRejectsInvalidString() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "limit": .string("not-a-number"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "limit must be an integer")
+        }
+    }
+
+    /// #25 parity with `parseMaxMessages`: JS / Python JSON encoders emit
+    /// integers as doubles (`50.0`), MCP transport surfaces them as
+    /// `.double(50.0)`. `parseLimit` accepts whole-number doubles per
+    /// MCP SDK's `Int(_:strict:false)` (parity with #8 commit `f0203ac`).
+    func testLimitAcceptsWholeNumberDouble() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "limit": .double(50.0),
+        ])
+        XCTAssertEqual(parsed.limit, 50)
+    }
+
+    /// #25: `parseLimit` rejects zero (would silently produce empty results
+    /// upstream). Mirrors `parseMaxMessages` `validateMaxMessagesCap`
+    /// positive-check pattern.
+    func testLimitRejectsZeroOrNegative() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "limit": .int(0),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "limit must be positive; got 0")
+        }
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "limit": .int(-5),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "limit must be positive; got -5")
+        }
+    }
+
+    /// #25: `parseLimit` accepts numeric strings (parity with
+    /// `parseMaxMessages` legacy MCP client behavior).
+    func testLimitAcceptsNumericString() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "limit": .string("75"),
+        ])
+        XCTAssertEqual(parsed.limit, 75)
     }
 }
