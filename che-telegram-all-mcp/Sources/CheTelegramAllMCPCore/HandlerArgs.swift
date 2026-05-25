@@ -75,11 +75,11 @@ internal func errorResultFromParse(_ error: Error) -> CallTool.Result {
 /// - `since_date` / `until_date` parse via `parseISODate` / `parseUntilDate`
 ///   which throw `DateParseError` on invalid format (#5).
 internal func parseGetChatHistoryArgs(_ args: [String: Value]) throws -> GetChatHistoryArgs {
-    guard let chatId = int64ArgValue(args, "chat_id") else {
+    guard let chatId = try int64ArgValueStrict(args, "chat_id") else {
         throw HandlerArgError(message: "chat_id is required")
     }
-    let limit = args["limit"]?.intValue ?? 50
-    let fromMessageId = int64ArgValue(args, "from_message_id") ?? 0
+    let limit = try parseLimit(args, default: 50)
+    let fromMessageId = try int64ArgValueStrict(args, "from_message_id") ?? 0
 
     let sinceDate = try parseISODate(args["since_date"]?.stringValue)
     let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
@@ -127,13 +127,20 @@ internal struct DumpChatToMarkdownArgs {
 ///   `parseUntilDate` which throw `DateParseError` on invalid format
 /// - `self_label` defaults to `"我"` (Mandarin "I/me")
 internal func parseDumpChatToMarkdownArgs(_ args: [String: Value]) throws -> DumpChatToMarkdownArgs {
-    guard let chatId = int64ArgValue(args, "chat_id") else {
+    guard let chatId = try int64ArgValueStrict(args, "chat_id") else {
         throw HandlerArgError(message: "chat_id is required")
     }
     guard let outputPath = args["output_path"]?.stringValue else {
         throw HandlerArgError(message: "output_path is required")
     }
+    // #23: belt-and-suspenders cap on the default-5000 fallback path.
+    // `parseMaxMessages` only validates explicit args; without this call,
+    // the literal 5000 default would silently bypass `validateMaxMessagesCap`
+    // (cap = single source of truth per #13). If a future cap policy
+    // tightens to e.g. 1000 for paid tier, this line ensures the default
+    // path is also subject to the new ceiling.
     let maxMessages = try parseMaxMessages(args) ?? 5000
+    try validateMaxMessagesCap(maxMessages)
 
     let sinceDate = try parseISODate(args["since_date"]?.stringValue)
     let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
@@ -222,4 +229,64 @@ internal func int64ArgValue(_ args: [String: Value], _ key: String) -> Int64? {
     if let n = value.intValue { return Int64(n) }
     if let s = value.stringValue { return Int64(s) }
     return nil
+}
+
+/// Strict throwing variant of `int64ArgValue` used by the parsers in this
+/// module. Closes #22: the non-strict `int64ArgValue` silently returns nil
+/// on `.string("not-numeric")`, causing callers to throw the misleading
+/// "X is required" (the key WAS present, the value was the wrong type).
+///
+/// Resolution order (uses MCP SDK's `Int(_:strict:false)` for parity with
+/// `parseMaxMessages`):
+/// 1. Key absent → return `nil` (caller decides default vs. throw)
+/// 2. Explicit `.null` → return `nil` (treat as absent)
+/// 3. `.int(n)` → `Int64(n)`
+/// 4. `.double(d)` where `Int(exactly: d) != nil` → `Int64(d)` (whole-number
+///    doubles like `12345.0` accepted; matters for JS/Python encoders that
+///    emit integers as doubles per JSON spec)
+/// 5. `.string(s)` → `Int64(s)` strict base-10
+/// 6. Anything else (`.bool`, `.array`, `.object`, fractional `.double`,
+///    non-numeric `.string`) → throw `HandlerArgError` with quoted value
+///    for debug clarity
+internal func int64ArgValueStrict(_ args: [String: Value], _ key: String) throws -> Int64? {
+    guard let raw = args[key] else { return nil }
+    if case .null = raw { return nil }
+    if let n = Int(raw, strict: false) {
+        return Int64(n)
+    }
+    if let s = raw.stringValue {
+        throw HandlerArgError(
+            message: "\(key) must be an integer; got \"\(s)\""
+        )
+    }
+    throw HandlerArgError(message: "\(key) must be an integer")
+}
+
+/// Parse and validate the optional `limit` arg with caller-supplied default.
+///
+/// Closes #25: previously
+/// `args["limit"]?.intValue ?? defaultValue` silently fell back to the
+/// default for any non-`.int` value — `.string("0")` / `.double(20.0)` /
+/// non-numeric strings all silently produced the default. Mirrors the
+/// `parseMaxMessages` shape (#8 A1) for consistency across numeric option
+/// args.
+///
+/// Resolution order via MCP SDK's `Int(_:strict:false)`:
+/// 1. Key absent → return `defaultValue` (caller's default applied)
+/// 2. Explicit `.null` → return `defaultValue` (treat as absent)
+/// 3. `.int(n)` / whole `.double(d)` / numeric `.string(s)` → `n`
+/// 4. Anything else → throw `HandlerArgError`
+///
+/// Then validates `limit > 0` — zero or negative limits would silently
+/// produce empty results upstream (debug hell).
+internal func parseLimit(_ args: [String: Value], default defaultValue: Int) throws -> Int {
+    guard let raw = args["limit"] else { return defaultValue }
+    if case .null = raw { return defaultValue }
+    guard let value = Int(raw, strict: false) else {
+        throw HandlerArgError(message: "limit must be an integer")
+    }
+    if value <= 0 {
+        throw HandlerArgError(message: "limit must be positive; got \(value)")
+    }
+    return value
 }
