@@ -254,26 +254,13 @@ internal func validateLimitCap(_ value: Int) throws {
     }
 }
 
-/// Module-level Int64 arg extraction. Single source of truth — formerly
-/// duplicated as `int64Arg` in `Server.swift`; consolidated here per #15-C1
-/// (DRY) so any future change (e.g. trimming whitespace, rejecting hex)
-/// automatically applies to all 21+ handlers.
-///
-/// Resolution order:
-/// 1. Native `.int(n)` → `Int64(n)`
-/// 2. `.string(s)` fallback → `Int64(s)` (strict base-10, rejects hex/scientific/whitespace)
-/// 3. Otherwise nil (key missing, .null, .bool, .double, .array, .object)
-internal func int64ArgValue(_ args: [String: Value], _ key: String) -> Int64? {
-    guard let value = args[key] else { return nil }
-    if let n = value.intValue { return Int64(n) }
-    if let s = value.stringValue { return Int64(s) }
-    return nil
-}
-
-/// Strict throwing variant of `int64ArgValue` used by the parsers in this
-/// module. Closes #22: the non-strict `int64ArgValue` silently returns nil
-/// on `.string("not-numeric")`, causing callers to throw the misleading
-/// "X is required" (the key WAS present, the value was the wrong type).
+/// Strict throwing Int64 arg extraction — the single source of truth for
+/// scalar Int64 args (consolidated per #15-C1 DRY). Closes #22/#33: the former
+/// non-strict `int64ArgValue` (removed in #33) silently returned nil on
+/// `.string("not-numeric")`, causing callers to throw the misleading
+/// "X is required" (the key WAS present, the value was the wrong type). Every
+/// Server.swift handler now routes through this — directly, or via
+/// `requiredInt64` / the grouped parsers below.
 ///
 /// Resolution order (uses MCP SDK's `Int(_:strict:false)` for parity with
 /// `parseMaxMessages`):
@@ -342,4 +329,86 @@ internal func parseLimit(_ args: [String: Value], default defaultValue: Int) thr
     }
     try validateLimitCap(value)
     return value
+}
+
+// MARK: - Scalar Int64 arg parsers (#33 — Server.swift direct-callsite migration)
+
+/// A required Int64 arg. Composes `int64ArgValueStrict`:
+/// - present-but-junk → throws the #22/#33 type-mismatch message:
+///   `"key must be an integer; got \"...\""` for a non-numeric `.string` (raw value
+///   quoted), `"key must be an integer"` for `.bool` / `.array` / `.object` /
+///   fractional `.double` (no meaningful string form to quote)
+/// - absent / `.null` → throws `"key is required"` (preserves the prior guard
+///   semantics — 19 of the 20 migrated scalar callsites are required; the 1
+///   optional `reply_to_message_id` is handled by `parseSendMessageIds`)
+///
+/// This is the testable seam #33 extracts. The direct `int64ArgValue` callsites
+/// were inline in `Server.handleToolCall`, a `private` method on a Server whose
+/// only init boots a process-global TDLib receive loop — so they were NOT
+/// unit-testable in place. Routing each handler's scalar Int64 parsing through
+/// these module-level functions makes it falsifiable; mutation-resistant tests
+/// live in `ServerHandlerLogicTests.swift`.
+internal func requiredInt64(_ args: [String: Value], _ key: String) throws -> Int64 {
+    guard let value = try int64ArgValueStrict(args, key) else {
+        throw HandlerArgError(message: "\(key) is required")
+    }
+    return value
+}
+
+/// `chat_id` + `message_id`, both required. Used by `pin_message` /
+/// `unpin_message` / `edit_message`. `chat_id` is validated first, so a
+/// bad `chat_id` reports before `message_id` (per-field message — #33 replaces
+/// the old combined `"chat_id and message_id are required"`).
+internal struct ChatMessageIds {
+    let chatId: Int64
+    let messageId: Int64
+}
+
+internal func parseChatMessageIds(_ args: [String: Value]) throws -> ChatMessageIds {
+    ChatMessageIds(
+        chatId: try requiredInt64(args, "chat_id"),
+        messageId: try requiredInt64(args, "message_id")
+    )
+}
+
+/// `chat_id` + `user_id`, both required. Used by `add_chat_member`.
+internal struct ChatUserIds {
+    let chatId: Int64
+    let userId: Int64
+}
+
+internal func parseChatUserIds(_ args: [String: Value]) throws -> ChatUserIds {
+    ChatUserIds(
+        chatId: try requiredInt64(args, "chat_id"),
+        userId: try requiredInt64(args, "user_id")
+    )
+}
+
+/// `chat_id` + `from_chat_id`, both required. Used by `forward_messages`.
+internal struct ChatForwardIds {
+    let chatId: Int64
+    let fromChatId: Int64
+}
+
+internal func parseChatForwardIds(_ args: [String: Value]) throws -> ChatForwardIds {
+    ChatForwardIds(
+        chatId: try requiredInt64(args, "chat_id"),
+        fromChatId: try requiredInt64(args, "from_chat_id")
+    )
+}
+
+/// `chat_id` (required) + `reply_to_message_id` (optional). Used by
+/// `send_message`. #33 behavior change: a junk `reply_to_message_id` now throws
+/// instead of silently dropping the reply target; absent / `.null` still yields
+/// `nil` (the legitimate "no reply" case is unchanged).
+internal struct SendMessageIds {
+    let chatId: Int64
+    let replyToMessageId: Int64?
+}
+
+internal func parseSendMessageIds(_ args: [String: Value]) throws -> SendMessageIds {
+    SendMessageIds(
+        chatId: try requiredInt64(args, "chat_id"),
+        replyToMessageId: try int64ArgValueStrict(args, "reply_to_message_id")
+    )
 }
