@@ -746,4 +746,145 @@ final class ServerHandlerLogicTests: XCTestCase {
                            "limit exceeds 10_000 cap; got 20000. Use pagination instead of a single large request.")
         }
     }
+
+    // MARK: - #33: requiredInt64 primitive (single-key Server.swift handlers)
+
+    /// #33: junk string → type-mismatch message (was the misleading "is required"
+    /// at the inline non-strict callsites). Mutation guard: revert the parser to
+    /// non-strict int64ArgValue and this assertion fails (nil → "is required").
+    func testRequiredInt64RejectsNonNumericString() {
+        XCTAssertThrowsError(try requiredInt64(["chat_id": .string("abc")], "chat_id")) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id must be an integer; got \"abc\"")
+        }
+    }
+
+    /// #33: absent key → "X is required" (preserves the prior guard semantics).
+    func testRequiredInt64ThrowsRequiredOnAbsent() {
+        XCTAssertThrowsError(try requiredInt64([:], "chat_id")) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description, "chat_id is required")
+        }
+    }
+
+    /// #33 SILENT WIDENING contract: whole-number .double ids (e.g. 12345.0 from
+    /// JS/Python encoders) are now ACCEPTED at every Server.swift handler — the
+    /// former non-strict int64ArgValue rejected these as nil → "is required".
+    func testRequiredInt64AcceptsWholeNumberDouble() throws {
+        XCTAssertEqual(try requiredInt64(["chat_id": .double(12345.0)], "chat_id"), 12345)
+    }
+
+    /// #33: .bool falls to the no-quote branch (no meaningful string form).
+    func testRequiredInt64RejectsBool() {
+        XCTAssertThrowsError(try requiredInt64(["chat_id": .bool(true)], "chat_id")) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description, "chat_id must be an integer")
+        }
+    }
+
+    /// #33: valid .int passes through.
+    func testRequiredInt64AcceptsValidInt() throws {
+        XCTAssertEqual(try requiredInt64(["user_id": .int(42)], "user_id"), 42)
+    }
+
+    // MARK: - #33: parseChatMessageIds (pin_message / unpin_message / edit_message)
+
+    func testParseChatMessageIdsRejectsJunkChatId() {
+        XCTAssertThrowsError(try parseChatMessageIds([
+            "chat_id": .string("x"), "message_id": .int(5),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id must be an integer; got \"x\"")
+        }
+    }
+
+    /// chat_id valid → message_id is the field reported (per-field message, #33
+    /// supersedes the combined "chat_id and message_id are required").
+    func testParseChatMessageIdsRejectsJunkMessageId() {
+        XCTAssertThrowsError(try parseChatMessageIds([
+            "chat_id": .int(1), "message_id": .string("m"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "message_id must be an integer; got \"m\"")
+        }
+    }
+
+    func testParseChatMessageIdsThrowsRequiredOnAbsentMessageId() {
+        XCTAssertThrowsError(try parseChatMessageIds(["chat_id": .int(1)])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description, "message_id is required")
+        }
+    }
+
+    func testParseChatMessageIdsValid() throws {
+        let ids = try parseChatMessageIds(["chat_id": .int(7), "message_id": .int(9)])
+        XCTAssertEqual(ids.chatId, 7)
+        XCTAssertEqual(ids.messageId, 9)
+    }
+
+    // MARK: - #33: parseChatUserIds (add_chat_member)
+
+    func testParseChatUserIdsRejectsJunkUserId() {
+        XCTAssertThrowsError(try parseChatUserIds([
+            "chat_id": .int(1), "user_id": .string("u"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "user_id must be an integer; got \"u\"")
+        }
+    }
+
+    func testParseChatUserIdsValid() throws {
+        let ids = try parseChatUserIds(["chat_id": .int(3), "user_id": .int(4)])
+        XCTAssertEqual(ids.chatId, 3)
+        XCTAssertEqual(ids.userId, 4)
+    }
+
+    // MARK: - #33: parseChatForwardIds (forward_messages)
+
+    func testParseChatForwardIdsRejectsJunkFromChatId() {
+        XCTAssertThrowsError(try parseChatForwardIds([
+            "chat_id": .int(1), "from_chat_id": .string("f"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "from_chat_id must be an integer; got \"f\"")
+        }
+    }
+
+    // MARK: - #33: parseSendMessageIds (send_message — chat_id req + optional reply_to)
+
+    func testParseSendMessageIdsRejectsJunkChatId() {
+        XCTAssertThrowsError(try parseSendMessageIds(["chat_id": .string("x")])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id must be an integer; got \"x\"")
+        }
+    }
+
+    /// #33 behavior change: junk reply_to_message_id now THROWS instead of
+    /// silently dropping the reply target.
+    func testParseSendMessageIdsRejectsJunkReplyTo() {
+        XCTAssertThrowsError(try parseSendMessageIds([
+            "chat_id": .int(1), "reply_to_message_id": .string("junk"),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "reply_to_message_id must be an integer; got \"junk\"")
+        }
+    }
+
+    /// #33: the legitimate "no reply" case — absent reply_to → nil (unchanged).
+    /// Mutation guard for the optional branch: swapping int64ArgValueStrict for
+    /// requiredInt64 on reply_to would throw here instead of returning nil.
+    func testParseSendMessageIdsAbsentReplyToIsNil() throws {
+        let ids = try parseSendMessageIds(["chat_id": .int(1)])
+        XCTAssertEqual(ids.chatId, 1)
+        XCTAssertNil(ids.replyToMessageId)
+    }
+
+    /// #33: explicit .null reply_to → nil (treated as absent).
+    func testParseSendMessageIdsNullReplyToIsNil() throws {
+        let ids = try parseSendMessageIds(["chat_id": .int(1), "reply_to_message_id": .null])
+        XCTAssertNil(ids.replyToMessageId)
+    }
+
+    /// #33: valid reply_to → populated.
+    func testParseSendMessageIdsValidReplyTo() throws {
+        let ids = try parseSendMessageIds(["chat_id": .int(1), "reply_to_message_id": .int(99)])
+        XCTAssertEqual(ids.replyToMessageId, 99)
+    }
 }
