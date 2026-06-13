@@ -7,7 +7,7 @@ Parser-consistency cluster — closes the gap left by #8 (`parseMaxMessages`).
 ### Added
 
 - **`int64ArgValueStrict` helper (#22)**: throwing variant of `int64ArgValue` for parsers in `HandlerArgs.swift`. On `.string("not-numeric")`, throws `"\(key) must be an integer; got \"\(s)\""` with quoted user input for debug clarity. On `.bool` / `.array` / `.object` / fractional `.double`, throws `"\(key) must be an integer"` (no-quote — no meaningful string form). Used by `parseGetChatHistoryArgs` for `chat_id` + `from_message_id` and by `parseDumpChatToMarkdownArgs` for `chat_id`. Non-strict `int64ArgValue` retained for ~20 direct `Server.swift` callsites tracked separately as #33.
-- **`parseLimit` helper (#25)**: modeled on `parseMaxMessages`. Rejects non-numeric strings, zero/negative, and over-`validateLimitCap` (10_000) limits. Accepts whole-number doubles per MCP SDK's `Int(_:strict:false)` (JS / Python JSON encoders emit integers as doubles per JSON spec).
+- **`parseLimit` helper (#25)**: modeled on `parseMaxMessages`. Rejects non-numeric strings, zero/negative, and over-`validateLimitCap` (10_000) limits. Accepts whole-number doubles per MCP SDK's `Int(_:strict:false)` (JS / Python JSON encoders emit integers as doubles per JSON spec). The default / `.null` paths are also cap-validated (parity with `parseMaxMessagesWithDefault`, #23; mutation-guarded by `testLimitNullUsesDefault` + `testLimitDefaultOverCapRejected` — closes a verify follow-up flagged by Codex + logic + devil's-advocate).
 - **`validateLimitCap` shared policy (#25 verify F4)**: 10_000 upper bound, parity with `validateMaxMessagesCap`. Throws `"limit exceeds 10_000 cap; got \(value). Use pagination instead of a single large request."` Applies via `parseLimit`.
 - **`parseMaxMessagesWithDefault(args, default:)` helper (#23 verify F2)**: variant that flows the default-value through `validateMaxMessagesCap`. Mutation-resistant: deleting the cap call on the default branch makes `testParseMaxMessagesWithDefaultAppliesCapToDefaultPath` (cap=11000 over 10_000 ceiling) fail. Replaces the earlier inline `?? 5000 + try validateMaxMessagesCap(maxMessages)` belt-and-suspenders pattern whose test was a placebo.
 
@@ -17,6 +17,14 @@ Parser-consistency cluster — closes the gap left by #8 (`parseMaxMessages`).
 - **(#23) `parseDumpChatToMarkdownArgs` default-5000 path bypassed `validateMaxMessagesCap`** — the cap's docstring claimed single source of truth but the literal `?? 5000` fallback silently bypassed it. Now flows through `parseMaxMessagesWithDefault`; future cap policy tightening (e.g. 1000 for paid tier) will propagate to the default path atomically.
 - **(#25) `Server.swift` 5 `limit ?? N` silent fallbacks** — `parseGetChatHistoryArgs:81`, `Server.swift:433/446/503/511` migrated to `try parseLimit(args, default: N)`. Same shape `parseMaxMessages` fixed at #8 (`.string("0")` / `.double(20.0)` no longer silent-fallback to default).
 - **(catch-all observability)** `handleToolCall` outer catch (L591) uses `errorResultFromParse(error)` instead of `errorResult(error.localizedDescription)`. `HandlerArgError` + `DateParseError` now surface their human-readable `.description` to MCP clients via the catch-all path; other error types unchanged.
+
+### Behavior changes
+
+Observable on the wire for existing MCP clients (surfaced by PR #32 verify — devil's-advocate + regression + Codex):
+
+- **`from_message_id` non-numeric now throws.** Previously a non-numeric `.string` for `from_message_id` (in `get_chat_history`) silently fell back to nil → treated as "start from latest". It now throws `from_message_id must be an integer; got "..."`. Lenient callers that relied on junk-→-latest will get an error result instead.
+- **`limit` now has a 10_000 ceiling.** No client schema advertised an upper bound before; `limit > 10_000` now throws `limit exceeds 10_000 cap`. Callers that sent very large limits must paginate.
+- **Arg-parse error message text changed.** Via `errorResultFromParse`, `HandlerArgError` / `DateParseError` now surface their `.description` (e.g. `"limit must be an integer"`) instead of Swift's generic `localizedDescription`. Clients pattern-matching on the old error strings should update.
 
 ### Notes
 

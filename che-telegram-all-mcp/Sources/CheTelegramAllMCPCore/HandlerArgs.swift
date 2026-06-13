@@ -312,16 +312,28 @@ internal func int64ArgValueStrict(_ args: [String: Value], _ key: String) throws
 /// args.
 ///
 /// Resolution order via MCP SDK's `Int(_:strict:false)`:
-/// 1. Key absent → return `defaultValue` (caller's default applied)
-/// 2. Explicit `.null` → return `defaultValue` (treat as absent)
+/// 1. Key absent → return `defaultValue` (validated against the cap)
+/// 2. Explicit `.null` → return `defaultValue` (treat as absent; cap-validated)
 /// 3. `.int(n)` / whole `.double(d)` / numeric `.string(s)` → `n`
 /// 4. Anything else → throw `HandlerArgError`
 ///
 /// Then validates `limit > 0` — zero or negative limits would silently
 /// produce empty results upstream (debug hell).
+///
+/// The `defaultValue` itself also flows through `validateLimitCap` (parity
+/// with `parseMaxMessagesWithDefault`, #23): a future callsite passing a
+/// default over the cap must throw, not silently bypass it. Mutation-resistant
+/// via `testLimitDefaultOverCapRejected`.
 internal func parseLimit(_ args: [String: Value], default defaultValue: Int) throws -> Int {
-    guard let raw = args["limit"] else { return defaultValue }
-    if case .null = raw { return defaultValue }
+    // Absent / explicit .null → default, but the default is still cap-validated
+    // (see docstring + #23 design parity). The .null branch is mutation-guarded
+    // by `testLimitNullUsesDefault`.
+    func cappedDefault() throws -> Int {
+        try validateLimitCap(defaultValue)
+        return defaultValue
+    }
+    guard let raw = args["limit"] else { return try cappedDefault() }
+    if case .null = raw { return try cappedDefault() }
     guard let value = Int(raw, strict: false) else {
         throw HandlerArgError(message: "limit must be an integer")
     }

@@ -718,4 +718,32 @@ final class ServerHandlerLogicTests: XCTestCase {
                            "limit must be an integer")
         }
     }
+
+    // MARK: - Verify follow-up (Codex + logic L2 + devil's-advocate): parseLimit
+    //         default/.null cap parity + mutation guard
+
+    /// `limit: .null` returns the caller's default. Mutation guard for the
+    /// `.null` branch in `parseLimit`: deleting `if case .null = raw { ... }`
+    /// makes `.null` fall through to `Int(_:strict:false)` → nil → wrongly
+    /// throw "limit must be an integer". No prior test covered this branch
+    /// (flagged by logic L2 + devil's-advocate as a surviving mutant).
+    func testLimitNullUsesDefault() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "limit": .null,
+        ])
+        XCTAssertEqual(parsed.limit, 50)  // parseGetChatHistoryArgs default
+    }
+
+    /// `parseLimit` default path flows through `validateLimitCap` (parity with
+    /// `parseMaxMessagesWithDefault`, #23). A future callsite passing a default
+    /// over the 10_000 cap must throw. Mutation-resistant: deleting the cap
+    /// call on the default branch makes this test fail. Closes the #25 edge
+    /// Codex flagged (default path silently bypassed the cap).
+    func testLimitDefaultOverCapRejected() {
+        XCTAssertThrowsError(try parseLimit([:], default: 20000)) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "limit exceeds 10_000 cap; got 20000. Use pagination instead of a single large request.")
+        }
+    }
 }
