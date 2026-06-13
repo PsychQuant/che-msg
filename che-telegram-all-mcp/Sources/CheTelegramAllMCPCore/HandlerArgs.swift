@@ -133,14 +133,14 @@ internal func parseDumpChatToMarkdownArgs(_ args: [String: Value]) throws -> Dum
     guard let outputPath = args["output_path"]?.stringValue else {
         throw HandlerArgError(message: "output_path is required")
     }
-    // #23: belt-and-suspenders cap on the default-5000 fallback path.
-    // `parseMaxMessages` only validates explicit args; without this call,
-    // the literal 5000 default would silently bypass `validateMaxMessagesCap`
-    // (cap = single source of truth per #13). If a future cap policy
-    // tightens to e.g. 1000 for paid tier, this line ensures the default
-    // path is also subject to the new ceiling.
-    let maxMessages = try parseMaxMessages(args) ?? 5000
-    try validateMaxMessagesCap(maxMessages)
+    // #23: closure of the default-5000 cap-bypass invariant.
+    // `parseMaxMessages(args)` (no-default form) only validates explicit args.
+    // `parseMaxMessagesWithDefault(args, default:)` flows the default through
+    // `validateMaxMessagesCap` too — mutation-resistant: removing the cap
+    // call inside the default branch makes `testParseMaxMessagesWithDefaultAppliesCapToDefaultPath`
+    // (cap=11000 over the 10_000 ceiling) fail. If a future cap policy
+    // tightens to e.g. 1000 for paid tier, this default-5000 path will throw.
+    let maxMessages = try parseMaxMessagesWithDefault(args, default: 5000)
 
     let sinceDate = try parseISODate(args["since_date"]?.stringValue)
     let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
@@ -188,6 +188,32 @@ internal func parseMaxMessages(_ args: [String: Value]) throws -> Int? {
     return value
 }
 
+/// Like `parseMaxMessages` but applies `validateMaxMessagesCap` to the
+/// fallback default too. Closes #23 properly + makes the cap invariant
+/// mutation-resistant: deleting the `try validateMaxMessagesCap(defaultValue)`
+/// call below would make `testParseMaxMessagesWithDefaultAppliesCapToDefaultPath`
+/// (pass default=11000 over 10_000 cap, expect throw) start failing.
+///
+/// Pre-#23 fix: `parseMaxMessages(args) ?? 5000` silently bypassed the cap
+/// on the default path. The previous "belt-and-suspenders" inline fix
+/// (`try validateMaxMessagesCap(maxMessages)` after `??`) was structurally
+/// correct but its test was a placebo — only asserted `maxMessages == 5000`
+/// which holds whether the cap call is present or not (5000 < 10_000).
+/// This signature extracts the default-path semantics into a function
+/// whose contract IS the cap call, making it testable independently.
+internal func parseMaxMessagesWithDefault(_ args: [String: Value], default defaultValue: Int) throws -> Int {
+    if let raw = args["max_messages"] {
+        guard let value = Int(raw, strict: false) else {
+            throw HandlerArgError(message: "max_messages must be an integer")
+        }
+        try validateMaxMessagesCap(value)
+        return value
+    }
+    // Default path also runs the cap — closes #23 latent-invariant.
+    try validateMaxMessagesCap(defaultValue)
+    return defaultValue
+}
+
 /// Sanity check the `since_date <= until_date` invariant (#10 C2).
 /// Both bounds nil-tolerant: only checks when both are provided.
 ///
@@ -211,6 +237,19 @@ internal func validateMaxMessagesCap(_ value: Int) throws {
     if value > 10_000 {
         throw HandlerArgError(
             message: "max_messages exceeds 10_000 cap; got \(value). Use since_date/until_date to narrow the range."
+        )
+    }
+}
+
+/// Shared `limit` cap policy. Closes the #25 verify F4 inconsistency:
+/// `parseMaxMessages` enforced a 10_000 ceiling but `parseLimit` only
+/// checked `> 0`, letting MCP callers pass `limit: 999_999_999` straight
+/// to TDLib (`getChats` then iterates one `getChat` per id). Same 10_000
+/// ceiling for parity — limits beyond that should use pagination.
+internal func validateLimitCap(_ value: Int) throws {
+    if value > 10_000 {
+        throw HandlerArgError(
+            message: "limit exceeds 10_000 cap; got \(value). Use pagination instead of a single large request."
         )
     }
 }
@@ -244,10 +283,11 @@ internal func int64ArgValue(_ args: [String: Value], _ key: String) -> Int64? {
 /// 4. `.double(d)` where `Int(exactly: d) != nil` → `Int64(d)` (whole-number
 ///    doubles like `12345.0` accepted; matters for JS/Python encoders that
 ///    emit integers as doubles per JSON spec)
-/// 5. `.string(s)` → `Int64(s)` strict base-10
-/// 6. Anything else (`.bool`, `.array`, `.object`, fractional `.double`,
-///    non-numeric `.string`) → throw `HandlerArgError` with quoted value
-///    for debug clarity
+/// 5. `.string(s)` numeric → `Int64(s)` strict base-10
+/// 6. `.string(s)` non-numeric → throws `"\(key) must be an integer; got \"\(s)\""`
+///    (quoted value included for debug clarity — user's raw input is shown)
+/// 7. `.bool`, `.array`, `.object`, fractional `.double` → throws `"\(key) must be an integer"`
+///    (no quoted value — these have no meaningful string form to include)
 internal func int64ArgValueStrict(_ args: [String: Value], _ key: String) throws -> Int64? {
     guard let raw = args[key] else { return nil }
     if case .null = raw { return nil }
@@ -288,5 +328,6 @@ internal func parseLimit(_ args: [String: Value], default defaultValue: Int) thr
     if value <= 0 {
         throw HandlerArgError(message: "limit must be positive; got \(value)")
     }
+    try validateLimitCap(value)
     return value
 }

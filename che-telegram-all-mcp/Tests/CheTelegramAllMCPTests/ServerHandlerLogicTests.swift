@@ -557,16 +557,15 @@ final class ServerHandlerLogicTests: XCTestCase {
         XCTAssertEqual(components.second, 59)
     }
 
-    // MARK: - #23: parseDumpChatToMarkdownArgs default-5000 cap
+    // MARK: - #23: parseDumpChatToMarkdownArgs default-5000 cap (verify F2 — mutation-resistant)
 
     /// #23: when `max_messages` is omitted, default 5000 still flows through
     /// `validateMaxMessagesCap`. Pre-#23, the default literal 5000 silently
-    /// bypassed the cap (since `parseMaxMessages` only validated explicit
-    /// args). Currently `cap = 10_000 > 5000`, so the explicit default
-    /// passes; this test locks the structural invariant that the default
-    /// path is gated by the cap. If a future policy reduces the cap below
-    /// 5000, this test will (intentionally) start failing — that's the
-    /// signal to also update the default literal in lockstep with the cap.
+    /// bypassed the cap. Currently `cap = 10_000 > 5000`, so the default
+    /// passes — this happy-path test locks the value but does NOT verify
+    /// the cap call (mutation: removing cap call from default path leaves
+    /// this test passing). The mutation-resistant guard is
+    /// `testParseMaxMessagesWithDefaultAppliesCapToDefaultPath` below.
     func testParseDumpDefaultMaxMessagesRespectsCap() throws {
         let parsed = try parseDumpChatToMarkdownArgs([
             "chat_id": .int(100),
@@ -574,6 +573,32 @@ final class ServerHandlerLogicTests: XCTestCase {
         ])
         XCTAssertEqual(parsed.maxMessages, 5000,
                        "default max_messages must remain 5000 (and pass cap)")
+    }
+
+    /// #23 verify F2 — mutation-resistant cap check on default path.
+    /// `parseMaxMessagesWithDefault` flows `defaultValue` through
+    /// `validateMaxMessagesCap`. Pass a default that exceeds the 10_000 cap
+    /// → must throw. Deleting `try validateMaxMessagesCap(defaultValue)`
+    /// from the default branch (HandlerArgs.swift `parseMaxMessagesWithDefault`)
+    /// makes this test fail — that's the mutation guard the placebo
+    /// `testParseDumpDefaultMaxMessagesRespectsCap` could not provide.
+    func testParseMaxMessagesWithDefaultAppliesCapToDefaultPath() {
+        XCTAssertThrowsError(try parseMaxMessagesWithDefault([:], default: 11000)) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "max_messages exceeds 10_000 cap; got 11000. Use since_date/until_date to narrow the range.")
+        }
+    }
+
+    /// `parseMaxMessagesWithDefault` happy path: explicit value wins, default ignored.
+    func testParseMaxMessagesWithDefaultExplicitWinsOverDefault() throws {
+        let result = try parseMaxMessagesWithDefault(["max_messages": .int(50)], default: 5000)
+        XCTAssertEqual(result, 50)
+    }
+
+    /// `parseMaxMessagesWithDefault` honors `defaultValue` when key absent.
+    func testParseMaxMessagesWithDefaultUsesDefaultWhenAbsent() throws {
+        let result = try parseMaxMessagesWithDefault([:], default: 5000)
+        XCTAssertEqual(result, 5000)
     }
 
     // MARK: - #25: parseLimit (numeric arg strictness)
@@ -631,5 +656,66 @@ final class ServerHandlerLogicTests: XCTestCase {
             "limit": .string("75"),
         ])
         XCTAssertEqual(parsed.limit, 75)
+    }
+
+    // MARK: - #25 verify F4: parseLimit upper cap
+
+    /// #25 verify F4 — `parseLimit` rejects values over the shared 10_000
+    /// cap. Closes the parity gap vs. `parseMaxMessages`. Without this,
+    /// MCP callers could pass `limit: 999_999_999` straight into TDLib
+    /// (`getChats` then iterates one `getChat` per id).
+    func testLimitRejectsOverCap() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "limit": .int(20000),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "limit exceeds 10_000 cap; got 20000. Use pagination instead of a single large request.")
+        }
+    }
+
+    /// #25 verify F4 — at-cap boundary accepted.
+    func testLimitAtCapAccepted() throws {
+        let parsed = try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "limit": .int(10000),
+        ])
+        XCTAssertEqual(parsed.limit, 10000)
+    }
+
+    // MARK: - #22 verify F7: int64ArgValueStrict branch coverage
+
+    /// Verify F7 — `.bool(true)` falls through to the no-quote branch
+    /// (no meaningful string form). Docstring fixed to reflect this.
+    func testInt64ArgValueStrictBoolThrowsGenericMessage() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .bool(true),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id must be an integer")
+        }
+    }
+
+    /// Verify F7 — explicit `.null` treated as absent (returns nil from
+    /// `int64ArgValueStrict`, caller throws "X is required" via guard).
+    func testInt64ArgValueStrictExplicitNullTreatsAsAbsent() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .null,
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "chat_id is required")
+        }
+    }
+
+    /// Verify F7 — fractional `.double(50.5)` rejected for limit (per
+    /// `Int(_:strict:false)` semantics — `Int(exactly: 50.5)` is nil).
+    func testLimitFractionalDoubleRejected() {
+        XCTAssertThrowsError(try parseGetChatHistoryArgs([
+            "chat_id": .int(100),
+            "limit": .double(50.5),
+        ])) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description,
+                           "limit must be an integer")
+        }
     }
 }
