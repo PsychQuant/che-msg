@@ -430,7 +430,7 @@ public final class CheTelegramAllMCPServer {
 
             // Chat Operations
             case "get_chats":
-                let limit = args["limit"]?.intValue ?? 50
+                let limit = try parseLimit(args, default: 50)
                 result = try await tdlib.getChats(limit: limit)
 
             case "get_chat":
@@ -443,7 +443,7 @@ public final class CheTelegramAllMCPServer {
                 guard let query = args["query"]?.stringValue else {
                     return errorResult("query is required")
                 }
-                let limit = args["limit"]?.intValue ?? 20
+                let limit = try parseLimit(args, default: 20)
                 result = try await tdlib.searchChats(query: query, limit: limit)
 
             // Message Operations
@@ -500,7 +500,7 @@ public final class CheTelegramAllMCPServer {
                       let query = args["query"]?.stringValue else {
                     return errorResult("chat_id and query are required")
                 }
-                let limit = args["limit"]?.intValue ?? 50
+                let limit = try parseLimit(args, default: 50)
                 result = try await tdlib.searchMessages(chatId: chatId, query: query, limit: limit)
 
             // Group Management
@@ -508,7 +508,7 @@ public final class CheTelegramAllMCPServer {
                 guard let chatId = int64ArgValue(args, "chat_id") else {
                     return errorResult("chat_id is required")
                 }
-                let limit = args["limit"]?.intValue ?? 200
+                let limit = try parseLimit(args, default: 200)
                 result = try await tdlib.getChatMembers(chatId: chatId, limit: limit)
 
             case "pin_message":
@@ -589,7 +589,14 @@ public final class CheTelegramAllMCPServer {
         } catch TDLibClient.TDError.tdlibError(let code, let message) {
             return tdlibErrorResult(code: code, message: message)
         } catch {
-            return errorResult(error.localizedDescription)
+            // Use errorResultFromParse so HandlerArgError / DateParseError
+            // thrown by parseLimit / parseGetChatHistoryArgs / etc. surface
+            // their `description` (user-friendly message) rather than the
+            // generic Swift `Error.localizedDescription` fallback. Other
+            // error types still fall through to localizedDescription inside
+            // errorResultFromParse. Improves observability for the cluster
+            // #22 / #23 / #25 throw paths that were previously silent.
+            return errorResultFromParse(error)
         }
     }
 
