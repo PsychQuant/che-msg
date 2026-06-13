@@ -887,4 +887,25 @@ final class ServerHandlerLogicTests: XCTestCase {
         let ids = try parseSendMessageIds(["chat_id": .int(1), "reply_to_message_id": .int(99)])
         XCTAssertEqual(ids.replyToMessageId, 99)
     }
+
+    // MARK: - #33 verify follow-ups (Codex + security reviewer nits)
+
+    /// Codex verify nit #3: `parseChatForwardIds` valid-mapping test, for parity
+    /// with the other grouped parsers (the others had a valid-path assertion).
+    /// Locks chat_id→chatId / from_chat_id→fromChatId (no swap).
+    func testParseChatForwardIdsValid() throws {
+        let ids = try parseChatForwardIds(["chat_id": .int(3), "from_chat_id": .int(4)])
+        XCTAssertEqual(ids.chatId, 3)
+        XCTAssertEqual(ids.fromChatId, 4)
+    }
+
+    /// Security verify nit: lock the truncation-safety contract directly at the
+    /// #33 parser seam. A fractional `.double` is rejected (`Int(exactly:)` is
+    /// nil), so no truncated id can reach a destructive handler. Previously this
+    /// was only covered transitively via the limit / max_messages tests.
+    func testRequiredInt64RejectsFractionalDouble() {
+        XCTAssertThrowsError(try requiredInt64(["chat_id": .double(12345.6)], "chat_id")) { error in
+            XCTAssertEqual((error as? HandlerArgError)?.description, "chat_id must be an integer")
+        }
+    }
 }

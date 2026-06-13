@@ -334,10 +334,13 @@ internal func parseLimit(_ args: [String: Value], default defaultValue: Int) thr
 // MARK: - Scalar Int64 arg parsers (#33 — Server.swift direct-callsite migration)
 
 /// A required Int64 arg. Composes `int64ArgValueStrict`:
-/// - present-but-junk (`.string("x")` / `.bool` / fractional `.double`) → throws
-///   the #22/#33 type-mismatch message (`"key must be an integer; got ..."`)
+/// - present-but-junk → throws the #22/#33 type-mismatch message:
+///   `"key must be an integer; got \"...\""` for a non-numeric `.string` (raw value
+///   quoted), `"key must be an integer"` for `.bool` / `.array` / `.object` /
+///   fractional `.double` (no meaningful string form to quote)
 /// - absent / `.null` → throws `"key is required"` (preserves the prior guard
-///   semantics the 19 required Server.swift callsites used)
+///   semantics — 19 of the 20 migrated scalar callsites are required; the 1
+///   optional `reply_to_message_id` is handled by `parseSendMessageIds`)
 ///
 /// This is the testable seam #33 extracts. The direct `int64ArgValue` callsites
 /// were inline in `Server.handleToolCall`, a `private` method on a Server whose
