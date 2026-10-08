@@ -17,9 +17,21 @@ LINE macOS 版使用 Qt 框架，其 UI 元素不支援 macOS Accessibility API�
 ### 從 Marketplace 安裝
 
 ```bash
-/plugin marketplace add PsychQuant/psychquant-claude-plugins
-/plugin install che-archive-lines@psychquant-claude-plugins
+/plugin marketplace add PsychQuant/che-msg
+/plugin install che-archive-lines@che-msg
 ```
+
+### 之前從 psychquant-claude-plugins 安裝過？
+
+1.1.0 以前這個 plugin 由 `psychquant-claude-plugins` marketplace 發布，1.1.1 起改由本 repository 的 `che-msg` marketplace 發布。在終端機裡先移除舊的、再裝新的：
+
+```bash
+claude plugin uninstall che-archive-lines@psychquant-claude-plugins   # 當初裝在專案範圍的話加 --scope project
+claude plugin marketplace add PsychQuant/che-msg
+claude plugin install che-archive-lines@che-msg
+```
+
+校準設定在 `~/.config/che-archive-lines/config.json`，不在 plugin 目錄裡，換安裝來源後不必重新校準。
 
 ### 依賴
 

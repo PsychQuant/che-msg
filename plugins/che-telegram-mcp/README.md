@@ -22,8 +22,9 @@ Most personal-automation users want **`telegram-all` only**. Bot integrations ar
 You want to read/send messages as **yourself**.
 
 ```bash
-# 1. Install plugin
-/plugin install che-telegram-mcp@psychquant-claude-plugins
+# 1. Add the marketplace and install the plugin
+/plugin marketplace add PsychQuant/che-msg
+/plugin install che-telegram-mcp@che-msg
 
 # 2. Store API credentials (from https://my.telegram.org/apps)
 security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_ID" -w 'YOUR_API_ID' -U
@@ -52,8 +53,9 @@ Don't want the bot server spawning at startup? Add this to `.claude/settings.jso
 You want a **bot** to post messages or receive commands. No personal account.
 
 ```bash
-# 1. Install plugin
-/plugin install che-telegram-mcp@psychquant-claude-plugins
+# 1. Add the marketplace and install the plugin
+/plugin marketplace add PsychQuant/che-msg
+/plugin install che-telegram-mcp@che-msg
 
 # 2. Store bot token (get one from @BotFather in Telegram)
 security add-generic-password -a "che-telegram-bot-mcp" -s "TELEGRAM_BOT_TOKEN" -w 'YOUR_BOT_TOKEN' -U
@@ -74,6 +76,18 @@ That's it — bot tools are now available without ever fetching the 223 MB TDLib
 ### Track C — Both servers
 
 You actually use both. Run all three keychain commands from Track A **plus** the one from Track B, then `/che-telegram-mcp:auth`. No `disabledMcpjsonServers` needed.
+
+### Installed it from psychquant-claude-plugins before?
+
+Up to 1.4.1 this plugin was published from the `psychquant-claude-plugins` marketplace. From 1.4.2 it ships from this repository's `che-msg` marketplace, next to the binaries it downloads. Switch over in your shell, uninstalling first — with both copies enabled, two `telegram-all` wrappers start and the second is refused by the TDLib lock:
+
+```bash
+claude plugin uninstall che-telegram-mcp@psychquant-claude-plugins   # add --scope project if you installed it there
+claude plugin marketplace add PsychQuant/che-msg
+claude plugin install che-telegram-mcp@che-msg
+```
+
+Then restart Claude Code. Nothing has to be entered again: the binaries stay in `~/bin`, the credentials in Keychain and the TDLib login in `~/Library/Application Support/che-telegram-all-mcp/`, and none of them live in the plugin directory.
 
 ---
 
@@ -320,8 +334,8 @@ Plugin version: 1.4.1 (currently pins `che-telegram-all-mcp` v0.5.0 + `che-teleg
 
 ## Source
 
-- Plugin source: [PsychQuant/psychquant-claude-plugins](https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-telegram-mcp)
-- Binary source: [PsychQuant/che-msg](https://github.com/PsychQuant/che-msg) — also mirrored at [PsychQuant/che-telegram-all-mcp](https://github.com/PsychQuant/che-telegram-all-mcp) for the personal-account MCP
+- Plugin source: [PsychQuant/che-msg](https://github.com/PsychQuant/che-msg/tree/main/plugins/che-telegram-mcp) (the `che-msg` marketplace; up to 1.4.1 it lived in PsychQuant/psychquant-claude-plugins)
+- Binary source: the same repository, `che-telegram-all-mcp/` and `che-telegram-bot-mcp/` — also mirrored at [PsychQuant/che-telegram-all-mcp](https://github.com/PsychQuant/che-telegram-all-mcp) for the personal-account MCP
 
 ## Author
 
