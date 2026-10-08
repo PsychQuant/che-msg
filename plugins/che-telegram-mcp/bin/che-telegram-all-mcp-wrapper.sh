@@ -179,7 +179,7 @@ emit_mcp_error_response() {
     # both steps run regardless. Both lock paths are removed: `.lock` (mkdir
     # mode) and `.lock.flock` (flock mode), so the same command works on
     # macOS (mkdir) and Linux (flock).
-    printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"Another instance of CheTelegramAllMCP is already running%s. Use the existing Claude Code window, or kill the previous wrapper first.","data":{"lockHolderPid":%s,"recoveryCommand":"pkill CheTelegramAllMCP 2>/dev/null; rm -rf ~/.cache/che-telegram-all-mcp.lock ~/.cache/che-telegram-all-mcp.lock.flock","docsUrl":"https://github.com/PsychQuant/psychquant-claude-plugins/blob/main/plugins/che-telegram-mcp/README.md#multi-session-limitation"}}}\n' \
+    printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"Another instance of CheTelegramAllMCP is already running%s. Use the existing Claude Code window, or kill the previous wrapper first.","data":{"lockHolderPid":%s,"recoveryCommand":"pkill CheTelegramAllMCP 2>/dev/null; rm -rf ~/.cache/che-telegram-all-mcp.lock ~/.cache/che-telegram-all-mcp.lock.flock","docsUrl":"https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/README.md#multi-session-limitation"}}}\n' \
         "$request_id" "$pid_phrase" "$pid_field"
 }
 
