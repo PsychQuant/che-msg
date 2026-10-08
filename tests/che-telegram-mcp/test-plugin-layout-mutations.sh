@@ -261,6 +261,28 @@ expect_pass "docsUrl anchor to the second of two identical headings"
 P=$(fresh); printf '\n## 遷移步驟\n' >> "$P/README.md"; perl -CSD -pi -e 's/#multi-session-limitation/#\x{9077}\x{79fb}\x{6b65}\x{9a5f}/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
 expect_pass "docsUrl anchor to a heading with non-ASCII letters"
 
+# (j) verify round 2 of PsychQuant/che-msg#42: each case fails or passes differently on the round-1 lib (4106a1f)
+P=$(fresh); printf '\nRun `/plugin marketplace add PsychQuant/che-msg`.\n' >> "$P/README.md"
+expect_pass "marketplace add in backticks followed by a full stop"
+P=$(fresh); printf '\nRun `claude plugin uninstall che-telegram-mcp@old-mp`, then `claude plugin install che-telegram-mcp@old-mp`.\n' >> "$P/README.md"
+expect_fail "uninstall and install from the old marketplace in prose, no shell separator" "FAIL \(j\)"
+P=$(fresh); printf '\n<https://github.com/PsychQuant/che-msg/tree/main/plugins/che-telegram-mcp/..>\n' >> "$P/README.md"
+expect_fail "link ending in /.. climbs out of the plugin" "FAIL \(j\)"
+P=$(fresh); printf '\n<https://github.com/PsychQuant/psychquant-claude-plugins/blob/feat/x/plugins/che-telegram-mcp/README.md>\n' >> "$P/README.md"
+expect_fail "link to the old repository on a ref that contains /" "FAIL \(j\)"
+P=$(fresh); ln -s ../../tests/lib/install_refs.py "$P/escape.md"; printf '\n<https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/escape.md>\n' >> "$P/README.md"
+expect_fail "link to a symlink inside the plugin that resolves outside it" "FAIL \(j\)"
+P=$(fresh); printf '\n````markdown\n```bash\n# Fake heading\n```\n````\n' >> "$P/README.md"; perl -pi -e 's/#multi-session-limitation/#fake-heading/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "docsUrl anchor to a # line inside a four-backtick fence that wraps a three-backtick one" "FAIL \(j\)"
+P=$(fresh); printf '\n## Dup\n\n## Dup\n\n## Dup-1\n' >> "$P/README.md"; perl -pi -e 's/#multi-session-limitation/#dup-1-1/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_pass "docsUrl anchor dup-1-1 (GitHub skips the slug the third heading already took)"
+P=$(fresh); printf '\n## 遷移步驟\n' >> "$P/README.md"; perl -CSD -pi -e 's/#multi-session-limitation/#\x{9077}\x{79fb}\x{932f}/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "docsUrl anchor to a non-ASCII heading that does not exist" "FAIL \(j\)"
+P=$(fresh); printf '\n## 遷移步驟\n' >> "$P/README.md"; perl -pi -e 's/#multi-session-limitation/#%E9%81%B7%E7%A7%BB%E6%AD%A5%E9%A9%9F/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_pass "docsUrl anchor percent-encoded, matching a non-ASCII heading"
+P=$(fresh); printf '\n## 遷移步驟\n' >> "$P/README.md"; perl -pi -e 's/#multi-session-limitation/#%E9%81%B7%E7%A7%BB%E9%8C%AF/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "docsUrl anchor percent-encoded, matching no heading" "FAIL \(j\)"
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

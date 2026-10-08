@@ -245,6 +245,16 @@ expect_fail "uninstall and install from the old marketplace on one line" "FAIL \
 P=$(fresh); printf '\n[x](https://github.com/PsychQuant/che-msg/blob/main/plugins/che-archive-lines/../../tests/lib/install_refs.py)\n' >> "$P/README.md"
 expect_fail "link that climbs out of the plugin with .." "FAIL \(j\)"
 
+# (j) verify round 2 of PsychQuant/che-msg#42: each case fails or passes differently on the round-1 lib (4106a1f)
+P=$(fresh); printf '\nRun `/plugin marketplace add PsychQuant/che-msg`.\n' >> "$P/README.md"
+expect_pass "marketplace add in backticks followed by a full stop"
+P=$(fresh); printf '\nRun `claude plugin uninstall che-archive-lines@old-mp`, then `claude plugin install che-archive-lines@old-mp`.\n' >> "$P/README.md"
+expect_fail "uninstall and install from the old marketplace in prose, no shell separator" "FAIL \(j\)"
+P=$(fresh); printf '\n<https://github.com/PsychQuant/che-msg/tree/main/plugins/che-archive-lines/..>\n' >> "$P/README.md"
+expect_fail "link ending in /.. climbs out of the plugin" "FAIL \(j\)"
+P=$(fresh); printf '\n<https://github.com/PsychQuant/psychquant-claude-plugins/blob/feat/x/plugins/che-archive-lines/README.md>\n' >> "$P/README.md"
+expect_fail "link to the old repository on a ref that contains /" "FAIL \(j\)"
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
