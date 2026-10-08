@@ -37,6 +37,7 @@ fresh() {   # build a clean scratch copy; echo its plugin dir
     cp "$LAYOUT_TEST" "$SCRATCH/tree/tests/che-telegram-mcp/"
     cp -R "$SCRIPT_DIR/../lib" "$SCRATCH/tree/tests/lib"
     cp "$SCRIPT_DIR/../../.claude-plugin/marketplace.json" "$SCRATCH/tree/.claude-plugin/"
+    cp "$SCRIPT_DIR/../../README.md" "$SCRATCH/tree/"
     echo "$SCRATCH/tree/plugins/che-telegram-mcp"
 }
 
@@ -67,6 +68,20 @@ expect_pass() {
     else
         echo "  ✗ $name (exit $rc, expected pass)"
         printf '%s\n' "$out" | sed 's/^/      /'
+        FAILED=$((FAILED + 1))
+    fi
+}
+# expect_fast_pass <name> <seconds> — as expect_pass, and the layout test must
+# also finish within <seconds> (perl's alarm kills it otherwise)
+expect_fast_pass() {
+    local name="$1" secs="$2" out rc
+    out=$(perl -e 'alarm shift; exec @ARGV' "$secs" bash "$SCRATCH/tree/tests/che-telegram-mcp/test-plugin-layout.sh" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then
+        echo "  ✓ $name"
+        PASSED=$((PASSED + 1))
+    else
+        echo "  ✗ $name (exit $rc; 142 = killed after ${secs}s)"
+        printf '%s\n' "$out" | tail -5 | sed 's/^/      /'
         FAILED=$((FAILED + 1))
     fi
 }
@@ -294,8 +309,8 @@ P=$(fresh); perl -pi -e 's{che-telegram-mcp/README\.md#}{che-telegram-mcp/readme
 expect_fail "docsUrl to README.md spelled readme.md (case-insensitive disk)" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' '/plugin marketplace add <PsychQuant/psychquant-claude-plugins>' >> "$P/README.md"
 expect_fail "marketplace add <old repo>" "FAIL \(j\)"
-P=$(fresh); printf '%s\n' '' 'claude plugin marketplace add --scope user PsychQuant/che-msg' >> "$P/README.md"
-expect_pass "marketplace add with --scope before the argument"
+P=$(fresh); perl -pi -e 's{marketplace add PsychQuant/che-msg}{marketplace add --scope user PsychQuant/che-msg}' "$P/README.md"
+expect_pass "marketplace add with --scope before the argument, and no other marketplace add"
 P=$(fresh); printf '%s\n' '' 'claude plugin marketplace add \' '  PsychQuant/psychquant-claude-plugins' >> "$P/README.md"
 expect_fail "marketplace add continued on the next line" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'claude plugin uninstall --scope user che-telegram-mcp@old-mp' >> "$P/README.md"
@@ -314,13 +329,13 @@ P=$(fresh); printf '%s\n' '' '## [Foo](http://x) bar' >> "$P/README.md"; perl -p
 expect_pass "docsUrl anchor to a heading that contains a link"
 
 # (j) verify round 4 of PsychQuant/che-msg#42: the former name is found by itself, not
-# by parsing URLs; each case differs on the round-3 lib (868c2dd)
+# by parsing URLs; each case differs on the round-3 lib (868c2dd) unless marked
 P=$(fresh); printf '%s\n' '' 'See https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-telegram-mcp。' >> "$P/README.md"
 expect_fail "old-repo URL followed by a full-width full stop" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' '見https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-telegram-mcp說明' >> "$P/README.md"
 expect_fail "old-repo URL run into Chinese text on both sides" "FAIL \(j\)"
 P=$(fresh); printf '\nSee https://github.com/PsychQuant/psychquant\xe2\x80\x8b-claude-plugins/tree/main/plugins/che-telegram-mcp\n' >> "$P/README.md"
-expect_fail "old repository name with a zero-width space inside it" "FAIL \(j\)"
+expect_fail "old repository name with a zero-width space inside it (regression lock)" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'https://raw.githubusercontent.com/PsychQuant/psychquant-claude-plugins/main/plugins/che-telegram-mcp/README.md' >> "$P/README.md"
 expect_fail "old-repo raw.githubusercontent.com URL" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'https://github.com/PsychQuant/psychquant-claude-plugins/edit/main/plugins/che-telegram-mcp/README.md' >> "$P/README.md"
@@ -332,7 +347,7 @@ expect_fail "second marketplace add on one line names the old repository" "FAIL 
 P=$(fresh); printf '%s\n' '' '/plugin Marketplace Add PsychQuant/PsychQuant-Claude-Plugins' >> "$P/README.md"
 expect_fail "marketplace add of the old repository in other letter case" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' '/plugin marketplace add PsychQuant／psychquant-claude-plugins' >> "$P/README.md"
-expect_fail "old repository after a full-width slash" "FAIL \(j\)"
+expect_fail "old repository after a full-width slash (regression lock)" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' '請執行 /plugin install 安裝che-telegram-mcp@psychquant-claude-plugins' >> "$P/README.md"
 expect_fail "old install id run into Chinese text" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' '/plugin install x_che-telegram-mcp@old-mp' >> "$P/README.md"
@@ -342,7 +357,7 @@ expect_fail "clone URL of the old repository" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'Source: https://github.com/PsychQuant/psychquant-claude-plugins' >> "$P/README.md"
 expect_fail "link to the old repository's front page" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'See [#999](https://github.com/PsychQuant/psychquant-claude-plugins/issues/999) and [#998](https://github.com/PsychQuant/psychquant-claude-plugins/pull/998).' >> "$P/README.md"
-expect_pass "issue and pull request links to the old repository are history"
+expect_pass "issue and pull request links to the old repository are history (regression lock)"
 P=$(fresh); printf '%s\n' '' 'Run `marketplace add` before you install anything.' >> "$P/README.md"
 expect_pass "marketplace add mentioned in prose"
 P=$(fresh); perl -ni -e 'print unless m{marketplace add PsychQuant/che-msg}' "$P/README.md"
@@ -357,6 +372,49 @@ P=$(fresh); printf '%s\n' '# docsUrl: see the README' >> "$P/bin/che-telegram-bo
 expect_fail "docsUrl mentioned outside a JSON member" "FAIL \(j\)"
 P=$(fresh); L=$(wc -l < "$P/README.md"); printf '%s\n' '' 'a \' 'b' 'claude plugin install che-telegram-mcp@old-mp' >> "$P/README.md"
 expect_fail "line numbers count physical lines after a continuation" "README\.md:$((L + 4)) names che-telegram-mcp@old-mp"
+
+# (j) verify round 5 of PsychQuant/che-msg#42: every file of the plugin and the root
+# README are scanned; each case differs on the round-4 lib (e92b26d) unless marked
+P=$(fresh); perl -pi -e 's{GITHUB_REPO="PsychQuant/che-msg"}{GITHUB_REPO="PsychQuant/psychquant-claude-plugins"}' "$P/hooks/check-mcp.sh"
+expect_fail "hook's GITHUB_REPO names the old repository" "FAIL \(j\)"
+P=$(fresh); perl -0pi -e 's/\A\{/{\n  "homepage": "https:\/\/github.com\/PsychQuant\/psychquant-claude-plugins",/' "$P/.claude-plugin/plugin.json"
+expect_fail "plugin.json homepage is the old repository" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' 'claude plugin marketplace add PsychQuant/psychquant-claude-plugins' >> "$P/skills/auth/SKILL.md"
+expect_fail "a skill tells users to add the old marketplace" "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's{marketplace add PsychQuant/che-msg}{marketplace add PsychQuant/psychquant-claude-plugins}' "$SCRATCH/tree/README.md"
+expect_fail "the repository's root README adds the old marketplace" "FAIL \(j\)"
+P=$(fresh); mkdir -p "$P/bin/lib"; printf '%s\n' '# https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-telegram-mcp' > "$P/bin/lib/x.sh"
+expect_fail "old repository in a file below bin/" "bin/lib/x\.sh:1 names the former"
+P=$(fresh); printf '%s\n' 'SOURCE=https://github.com/PsychQuant/psychquant-claude-plugins' > "$P/bin/.env.example"
+expect_fail "old repository in a dotfile in bin/" "bin/\.env\.example:1 names the former"
+P=$(fresh); printf '%s\n' '# https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-telegram-mcp' >> "$P/bin/che-telegram-bot-mcp-wrapper.sh"
+expect_fail "old repository in a wrapper comment (regression lock)" "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's/,"docsUrl":"[^"]*"//' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "the wrapper's docsUrl removed, so rule 5 would check nothing" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' "echo '{\"docsUrl\":\"https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/README.md#gone\"}'" >> "$P/hooks/check-mcp.sh"
+expect_fail "a docsUrl outside bin/ with an anchor that matches nothing" "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's{PsychQuant/che-msg}{PsychQuant/other-repo}g' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "wrapper GITHUB_REPO and docsUrl both name a repository that is not che-msg (regression lock)" "FAIL \(j\)"
+P=$(fresh); perl -ni -e 'print unless /^GITHUB_REPO=/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "a docsUrl in a file with no GITHUB_REPO line (regression lock)" "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's{marketplace add PsychQuant/che-msg}{marketplace add che-msg}' "$P/README.md"
+expect_fail "marketplace add names che-msg without an owner" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' 'Tracked in PsychQuant/psychquant-claude-plugins#152.' >> "$P/README.md"
+expect_pass "Owner/repo#N shorthand for an old-repository issue"
+P=$(fresh); printf '%s\n' '' 'https://github.com/PsychQuant/psychquant-claude-plugins/issues/1/../../tree/main/plugins/che-telegram-mcp' >> "$P/README.md"
+expect_fail "issue link followed by dot segments into the old repository" "FAIL \(j\)"
+P=$(fresh); L=$(wc -l < "$P/README.md"); printf '\nx\xe2\x80\xa8claude plugin install che-telegram-mcp@old-mp\n' >> "$P/README.md"
+expect_fail "U+2028 inside a line does not shift line numbers" "README\.md:$((L + 2)) names che-telegram-mcp@old-mp"
+P=$(fresh); printf '%s\n' '' "o https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-telegram-mcp" >> "$P/CHANGELOG.md"
+expect_pass "CHANGELOG.md may name the old repository (regression lock)"
+P=$(fresh); python3 -c 'import sys; open(sys.argv[1], "a").write("\n# a" + " " * 200000 + "b\n\n# " + "[" * 80000 + "\n")' "$P/README.md"
+expect_fast_pass "a README heading with 200000 spaces and one with 80000 [ are read in time" 20
+P=$(fresh); python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 100000)' "$SCRATCH/tree/.claude-plugin/marketplace.json"
+expect_fail "deeply nested marketplace.json reports (j) instead of crashing the parser" "FAIL \(j\)"
+P=$(fresh); printf 'x\n' > "$P/notes.txt"; chmod 000 "$P/notes.txt"
+expect_fail "an unreadable file in the plugin reports (j) instead of crashing the parser" "FAIL \(j\)"
+P=$(fresh); python3 -c 'import sys; open(sys.argv[1], "a").write("\n" * 3000000)' "$P/README.md"
+expect_fail "a README over 2 MB is reported, not read" "FAIL \(j\)"
 
 echo
 echo "Results: $PASSED passed, $FAILED failed"

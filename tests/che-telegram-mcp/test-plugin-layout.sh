@@ -39,12 +39,14 @@
 #        session, beyond the turn's grant) or has a !`command` / ```! block in
 #        its body (run when the skill is invoked, before Claude reads it; one
 #        that matches the skill's own allowed-tools runs with no prompt)
-#   (j)  the README and bin/ send users to the marketplace this repository
-#        publishes: the former marketplace name appears only in listed shapes,
-#        install ids and `marketplace add` name this marketplace, and the
-#        telegram-all wrapper's docsUrl and its #anchor point at this README.
-#        The five rules are in tests/lib/install_refs.py (PsychQuant/che-msg#42:
-#        five such places still named the old marketplace after the move).
+#   (j)  the plugin sends users to the marketplace this repository publishes:
+#        in every plugin file but CHANGELOG.md, and in the repository README,
+#        the former marketplace name appears only in listed shapes; the README
+#        installs from and adds this marketplace; and the telegram-all
+#        wrapper's docsUrl (at least one is required) and its #anchor point at
+#        this README. The five rules are in tests/lib/install_refs.py
+#        (PsychQuant/che-msg#42: five such places still named the old
+#        marketplace after the move).
 #   (fm) every skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (see below)
 #
@@ -314,7 +316,7 @@ for name in ("auth", "chats", "search", "send"):
 
 # ---------- (j) install references name this marketplace ----------
 import install_refs
-for msg in install_refs.problems("che-telegram-mcp", root, os.path.join(root, "..", "..")):
+for msg in install_refs.problems("che-telegram-mcp", root, os.path.join(root, "..", ".."), docs_url_required=True):
     bad("j", msg)
 
 print("\n".join(problems))
@@ -353,7 +355,7 @@ report f  "skills pre-approve only allowlisted read-only tools (auth steps only 
 report g  "telegram-messaging exists and stays model-invocable"
 report h  "auth/chats/search/send set disable-model-invocation: true"
 report i  "no skill sets hooks or runs !\`command\` blocks"
-report j  "README and bin/ name the marketplace this repository publishes"
+report j  "the plugin and the repository README name the marketplace this repository publishes"
 
 echo
 if [ "$FAILURES" -gt 0 ]; then
