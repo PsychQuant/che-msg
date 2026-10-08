@@ -15,3 +15,7 @@ mcpb/server/*
 .spectra/
 openspec/.vector-search.db*
 *.mcpb
+
+# Python bytecode from tests/lib (imported by the plugin layout tests)
+__pycache__/
+*.pyc
