@@ -232,6 +232,10 @@ P=$(fresh); perl -pi -e 's/"name": "che-msg"/"name": "other-marketplace"/' "$SCR
 expect_fail "marketplace renamed but README not" "FAIL \(j\)"
 P=$(fresh); rm "$SCRATCH/tree/.claude-plugin/marketplace.json"
 expect_fail "no marketplace.json makes (j) unverifiable, not passed" "FAIL \(j\)"
+P=$(fresh); printf '\n\xff\n' >> "$P/README.md"
+expect_fail "README that is not UTF-8 makes (j) unverifiable, not passed" "FAIL \(j\)"
+P=$(fresh); printf '\n\xff\n' >> "$P/README.md"
+expect_fail "README that is not UTF-8 still lets (a) run (no parser crash)" "PASS \(a\)"
 
 echo
 echo "Results: $PASSED passed, $FAILED failed"
