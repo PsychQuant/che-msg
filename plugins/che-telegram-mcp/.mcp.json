@@ -1,0 +1,12 @@
+{
+  "telegram-all": {
+    "type": "stdio",
+    "command": "${CLAUDE_PLUGIN_ROOT}/bin/che-telegram-all-mcp-wrapper.sh",
+    "description": "Full Telegram client (personal account) — read all chats, send messages, search history"
+  },
+  "telegram-bot": {
+    "type": "stdio",
+    "command": "${CLAUDE_PLUGIN_ROOT}/bin/che-telegram-bot-mcp-wrapper.sh",
+    "description": "Telegram Bot API — send/receive messages via bot account"
+  }
+}
