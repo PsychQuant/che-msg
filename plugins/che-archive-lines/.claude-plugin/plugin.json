@@ -1,6 +1,6 @@
 {
   "name": "che-archive-lines",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "歸檔 LINE macOS 聊天記錄到文字檔",
   "author": {
     "name": "Che Cheng"

@@ -276,9 +276,15 @@ This plugin requires:
 
 ## Version
 
-Plugin version: 1.4.1 (currently pins `che-telegram-all-mcp` v0.5.0 + `che-telegram-bot-mcp` v0.5.0 binaries; wrapper auto-upgrades on version mismatch)
+Plugin version: 1.4.2 (currently pins `che-telegram-all-mcp` v0.5.0 + `che-telegram-bot-mcp` v0.5.0 binaries; wrapper auto-upgrades on version mismatch)
 
 ### Changelog
+
+**1.4.2** (2026-10-08)
+
+- **Moved to the `che-msg` marketplace**: the plugin now ships from [PsychQuant/che-msg](https://github.com/PsychQuant/che-msg), the repository that builds and releases its binaries. Install with `/plugin marketplace add PsychQuant/che-msg` and `/plugin install che-telegram-mcp@che-msg`; if you installed from psychquant-claude-plugins, follow [the steps above](#installed-it-from-psychquant-claude-plugins-before). See [che-msg#42](https://github.com/PsychQuant/che-msg/issues/42).
+- The telegram-all wrapper's lock-refused error now links to this README in che-msg.
+- No change to the skills or binaries; the wrappers still pin `DESIRED_VERSION` 0.5.0.
 
 **1.4.1** (2026-10-08)
 

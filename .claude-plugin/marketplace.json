@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "che-telegram-mcp",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "description": "Telegram MCP Server Plugin — Bot API + 個人帳號 TDLib 全功能存取（telegram-all 28 個工具、telegram-bot 31 個工具），Keychain 密鑰管理。v1.4.0: commands 改為 skills 並修正 allowed-tools、wrapper 測試移出 bin/",
       "author": {
         "name": "Che Cheng"
@@ -18,7 +18,7 @@
     },
     {
       "name": "che-archive-lines",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "description": "歸檔 LINE macOS 聊天記錄到文字檔，使用座標點擊自動化",
       "author": {
         "name": "Che Cheng"

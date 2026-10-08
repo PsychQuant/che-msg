@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-08
+
+The plugin moved from PsychQuant/psychquant-claude-plugins to PsychQuant/che-msg, which now publishes it as the `che-msg` marketplace ([che-msg#42](https://github.com/PsychQuant/che-msg/issues/42)). No change to the skill or `scripts/line-save-chat.sh`.
+
+### Changed
+- **Behavior change:** the install id is now `che-archive-lines@che-msg` (`/plugin marketplace add PsychQuant/che-msg`). psychquant-claude-plugins no longer lists the plugin: once its marketplace is updated, an existing `che-archive-lines@psychquant-claude-plugins` install is dropped from `enabledPlugins` and reported as removed. The README gives the switch-over steps. The calibration in `~/.config/che-archive-lines/config.json` is kept.
+
+### Tests
+- The plugin's tests moved with it, to `tests/che-archive-lines/` in che-msg. New check (j): the README's install ids and `marketplace add` must name the marketplace in the repository's own `.claude-plugin/marketplace.json`; a README that is not UTF-8 makes (j) unverifiable instead of crashing the test (`tests/lib/install_refs.py`). Mutation cases 60 → 68.
+
 ## [1.1.0] - 2026-10-08
 
 Plugin-shell upgrade to the current `harness-devtools:plugin-upgrade` baseline and the official plugin reference ([#139](https://github.com/PsychQuant/psychquant-claude-plugins/issues/139), parent PsychQuant/che-msg#39). `scripts/line-save-chat.sh` changes only in how it reads, checks and writes the values it does arithmetic on, and in its calibration prompt ([#149](https://github.com/PsychQuant/psychquant-claude-plugins/issues/149); see Security).

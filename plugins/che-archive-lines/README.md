@@ -23,7 +23,7 @@ LINE macOS 版使用 Qt 框架，其 UI 元素不支援 macOS Accessibility API�
 
 ### 之前從 psychquant-claude-plugins 安裝過？
 
-1.1.0 以前這個 plugin 由 `psychquant-claude-plugins` marketplace 發布，1.1.1 起改由本 repository 的 `che-msg` marketplace 發布。在終端機裡先移除舊的、再裝新的：
+到 1.1.0 為止，這個 plugin 由 `psychquant-claude-plugins` marketplace 發布，1.1.1 起改由本 repository 的 `che-msg` marketplace 發布。在終端機裡先移除舊的、再裝新的：
 
 ```bash
 claude plugin uninstall che-archive-lines@psychquant-claude-plugins   # 當初裝在專案範圍的話加 --scope project
