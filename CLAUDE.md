@@ -68,7 +68,8 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 - 安裝：`claude plugin marketplace add PsychQuant/che-msg`，再 `claude plugin install <plugin>@che-msg`
 - 改版：`plugins/<name>/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json` 的 `version` 一起改，CHANGELOG 同步
 - binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（目前 0.5.0）。發新 binary 後要 bump 這個 pin，plugin 版號也跟著 bump
-- README 寫給使用者打的安裝指令、GitHub 連結（含 wrapper 的 `docsUrl`）必須指向 `che-msg`，由結構測試的 check (j) 把關
+- README 寫給使用者打的安裝指令、`marketplace add` 與 wrapper 的 `docsUrl` 必須指向 `che-msg`；舊 marketplace 名稱只能出現在 uninstall 那一行、舊 repo 的 issue／PR 連結，或當作一般字詞，其他形式（`owner/舊名`、任何指進舊 repo 的連結）都算錯。由結構測試的 check (j) 把關，規則在 `tests/lib/install_refs.py`
+- plugin 再搬家時，把它離開的 marketplace 名稱加進 `tests/lib/install_refs.py` 的 `FORMER`
 
 ## 開發
 
