@@ -247,6 +247,20 @@ expect_fail "marketplace renamed but README and wrapper not" "FAIL \(j\)"
 P=$(fresh); rm "$SCRATCH/tree/.claude-plugin/marketplace.json"
 expect_fail "no marketplace.json makes (j) unverifiable, not passed" "FAIL \(j\)"
 
+# (j) verify round 1 of PsychQuant/che-msg#42: punctuation, per-command uninstall, `..`, fenced headings, repeated and non-ASCII headings
+P=$(fresh); printf '\nThen run /plugin install che-telegram-mcp@che-msg.\n' >> "$P/README.md"
+expect_pass "install id followed by a full stop"
+P=$(fresh); printf '\n    claude plugin uninstall che-telegram-mcp@old-mp; claude plugin install che-telegram-mcp@old-mp\n' >> "$P/README.md"
+expect_fail "uninstall and install from the old marketplace on one line" "FAIL \(j\)"
+P=$(fresh); printf '\n[x](https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/../../tests/lib/install_refs.py)\n' >> "$P/README.md"
+expect_fail "link that climbs out of the plugin with .." "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's/#multi-session-limitation/#1-add-the-marketplace-and-install-the-plugin/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "docsUrl anchor that only matches a comment inside a code block" "FAIL \(j\)"
+P=$(fresh); printf '\n## Dup\n\ntext\n\n## Dup\n' >> "$P/README.md"; perl -pi -e 's/#multi-session-limitation/#dup-1/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_pass "docsUrl anchor to the second of two identical headings"
+P=$(fresh); printf '\n## 遷移步驟\n' >> "$P/README.md"; perl -CSD -pi -e 's/#multi-session-limitation/#\x{9077}\x{79fb}\x{6b65}\x{9a5f}/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_pass "docsUrl anchor to a heading with non-ASCII letters"
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

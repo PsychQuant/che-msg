@@ -13,9 +13,10 @@ are the only rules; nothing else in the docs is checked:
 
   1. repo_root/.claude-plugin/marketplace.json exists, parses, and lists
      `plugin`. Its `name` is the marketplace name M used below.
-  2. README.md: every `<plugin>@<x>` has x == M, except on a line that
-     uninstalls — the migration steps name the old install id on purpose. At
-     least one `install <plugin>@M` appears.
+  2. README.md: every `<plugin>@<x>` has x == M, unless the shell command that
+     contains it (the stretch of the line between `;`, `&&`, `||` or `|`) runs
+     `uninstall` before it — the migration steps name the old install id on
+     purpose. At least one `install <plugin>@M` appears.
   3. README.md: every `marketplace add <arg>` has an argument whose last path
      segment (before any `#ref`) is M. This relies on the repository being named
      after its marketplace, which holds for che-msg and for
@@ -23,36 +24,69 @@ are the only rules; nothing else in the docs is checked:
      `marketplace add <old repo>` could not be caught at all.
   4. README.md and every file in bin/: each GitHub URL of the form
      https://github.com/<owner>/<repo>/(blob|tree)/<ref>/plugins/<plugin>...
-     has repo == M and a path that exists under repo_root, and a `#anchor` on a
-     .md path matches one of that file's headings (GitHub's slug rule, ASCII
-     subset: lowercase, drop everything but letters, digits, spaces, `-` and
-     `_`, spaces to `-`).
+     has repo == M and a path that, after resolving `.` and `..`, stays inside
+     plugins/<plugin>/ and exists under repo_root; a `#anchor` on a .md path
+     must match one of that file's headings. Headings inside fenced code blocks
+     do not count (a `# comment` in a bash block is not a heading). Anchors
+     follow GitHub's rule: lowercase, drop everything except letters (Unicode
+     included), digits, spaces, `-` and `_`, turn spaces into `-`, and add `-1`,
+     `-2`, … to repeated headings.
 
-CHANGELOG.md is not checked: its links to the old repository are history.
+Sentence punctuation (`.`, `,`, `;`, `:`) right after an install id, a
+`marketplace add` argument or a URL path is not part of it.
+
+Not checked, by design: whether `<ref>` exists on the remote (the path is
+checked against this working tree), and spellings that differ in case or put
+whitespace around `@` (`Che-Telegram-MCP@x`, `plugin @x`). CHANGELOG.md is not
+checked either: its links to the old repository are history.
 """
 import json
 import os
+import posixpath
 import re
+
+_TRAIL = ".,;:"
+_SEPARATOR = re.compile(r";|&&|\|\|?")
+_FENCE = re.compile(r"^\s*(```|~~~)")
 
 
 def _slug(heading: str) -> str:
     s = heading.strip().lower()
-    s = re.sub(r"[^a-z0-9 _-]", "", s)
+    s = re.sub(r"[^\w\- ]", "", s)
     return s.replace(" ", "-")
 
 
 def _headings(path: str) -> set[str]:
-    out = set()
+    out: set[str] = set()
+    seen: dict[str, int] = {}
+    in_fence = False
     with open(path, encoding="utf-8") as fh:
         for line in fh:
-            m = re.match(r"^#{1,6}\s+(.*?)\s*#*\s*$", line)
-            if m:
-                out.add(_slug(m.group(1)))
+            if _FENCE.match(line):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            m = re.match(r"^#{1,6}\s+(.*?)(?:\s+#+)?\s*$", line)
+            if not m:
+                continue
+            base = _slug(m.group(1))
+            n = seen.get(base, 0)
+            seen[base] = n + 1
+            out.add(base if n == 0 else f"{base}-{n}")
     return out
 
 
+def _command_before(line: str, pos: int) -> str:
+    """The text of the shell command that contains `pos`, up to `pos`."""
+    start = 0
+    for sep in _SEPARATOR.finditer(line, 0, pos):
+        start = sep.end()
+    return line[start:pos]
+
+
 def problems(plugin: str, plugin_dir: str, repo_root: str) -> list[str]:
-    found = []
+    found: list[str] = []
     market = os.path.join(repo_root, ".claude-plugin", "marketplace.json")
     try:
         with open(market, encoding="utf-8") as fh:
@@ -79,13 +113,15 @@ def problems(plugin: str, plugin_dir: str, repo_root: str) -> list[str]:
     has_install = False
     for n, line in enumerate(lines, 1):
         for m in install_re.finditer(line):
-            if m.group(1) == mp:
-                if re.search(r"\binstall\s+" + re.escape(f"{plugin}@{mp}") + r"\b", line):
+            target = m.group(1).rstrip(_TRAIL)
+            command = _command_before(line, m.start())
+            if target == mp:
+                if re.search(r"\binstall\s+$", command) and not re.search(r"\buninstall\s+$", command):
                     has_install = True
-            elif not re.search(r"\buninstall\b", line):
-                found.append(f"README.md:{n} names {plugin}@{m.group(1)}, not {plugin}@{mp}")
+            elif not re.search(r"\buninstall\b", command):
+                found.append(f"README.md:{n} names {plugin}@{target}, not {plugin}@{mp}")
         for m in re.finditer(r"marketplace add\s+(\S+)", line):
-            arg = m.group(1).strip("`'\"").split("#", 1)[0].rstrip("/")
+            arg = m.group(1).strip("`'\"").split("#", 1)[0].rstrip(_TRAIL).rstrip("/")
             last = arg.rsplit("/", 1)[-1]
             if last.endswith(".git"):
                 last = last[:-4]
@@ -96,7 +132,8 @@ def problems(plugin: str, plugin_dir: str, repo_root: str) -> list[str]:
 
     url_re = re.compile(
         r"https://github\.com/([^/\s]+)/([^/\s]+)/(?:blob|tree)/([^/\s]+)/"
-        r"(plugins/" + re.escape(plugin) + r"(?:/[^\s\"'()<>#`]*)?)(?:#([A-Za-z0-9_-]+))?")
+        r"(plugins/" + re.escape(plugin) + r"(?:/[^\s\"'()<>#`]*)?)(?:#([\w-]+))?")
+    home = f"plugins/{plugin}"
     files = [("README.md", readme)]
     bindir = os.path.join(plugin_dir, "bin")
     if os.path.isdir(bindir):
@@ -106,20 +143,25 @@ def problems(plugin: str, plugin_dir: str, repo_root: str) -> list[str]:
         with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
         for m in url_re.finditer(text):
-            repo, rel, anchor = m.group(2), m.group(4).rstrip("/"), m.group(5)
+            repo, anchor = m.group(2), m.group(5)
+            rel = m.group(4).rstrip(_TRAIL).rstrip("/")
             where = f"{label}: {m.group(0)}"
             if repo != mp:
                 found.append(f"{where} points at repository {repo!r}, not {mp!r}")
                 continue
-            target = os.path.join(repo_root, rel)
+            norm = posixpath.normpath(rel)
+            if norm != home and not norm.startswith(home + "/"):
+                found.append(f"{where} — {rel} resolves to {norm}, outside {home}/")
+                continue
+            target = os.path.join(repo_root, norm)
             if not os.path.exists(target):
-                found.append(f"{where} — {rel} does not exist in this repository")
-            elif anchor and rel.endswith(".md"):
+                found.append(f"{where} — {norm} does not exist in this repository")
+            elif anchor and norm.endswith(".md"):
                 try:
                     heads = _headings(target)
                 except (OSError, UnicodeDecodeError) as exc:
-                    found.append(f"{where} — {rel} unreadable as UTF-8 ({exc.__class__.__name__}), anchor unverified")
+                    found.append(f"{where} — {norm} unreadable as UTF-8 ({exc.__class__.__name__}), anchor unverified")
                     continue
                 if anchor not in heads:
-                    found.append(f"{where} — {rel} has no heading with anchor #{anchor}")
+                    found.append(f"{where} — {norm} has no heading with anchor #{anchor}")
     return found

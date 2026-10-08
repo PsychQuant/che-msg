@@ -237,6 +237,14 @@ expect_fail "README that is not UTF-8 makes (j) unverifiable, not passed" "FAIL 
 P=$(fresh); printf '\n\xff\n' >> "$P/README.md"
 expect_fail "README that is not UTF-8 still lets (a) run (no parser crash)" "PASS \(a\)"
 
+# (j) verify round 1 of PsychQuant/che-msg#42: punctuation, per-command uninstall, `..`
+P=$(fresh); printf '\nThen run /plugin install che-archive-lines@che-msg.\n' >> "$P/README.md"
+expect_pass "install id followed by a full stop"
+P=$(fresh); printf '\n    claude plugin uninstall che-archive-lines@old-mp; claude plugin install che-archive-lines@old-mp\n' >> "$P/README.md"
+expect_fail "uninstall and install from the old marketplace on one line" "FAIL \(j\)"
+P=$(fresh); printf '\n[x](https://github.com/PsychQuant/che-msg/blob/main/plugins/che-archive-lines/../../tests/lib/install_refs.py)\n' >> "$P/README.md"
+expect_fail "link that climbs out of the plugin with .." "FAIL \(j\)"
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
