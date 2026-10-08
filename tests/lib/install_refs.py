@@ -70,8 +70,10 @@ def problems(plugin: str, plugin_dir: str, repo_root: str) -> list[str]:
     try:
         with open(readme, encoding="utf-8") as fh:
             lines = fh.read().splitlines()
-    except OSError:
-        return found + ["README.md unreadable — install references unverified"]
+    except (OSError, UnicodeDecodeError) as exc:
+        # Fail closed, but only this check: a README that is not UTF-8 must not
+        # crash the shared parser and hide the other checks' results.
+        return found + [f"README.md unreadable as UTF-8 ({exc.__class__.__name__}) — install references unverified"]
 
     install_re = re.compile(re.escape(plugin) + r"@([A-Za-z0-9._-]+)")
     has_install = False
@@ -112,6 +114,12 @@ def problems(plugin: str, plugin_dir: str, repo_root: str) -> list[str]:
             target = os.path.join(repo_root, rel)
             if not os.path.exists(target):
                 found.append(f"{where} — {rel} does not exist in this repository")
-            elif anchor and rel.endswith(".md") and anchor not in _headings(target):
-                found.append(f"{where} — {rel} has no heading with anchor #{anchor}")
+            elif anchor and rel.endswith(".md"):
+                try:
+                    heads = _headings(target)
+                except (OSError, UnicodeDecodeError) as exc:
+                    found.append(f"{where} — {rel} unreadable as UTF-8 ({exc.__class__.__name__}), anchor unverified")
+                    continue
+                if anchor not in heads:
+                    found.append(f"{where} — {rel} has no heading with anchor #{anchor}")
     return found
