@@ -8,6 +8,12 @@ source" link and the telegram-all wrapper's docsUrl. `claude plugin validate`
 checks none of them, and a stale one keeps working for exactly as long as the
 old marketplace still lists the plugin.
 
+What it guards against: references to the old marketplace left behind by
+mistake — a stale install line, a link nobody updated, a GITHUB_REPO copied
+from the old wrapper. It does not guard against deliberate evasion: anyone who
+can edit these files can edit this test. Spellings that only someone trying to
+slip past the check would write are listed under "Not checked".
+
 Why the rules are this narrow. Rounds 1-4 of the #42 verify tested an earlier
 version that parsed every GitHub URL and every `marketplace add` argument in the
 docs. Each round found a new kind of text it read wrongly — a full stop, a query
@@ -19,11 +25,14 @@ are listed. Do not widen a rule back into "every URL" or "every argument"
 without reading that history.
 
 Files read. "Plugin files" are every file under plugin_dir, recursively and
-dotfiles included, except the README.md and CHANGELOG.md at its top. A file is
-read only if it is a regular file (a symlink is followed) of at most MAX_BYTES;
-any other file is reported as not checked, so the check fails closed. The plugin
-README must be UTF-8, since rules 3 and 4 read it; other files are decoded with
-replacement characters, which cannot hide the ASCII names in FORMER.
+dotfiles included, except the README.md and CHANGELOG.md at its top (a
+CHANGELOG.md deeper down is read). A file is read only if it is a regular file
+(a symlink to a file is followed) of at most MAX_BYTES; any other file, a
+symlink to a directory and a directory that cannot be listed are reported as
+not checked, so the check fails closed. The plugin README must be UTF-8, since
+rules 3 and 4 read it; other files are decoded with replacement characters,
+which keeps the ASCII names in FORMER findable in any ASCII-compatible
+encoding.
 
 Lines end at LF, CR or CRLF and nowhere else. A line ending in a backslash is
 joined with the next one, and a problem is reported at the line where the
@@ -37,20 +46,26 @@ checked:
 
   1. repo_root/.claude-plugin/marketplace.json exists, parses, has a non-empty
      `name` (M below) and lists `plugin`.
-  2. Former names. In the plugin README, in every plugin file and in
-     repo_root/README.md, each occurrence of a name in FORMER, matched without
+  2. Former names. In the plugin README, in every plugin file, in
+     repo_root/README.md and in repo_root/.claude-plugin/marketplace.json
+     (where a plugin's `source` could point back), each occurrence of a name in FORMER, matched without
      regard to letter case, must have one of these three shapes. The list is
      closed: an occurrence that fits none of them is reported, however
      harmless it looks.
        a. it directly follows `@` (an install id) and the nearest `install` or
           `uninstall` before it on the line is `uninstall` — the migration
           steps name the old install id on purpose;
-       b. it is directly followed by `/issues/<digits>`, `/pull/<digits>` or
-          `#<digits>`, and the character after the digits is not `/` — a
-          reference to the old repository's issue tracker, which is history;
+       b. it is directly followed by `/issues/<digits>` or `/pull/<digits>`,
+          and the character after the digits is not a letter, digit, `_` or
+          `/` — a link to an issue or pull request of the old repository,
+          which is history. The `Owner/repo#N` shorthand is not accepted: it
+          cannot be told apart from a link to the old front page with a
+          numeric anchor, so it is reported and should be written as a link;
        c. the character before it is not `/` or `@`, and what follows it does
           not start with `/` or `.git` — the name as a word, in prose, a
-          heading or an anchor.
+          heading or an anchor. It is also what a former name given bare as
+          a command argument looks like (`marketplace remove
+          psychquant-claude-plugins`), so that passes too.
      So `<owner>/<former>` (a `marketplace add` argument, a clone URL, a
      GITHUB_REPO value, a link to the repository) and `<former>/<anything
      else>` (a link into the old repository on any host: blob, tree, raw,
@@ -63,21 +78,23 @@ checked:
      before it on the line is `uninstall`. At least one `<plugin>@M` has
      `install` as its nearest such word. A `.` ending X is a full stop.
   4. The plugin README has a line where `marketplace add` is followed by any
-     options (tokens starting with `-`; `--scope` and `-s` also take the next
-     token, unless it starts with `-`) and then by an argument that ends in
-     `/M`, optionally with `.git`, followed by whitespace, a backtick or the
-     end of the line.
+     options and then by an argument. `--scope` and `-s` always take the next
+     token as their value (so `--scope <repo>` leaves no argument); any other
+     token starting with `-` is an option on its own. The argument must end
+     in `<c>/M`, optionally with `.git`, where <c> is any character but `/`,
+     and be followed by whitespace, a backtick or the end of the line.
   5. docsUrl, in plugin files only (the README and CHANGELOG describe it in
-     prose): wherever a plugin file contains `docsUrl`, it is a JSON member
-     `"docsUrl":"<url>"` (whitespace allowed around the colon), and <url> is
+     prose). Every JSON member `"docsUrl":"<url>"` (whitespace allowed around
+     the colon) in a plugin file must have a <url> that is
      exactly https://github.com/<R>/blob/main/plugins/<plugin>/README.md#<a>
      where <R> is the same file's GITHUB_REPO="…" value (the repository the
      wrapper downloads its binary from) and the last segment of <R> is M.
-     With docs_url_required, at least one docsUrl must exist, so the rule
-     cannot silently check nothing. <a>, percent-decoded, must be the anchor
+     In bin/, every occurrence of the word `docsUrl` must be such a member
+     (elsewhere a skill may mention it in prose). With docs_url_required, a
+     file in bin/ must have one, so the rule cannot silently check nothing. <a>, percent-decoded, must be the anchor
      GitHub gives one of the headings of the plugin's README.md. Headings
-     counted: ATX headings (`#`-`######` after at most three spaces) of at
-     most HEADING_MAX characters, outside fenced code blocks and outside HTML
+     counted: ATX headings (`#`-`######` after at most three spaces, then a
+     space, a tab or the end of the line) of at most HEADING_MAX characters, outside fenced code blocks and outside HTML
      comments that start a line. A fence closes only with the same character,
      at least as many, and nothing after it; a backtick opener whose info
      string has a backtick is not a fence. Headings inside block quotes, and
@@ -91,6 +108,10 @@ checked:
 Not checked, by design (listed so that nobody reads them as passes):
   - repository files outside plugin_dir other than its README.md (CLAUDE.md,
     tests/, openspec/, other plugins);
+  - spellings written to evade the check: a file in an encoding that is not
+    ASCII-compatible (UTF-16, UTF-32), a former name percent-encoded or split
+    across a backslash continuation, dot segments after an issue number
+    (`/issues/1./../..`);
   - prose: shape 2c cannot tell a mention of a former marketplace from a
     sentence telling users to use it ("pick psychquant-claude-plugins in
     /plugin"); that is for a human reviewer;
@@ -106,8 +127,9 @@ Not checked, by design (listed so that nobody reads them as passes):
     although GitHub gives it no anchor;
   - whether the `main` branch named in a docsUrl exists on the remote;
   - install ids with whitespace around `@`;
-  - the plugin's CHANGELOG.md: its references to the old repository are
-    history.
+  - the plugin's top-level CHANGELOG.md: its references to the old
+    repository are history;
+  - total work: MAX_BYTES bounds each file, not their number.
 
 When a plugin moves again, add the marketplace it leaves to FORMER.
 """
@@ -124,11 +146,10 @@ MAX_BYTES = 2 * 1024 * 1024
 HEADING_MAX = 1000
 
 _CMD = re.compile(r"(?<![A-Za-z])(uninstall|install)(?![A-Za-z])", re.I)
-_HISTORY = re.compile(r"(?:/(?:issues|pull)/|#)\d+(?![\d/])", re.I)
+_HISTORY = re.compile(r"/(?:issues|pull)/\d+(?![\w/])", re.I)
 _DOCS_URL = re.compile(r'"docsUrl"\s*:\s*"([^"]*)"')
 _GITHUB_REPO = re.compile(r'^GITHUB_REPO="([^"]+)"', re.M)
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-_HEADING = re.compile(r"^ {0,3}#{1,6}(?:\s+(.*?))?(?:\s+#+)?\s*$")
 
 
 def _read(path: str) -> tuple[bytes | None, str | None]:
@@ -145,17 +166,28 @@ def _read(path: str) -> tuple[bytes | None, str | None]:
     return data, None
 
 
-def _plugin_files(plugin_dir: str) -> list[tuple[str, str]]:
-    """(label, path) of every file under plugin_dir but its README and CHANGELOG."""
+def _plugin_files(plugin_dir: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """(label, path) of every file under plugin_dir but its top README and
+    CHANGELOG, and a problem for every directory that is not walked."""
     out: list[tuple[str, str]] = []
-    for root, dirs, files in os.walk(plugin_dir):
-        dirs.sort()
+    bad: list[str] = []
+
+    def rel(path: str) -> str:
+        return os.path.relpath(path, plugin_dir).replace(os.sep, "/")
+
+    def unlisted(exc: OSError) -> None:
+        bad.append(f"{rel(exc.filename or plugin_dir)} cannot be listed ({exc.__class__.__name__}) — not checked")
+
+    for root, dirs, files in os.walk(plugin_dir, onerror=unlisted):
+        for d in sorted(dirs):
+            if os.path.islink(os.path.join(root, d)):
+                bad.append(f"{rel(os.path.join(root, d))} is a symlink to a directory — not checked")
+        dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(root, d)))
         for f in sorted(files):
             path = os.path.join(root, f)
-            rel = os.path.relpath(path, plugin_dir).replace(os.sep, "/")
-            if rel not in ("README.md", "CHANGELOG.md"):
-                out.append((rel, path))
-    return out
+            if rel(path) not in ("README.md", "CHANGELOG.md"):
+                out.append((rel(path), path))
+    return out, bad
 
 
 def _joined_lines(text: str) -> list[tuple[int, str]]:
@@ -207,8 +239,8 @@ def _former_names(label: str, n: int, line: str, cmds: _Commands) -> list[str]:
             elif before != "/" and not line.startswith("/", e) and line[e:e + 4].lower() != ".git":
                 continue                                        # shape c
             context = line[max(0, s - 30):e + 30].strip()
-            found.append(f"{label}:{n} names the former marketplace {name!r} in a form "
-                         f"other than prose, an issue reference or an uninstall id: …{context}…")
+            found.append(f"{label}:{n} names the former marketplace {name!r} in a form other than "
+                         f"prose, an /issues/<n> or /pull/<n> link, or an uninstall id: …{context}…")
     return found
 
 
@@ -226,13 +258,40 @@ def _install_ids(n: int, line: str, cmds: _Commands, plugin: str, mp: str) -> tu
     return found, installs
 
 
+def _heading_text(line: str) -> str | None:
+    """Text of an ATX heading, or None. Linear in the line, unlike a regex."""
+    indent = len(line) - len(line.lstrip(" "))
+    if indent > 3:
+        return None
+    rest = line[indent:]
+    level = len(rest) - len(rest.lstrip("#"))
+    if not 1 <= level <= 6 or (len(rest) > level and rest[level] not in " \t"):
+        return None
+    text = rest[level:].strip(" \t")
+    closing = text.rstrip("#")
+    if not closing:
+        return ""
+    if len(closing) < len(text) and closing[-1] in " \t":
+        return closing.rstrip(" \t")
+    return text
+
+
 def _slug_text(raw: str) -> str:
-    s = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", raw)      # images -> alt
-    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)          # links -> text
-    s = re.sub(r"<[^>]+>", "", s)                            # HTML tags
+    # Each pattern stops at the next bracket or paren it cannot match, which
+    # keeps it linear on runs such as `[[[[` (round 6 of #42 measured the
+    # earlier patterns at 8 ms per 1000-character line).
+    s = re.sub(r"!\[([^\[\]]*)\]\([^()]*\)", r"\1", raw)  # images -> alt
+    s = re.sub(r"\[([^\[\]]*)\]\([^()]*\)", r"\1", s)     # links -> text
+    s = re.sub(r"<[^<>]+>", "", s)                            # HTML tags
     s = html.unescape(s)
     s = s.replace("`", "").replace("*", "")
-    s = re.sub(r"(?<!\w)_+|_+(?!\w)", "", s)                # emphasis underscores
+
+    def emphasis(m: re.Match) -> str:                         # `_` not inside a word
+        a = s[m.start() - 1] if m.start() else ""
+        b = s[m.end()] if m.end() < len(s) else ""
+        return m.group() if (a.isalnum() and b.isalnum()) else ""
+
+    s = re.sub(r"_+", emphasis, s)
     s = s.strip().lower()
     kept = [ch for ch in s if unicodedata.category(ch)[0] in "LMN" or ch in " -_"]
     return "".join(kept).replace(" ", "-")
@@ -260,13 +319,13 @@ def _anchors(readme_text: str) -> set[str]:
             in_comment = True
             continue
         if len(line) > HEADING_MAX:
-            continue                    # not counted: bounds the regexes below
-        m = _HEADING.match(line)
-        if not m:
+            continue                    # not counted (fails closed)
+        text = _heading_text(line)
+        if text is None:
             continue
         # github-slugger: the first use of a slug is bare; later ones get
         # -1, -2, … and skip any slug that is already taken.
-        base = result = _slug_text(m.group(1) or "")
+        base = result = _slug_text(text)
         while result in used:
             used[base] += 1
             result = f"{base}-{used[base]}"
@@ -276,7 +335,7 @@ def _anchors(readme_text: str) -> set[str]:
 
 def _docs_urls(label: str, text: str, plugin: str, mp: str, anchors: set[str]) -> list[str]:
     urls = _DOCS_URL.findall(text)
-    if text.count("docsUrl") != len(urls):
+    if label.startswith("bin/") and text.count("docsUrl") != len(urls):
         return [f"{label} mentions docsUrl outside a \"docsUrl\":\"<url>\" member — not checked"]
     if not urls:
         return []
@@ -295,23 +354,25 @@ def _docs_urls(label: str, text: str, plugin: str, mp: str, anchors: set[str]) -
     return found
 
 
-def _marketplace(repo_root: str, plugin: str) -> tuple[str | None, list[str]]:
+def _marketplace(repo_root: str, plugin: str) -> tuple[str | None, str, list[str]]:
+    """(M, the file's text, problems); M is None when rules 2-5 cannot run."""
     data, why = _read(os.path.join(repo_root, ".claude-plugin", "marketplace.json"))
     if data is None:
-        return None, [f".claude-plugin/marketplace.json {why} — install references unverified"]
+        return None, "", [f".claude-plugin/marketplace.json {why} — install references unverified"]
     try:
-        parsed = json.loads(data.decode("utf-8"))
+        text = data.decode("utf-8")
+        parsed = json.loads(text)
         mp = parsed["name"]
         listed = [e for e in parsed.get("plugins", []) if e.get("name") == plugin]
     except (ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
-        return None, [f"cannot read the marketplace name from .claude-plugin/marketplace.json ({exc.__class__.__name__}) — install references unverified"]
+        return None, "", [f"cannot read the marketplace name from .claude-plugin/marketplace.json ({exc.__class__.__name__}) — install references unverified"]
     if not isinstance(mp, str) or not mp:
-        return None, ["marketplace.json has no usable name — install references unverified"]
-    return mp, [] if listed else [f"marketplace {mp!r} does not list {plugin}"]
+        return None, "", ["marketplace.json has no usable name — install references unverified"]
+    return mp, text, [] if listed else [f"marketplace {mp!r} does not list {plugin}"]
 
 
 def problems(plugin: str, plugin_dir: str, repo_root: str, docs_url_required: bool = False) -> list[str]:
-    mp, found = _marketplace(repo_root, plugin)
+    mp, market_text, found = _marketplace(repo_root, plugin)
     if mp is None:
         return found
 
@@ -327,7 +388,9 @@ def problems(plugin: str, plugin_dir: str, repo_root: str, docs_url_required: bo
 
     docs = [("README.md", readme)]
     plugin_texts: list[tuple[str, str]] = []
-    for label, path in _plugin_files(plugin_dir):
+    files, unwalked = _plugin_files(plugin_dir)
+    found += unwalked
+    for label, path in files:
         data, why = _read(path)
         if data is None:
             found.append(f"{label} {why} — not checked")
@@ -339,9 +402,13 @@ def problems(plugin: str, plugin_dir: str, repo_root: str, docs_url_required: bo
         found.append(f"the repository's README.md {why} — not checked")
     else:
         docs.append(("repository README.md", data.decode("utf-8", errors="replace")))
+    docs.append((".claude-plugin/marketplace.json", market_text))
 
-    add_re = re.compile(r"(?i:\bmarketplace\s+add)(?:\s+(?:--scope|-s)\s+[^-\s]\S*|\s+-\S+)*"
-                        r"\s+\S*/" + re.escape(mp) + r"(?:\.git)?(?=[\s`]|$)")
+    # `--scope`/`-s` always take a value; the generic option branch excludes
+    # them, so the regex cannot backtrack into reading a value as the argument.
+    add_re = re.compile(r"(?i:\bmarketplace\s+add)"
+                        r"(?:\s+(?:--scope|-s)\s+\S+|\s+-(?!-scope(?!\S)|s(?!\S))\S+)*"
+                        r"\s+\S*[^\s/]/" + re.escape(mp) + r"(?:\.git)?(?=[\s`]|$)")
     has_install = has_add = False
     for label, text in docs:
         for n, raw in _joined_lines(text):
@@ -361,6 +428,6 @@ def problems(plugin: str, plugin_dir: str, repo_root: str, docs_url_required: bo
     anchors = _anchors(readme)
     for label, text in plugin_texts:
         found += _docs_urls(label, text, plugin, mp, anchors)
-    if docs_url_required and not any(_DOCS_URL.search(t) for _, t in plugin_texts):
-        found.append("no plugin file has a docsUrl, so rule 5 checked nothing")
+    if docs_url_required and not any(_DOCS_URL.search(t) for l, t in plugin_texts if l.startswith("bin/")):
+        found.append("no file in bin/ has a docsUrl, so rule 5 cannot check the wrapper's")
     return found

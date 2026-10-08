@@ -40,13 +40,13 @@
 #        its body (run when the skill is invoked, before Claude reads it; one
 #        that matches the skill's own allowed-tools runs with no prompt)
 #   (j)  the plugin sends users to the marketplace this repository publishes:
-#        in every plugin file but CHANGELOG.md, and in the repository README,
-#        the former marketplace name appears only in listed shapes; the README
-#        installs from and adds this marketplace; and the telegram-all
-#        wrapper's docsUrl (at least one is required) and its #anchor point at
-#        this README. The five rules are in tests/lib/install_refs.py
-#        (PsychQuant/che-msg#42: five such places still named the old
-#        marketplace after the move).
+#        in every plugin file but the top-level CHANGELOG.md, in the repository
+#        README and in marketplace.json, the former marketplace name appears
+#        only in listed shapes; the README installs from and adds this
+#        marketplace; and the telegram-all wrapper's docsUrl (a file in bin/
+#        must have one) and its #anchor point at this README. The five rules
+#        are in tests/lib/install_refs.py (PsychQuant/che-msg#42: five such
+#        places still named the old marketplace after the move).
 #   (fm) every skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (see below)
 #
