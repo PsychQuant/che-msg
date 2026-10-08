@@ -39,6 +39,11 @@
 #        session, beyond the turn's grant) or has a !`command` / ```! block in
 #        its body (run when the skill is invoked, before Claude reads it; one
 #        that matches the skill's own allowed-tools runs with no prompt)
+#   (j)  what the README (and bin/) tell users to type names the marketplace
+#        this repository publishes: install ids, `marketplace add`, and GitHub
+#        links into plugins/che-telegram-mcp/ — including the telegram-all wrapper's docsUrl and its #anchor. The rules are in
+#        tests/lib/install_refs.py (PsychQuant/che-msg#42: five such places still
+#        named the old marketplace after the move).
 #   (fm) every skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (see below)
 #
@@ -306,6 +311,11 @@ for name in ("auth", "chats", "search", "send"):
         bad("h", f"skills/{name}/SKILL.md does not set disable-model-invocation to the literal true "
                  f"(found {meta_strings[name].get('disable-model-invocation')!r})")
 
+# ---------- (j) install references name this marketplace ----------
+import install_refs
+for msg in install_refs.problems("che-telegram-mcp", root, os.path.join(root, "..", "..")):
+    bad("j", msg)
+
 print("\n".join(problems))
 EOF
 )
@@ -342,6 +352,7 @@ report f  "skills pre-approve only allowlisted read-only tools (auth steps only 
 report g  "telegram-messaging exists and stays model-invocable"
 report h  "auth/chats/search/send set disable-model-invocation: true"
 report i  "no skill sets hooks or runs !\`command\` blocks"
+report j  "README and bin/ name the marketplace this repository publishes"
 
 echo
 if [ "$FAILURES" -gt 0 ]; then

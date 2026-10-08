@@ -44,6 +44,11 @@
 #        earlier versions recognise only true, so the test accepts only true.
 #   (n)  name: archive-lines — without a frontmatter name, a plugin skill has no
 #        bare /archive-lines alias, and the README promises one.
+#   (j)  what the README (and bin/) tell users to type names the marketplace
+#        this repository publishes: install ids, `marketplace add`, and GitHub
+#        links into plugins/che-archive-lines/ — this plugin has no bin/, so only the README. The rules are in
+#        tests/lib/install_refs.py (PsychQuant/che-msg#42: five such places still
+#        named the old marketplace after the move).
 #   (fm) the skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (tests/lib/frontmatter_subset.py).
 #
@@ -251,6 +256,11 @@ if fm is not None:
     if fm.get("name") != "archive-lines":
         bad("n", f"name must be archive-lines (found {fm.get('name')!r})")
 
+# ---------- (j) install references name this marketplace ----------
+import install_refs
+for msg in install_refs.problems("che-archive-lines", root, os.path.join(root, "..", "..")):
+    bad("j", msg)
+
 print("\n".join(problems))
 EOF
 )
@@ -280,6 +290,7 @@ report d  "no hard-coded per-machine path in the plugin"
 report e  "pre-approves only save/test/help; no other keys, hooks or !\`command\` blocks"
 report f  "disable-model-invocation: true"
 report n  "name: archive-lines"
+report j  "README and bin/ name the marketplace this repository publishes"
 
 echo
 if [ "$FAILURES" -gt 0 ]; then
