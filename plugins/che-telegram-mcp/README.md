@@ -340,7 +340,7 @@ Plugin version: 1.4.2 (currently pins `che-telegram-all-mcp` v0.5.0 + `che-teleg
 
 ## Source
 
-- Plugin source: [PsychQuant/che-msg](https://github.com/PsychQuant/che-msg/tree/main/plugins/che-telegram-mcp) (the `che-msg` marketplace; up to 1.4.1 it lived in PsychQuant/psychquant-claude-plugins)
+- Plugin source: [PsychQuant/che-msg](https://github.com/PsychQuant/che-msg/tree/main/plugins/che-telegram-mcp) (the `che-msg` marketplace; up to 1.4.1 it was published from the psychquant-claude-plugins marketplace)
 - Binary source: the same repository, `che-telegram-all-mcp/` and `che-telegram-bot-mcp/` — also mirrored at [PsychQuant/che-telegram-all-mcp](https://github.com/PsychQuant/che-telegram-all-mcp) for the personal-account MCP
 
 ## Author

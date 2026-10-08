@@ -237,25 +237,21 @@ expect_fail "README that is not UTF-8 makes (j) unverifiable, not passed" "FAIL 
 P=$(fresh); printf '\n\xff\n' >> "$P/README.md"
 expect_fail "README that is not UTF-8 still lets (a) run (no parser crash)" "PASS \(a\)"
 
-# (j) verify round 1 of PsychQuant/che-msg#42: punctuation, per-command uninstall, `..`
+# (j) verify round 1 of PsychQuant/che-msg#42: punctuation, per-command uninstall
 P=$(fresh); printf '\nThen run /plugin install che-archive-lines@che-msg.\n' >> "$P/README.md"
 expect_pass "install id followed by a full stop"
 P=$(fresh); printf '\n    claude plugin uninstall che-archive-lines@old-mp; claude plugin install che-archive-lines@old-mp\n' >> "$P/README.md"
 expect_fail "uninstall and install from the old marketplace on one line" "FAIL \(j\)"
-P=$(fresh); printf '\n[x](https://github.com/PsychQuant/che-msg/blob/main/plugins/che-archive-lines/../../tests/lib/install_refs.py)\n' >> "$P/README.md"
-expect_fail "link that climbs out of the plugin with .." "FAIL \(j\)"
 
-# (j) verify round 2 of PsychQuant/che-msg#42: each case fails or passes differently on the round-1 lib (4106a1f)
+# (j) verify round 2 of PsychQuant/che-msg#42
 P=$(fresh); printf '\nRun `/plugin marketplace add PsychQuant/che-msg`.\n' >> "$P/README.md"
 expect_pass "marketplace add in backticks followed by a full stop"
 P=$(fresh); printf '\nRun `claude plugin uninstall che-archive-lines@old-mp`, then `claude plugin install che-archive-lines@old-mp`.\n' >> "$P/README.md"
 expect_fail "uninstall and install from the old marketplace in prose, no shell separator" "FAIL \(j\)"
-P=$(fresh); printf '\n<https://github.com/PsychQuant/che-msg/tree/main/plugins/che-archive-lines/..>\n' >> "$P/README.md"
-expect_fail "link ending in /.. climbs out of the plugin" "FAIL \(j\)"
 P=$(fresh); printf '\n<https://github.com/PsychQuant/psychquant-claude-plugins/blob/feat/x/plugins/che-archive-lines/README.md>\n' >> "$P/README.md"
 expect_fail "link to the old repository on a ref that contains /" "FAIL \(j\)"
 
-# (j) verify round 3 of PsychQuant/che-msg#42: URLs read as tokens; each case differs on the round-2 lib (5076746)
+# (j) verify round 3 of PsychQuant/che-msg#42
 P=$(fresh); printf '%s\n' '' 'See https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-archive-lines.' >> "$P/README.md"
 expect_fail "old-repo URL followed by a full stop" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'See https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-archive-lines?plain=1' >> "$P/README.md"
@@ -268,12 +264,8 @@ P=$(fresh); printf '%s\n' '' http://github.com/PsychQuant/psychquant-claude-plug
 expect_fail "old-repo URL over http://" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'See https://github.com/PsychQuant/che-msg/blob/main/plugins/che-archive-lines/README.md.' >> "$P/README.md"
 expect_pass "this repository's URL to a file, followed by a full stop"
-P=$(fresh); printf '%s\n' '' https://github.com/PsychQuant/che-msg/blob/main/plugins/che-archive-lines/readme.md >> "$P/README.md"
-expect_fail "URL to README.md spelled readme.md (case-insensitive disk)" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' '/plugin marketplace add <PsychQuant/psychquant-claude-plugins>' >> "$P/README.md"
 expect_fail "marketplace add <old repo>" "FAIL \(j\)"
-P=$(fresh); printf '%s\n' '' '/plugin marketplace add $REPO' >> "$P/README.md"
-expect_fail "marketplace add with a shell variable cannot be checked" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'claude plugin marketplace add --scope user PsychQuant/che-msg' >> "$P/README.md"
 expect_pass "marketplace add with --scope before the argument"
 P=$(fresh); printf '%s\n' '' 'claude plugin marketplace add \' '  PsychQuant/psychquant-claude-plugins' >> "$P/README.md"
@@ -286,8 +278,43 @@ P=$(fresh); printf '%s\n' '' 'claude plugin uninstall \' '  che-archive-lines@ol
 expect_pass "uninstall continued on the next line"
 P=$(fresh); printf '%s\n' '' 'old-che-archive-lines@old-mp is another plugin' >> "$P/README.md"
 expect_pass "a longer plugin name ending in this one"
-P=$(fresh); ln -s ../../tests/lib/install_refs.py "$P/escape.md"; printf '%s\n' '' '<https://github.com/PsychQuant/che-msg/blob/main/plugins/che-archive-lines/escape.md>' >> "$P/README.md"
-expect_fail "link to a symlink inside the plugin that resolves outside it" "FAIL \(j\)"
+
+# (j) verify round 4 of PsychQuant/che-msg#42: the former name is found by itself, not
+# by parsing URLs; each case differs on the round-3 lib (868c2dd) unless marked
+P=$(fresh); printf '%s\n' '' '詳見 https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-archive-lines。' >> "$P/README.md"
+expect_fail "old-repo URL followed by a full-width full stop" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' '見https://github.com/PsychQuant/psychquant-claude-plugins/tree/main/plugins/che-archive-lines說明' >> "$P/README.md"
+expect_fail "old-repo URL run into Chinese text on both sides" "FAIL \(j\)"
+P=$(fresh); printf '\nSee https://github.com/PsychQuant/psychquant\xe2\x80\x8b-claude-plugins/tree/main/plugins/che-archive-lines\n' >> "$P/README.md"
+expect_fail "old repository name with a zero-width space inside it (regression lock)" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' 'https://raw.githubusercontent.com/PsychQuant/psychquant-claude-plugins/main/plugins/che-archive-lines/README.md' >> "$P/README.md"
+expect_fail "old-repo raw.githubusercontent.com URL" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' 'https://github.com/PsychQuant/psychquant-claude-plugins/edit/main/plugins/che-archive-lines/README.md' >> "$P/README.md"
+expect_fail "old-repo /edit/ URL" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' 'https://github.com/PsychQuant/psychquant-claude-plugins/blame/main/plugins/che-archive-lines/README.md' >> "$P/README.md"
+expect_fail "old-repo /blame/ URL" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' 'claude plugin marketplace add PsychQuant/che-msg && claude plugin marketplace add PsychQuant/psychquant-claude-plugins' >> "$P/README.md"
+expect_fail "second marketplace add on one line names the old repository" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' '/plugin Marketplace Add PsychQuant/PsychQuant-Claude-Plugins' >> "$P/README.md"
+expect_fail "marketplace add of the old repository in other letter case" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' '/plugin marketplace add PsychQuant／psychquant-claude-plugins' >> "$P/README.md"
+expect_fail "old repository after a full-width slash (regression lock)" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' '請執行 /plugin install 安裝che-archive-lines@psychquant-claude-plugins' >> "$P/README.md"
+expect_fail "old install id run into Chinese text" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' '/plugin install x_che-archive-lines@old-mp' >> "$P/README.md"
+expect_fail "install id after an underscore" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' 'git clone https://github.com/PsychQuant/psychquant-claude-plugins.git' >> "$P/README.md"
+expect_fail "clone URL of the old repository" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' '原始碼：https://github.com/PsychQuant/psychquant-claude-plugins' >> "$P/README.md"
+expect_fail "link to the old repository's front page" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' '見 [#999](https://github.com/PsychQuant/psychquant-claude-plugins/issues/999) 與 [#998](https://github.com/PsychQuant/psychquant-claude-plugins/pull/998)。' >> "$P/README.md"
+expect_pass "issue and pull request links to the old repository are history"
+P=$(fresh); printf '%s\n' '' '先執行 `marketplace add` 再安裝。' >> "$P/README.md"
+expect_pass "marketplace add mentioned in prose"
+P=$(fresh); perl -ni -e 'print unless m{marketplace add PsychQuant/che-msg}' "$P/README.md"
+expect_fail "README never says marketplace add .../che-msg" "FAIL \(j\)"
+P=$(fresh); L=$(wc -l < "$P/README.md"); printf '%s\n' '' 'a \' 'b' 'claude plugin install che-archive-lines@old-mp' >> "$P/README.md"
+expect_fail "line numbers count physical lines after a continuation" "README\.md:$((L + 4)) names che-archive-lines@old-mp"
 
 echo
 echo "Results: $PASSED passed, $FAILED failed"

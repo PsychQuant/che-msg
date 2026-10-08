@@ -39,11 +39,12 @@
 #        session, beyond the turn's grant) or has a !`command` / ```! block in
 #        its body (run when the skill is invoked, before Claude reads it; one
 #        that matches the skill's own allowed-tools runs with no prompt)
-#   (j)  what the README (and bin/) tell users to type names the marketplace
-#        this repository publishes: install ids, `marketplace add`, and GitHub
-#        links into plugins/che-telegram-mcp/ — including the telegram-all wrapper's docsUrl and its #anchor. The rules are in
-#        tests/lib/install_refs.py (PsychQuant/che-msg#42: five such places still
-#        named the old marketplace after the move).
+#   (j)  the README and bin/ send users to the marketplace this repository
+#        publishes: the former marketplace name appears only in listed shapes,
+#        install ids and `marketplace add` name this marketplace, and the
+#        telegram-all wrapper's docsUrl and its #anchor point at this README.
+#        The five rules are in tests/lib/install_refs.py (PsychQuant/che-msg#42:
+#        five such places still named the old marketplace after the move).
 #   (fm) every skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (see below)
 #
