@@ -32,10 +32,11 @@ BOT="mcp__plugin_che-telegram-mcp_telegram-bot__"
 
 fresh() {   # build a clean scratch copy; echo its plugin dir
     rm -rf "$SCRATCH/tree"
-    mkdir -p "$SCRATCH/tree/tests/che-telegram-mcp" "$SCRATCH/tree/plugins"
+    mkdir -p "$SCRATCH/tree/tests/che-telegram-mcp" "$SCRATCH/tree/plugins" "$SCRATCH/tree/.claude-plugin"
     cp -R "$SRC_PLUGIN" "$SCRATCH/tree/plugins/che-telegram-mcp"
     cp "$LAYOUT_TEST" "$SCRATCH/tree/tests/che-telegram-mcp/"
     cp -R "$SCRIPT_DIR/../lib" "$SCRATCH/tree/tests/lib"
+    cp "$SCRIPT_DIR/../../.claude-plugin/marketplace.json" "$SCRATCH/tree/.claude-plugin/"
     echo "$SCRATCH/tree/plugins/che-telegram-mcp"
 }
 
@@ -225,6 +226,26 @@ P=$(fresh); mkdir -p "$P/commands"; printf -- '---\nname: x\n---\n' > "$P/comman
 expect_fail "commands/ reappears" "FAIL \(e\)"
 P=$(fresh); perl -0pi -e 's/\A---\r?\n/# notes\n---\n/' "$P/skills/chats/SKILL.md"
 expect_fail "skill without readable frontmatter" "FAIL \(fm\)"
+
+# (j) install references name this marketplace (PsychQuant/che-msg#42)
+P=$(fresh); perl -pi -e 's/install che-telegram-mcp\@che-msg/install che-telegram-mcp\@psychquant-claude-plugins/' "$P/README.md"
+expect_fail "README install id names the old marketplace" "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's{marketplace add PsychQuant/che-msg}{marketplace add PsychQuant/psychquant-claude-plugins}' "$P/README.md"
+expect_fail "README marketplace add points at the old repository" "FAIL \(j\)"
+P=$(fresh); perl -ni -e 'print unless /install che-telegram-mcp\@che-msg/' "$P/README.md"
+expect_fail "README never installs from this marketplace" "FAIL \(j\)"
+P=$(fresh); printf '\n    claude plugin uninstall che-telegram-mcp@some-old-marketplace\n' >> "$P/README.md"
+expect_pass "an uninstall line may name another marketplace"
+P=$(fresh); perl -pi -e 's{github\.com/PsychQuant/che-msg/blob}{github.com/PsychQuant/psychquant-claude-plugins/blob}' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "wrapper docsUrl points at the old repository" "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's{che-telegram-mcp/README\.md#multi-session}{che-telegram-mcp/READ_ME.md#multi-session}' "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "wrapper docsUrl names a file that does not exist" "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's/^## Multi-session limitation/## Running two sessions/' "$P/README.md"
+expect_fail "wrapper docsUrl anchor no longer matches a README heading" "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's/"name": "che-msg"/"name": "other-marketplace"/' "$SCRATCH/tree/.claude-plugin/marketplace.json"
+expect_fail "marketplace renamed but README and wrapper not" "FAIL \(j\)"
+P=$(fresh); rm "$SCRATCH/tree/.claude-plugin/marketplace.json"
+expect_fail "no marketplace.json makes (j) unverifiable, not passed" "FAIL \(j\)"
 
 echo
 echo "Results: $PASSED passed, $FAILED failed"

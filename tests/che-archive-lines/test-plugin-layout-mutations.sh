@@ -219,6 +219,20 @@ expect_fail "marketplace entry source points elsewhere" "FAIL \(a\)"
 P=$(fresh); perl -ni -e 'print unless /^name:/' "$P/$SKILL"
 expect_fail "name removed (no bare /archive-lines alias)" "FAIL \(n\)"
 
+# (j) install references name this marketplace (PsychQuant/che-msg#42)
+P=$(fresh); perl -pi -e 's/install che-archive-lines\@che-msg/install che-archive-lines\@psychquant-claude-plugins/' "$P/README.md"
+expect_fail "README install id names the old marketplace" "FAIL \(j\)"
+P=$(fresh); perl -pi -e 's{marketplace add PsychQuant/che-msg}{marketplace add PsychQuant/psychquant-claude-plugins}' "$P/README.md"
+expect_fail "README marketplace add points at the old repository" "FAIL \(j\)"
+P=$(fresh); perl -ni -e 'print unless /install che-archive-lines\@che-msg/' "$P/README.md"
+expect_fail "README never installs from this marketplace" "FAIL \(j\)"
+P=$(fresh); printf '\n    claude plugin uninstall che-archive-lines@some-old-marketplace\n' >> "$P/README.md"
+expect_pass "an uninstall line may name another marketplace"
+P=$(fresh); perl -pi -e 's/"name": "che-msg"/"name": "other-marketplace"/' "$SCRATCH/tree/.claude-plugin/marketplace.json"
+expect_fail "marketplace renamed but README not" "FAIL \(j\)"
+P=$(fresh); rm "$SCRATCH/tree/.claude-plugin/marketplace.json"
+expect_fail "no marketplace.json makes (j) unverifiable, not passed" "FAIL \(j\)"
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
