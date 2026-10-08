@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-10-08
+
+The plugin moved from PsychQuant/psychquant-claude-plugins to PsychQuant/che-msg, which now publishes it as the `che-msg` marketplace ([che-msg#42](https://github.com/PsychQuant/che-msg/issues/42)). No change to the skills, hooks or binaries; the wrappers still pin `DESIRED_VERSION` 0.5.0.
+
+### Changed
+- **Behavior change:** the install id is now `che-telegram-mcp@che-msg` (`/plugin marketplace add PsychQuant/che-msg`). psychquant-claude-plugins no longer lists the plugin: once its marketplace is updated, an existing `che-telegram-mcp@psychquant-claude-plugins` install is dropped from `enabledPlugins` and reported as removed. The README gives the switch-over steps; uninstall the old copy first, since with both enabled two telegram-all wrappers start and the second is refused by the TDLib lock. Nothing has to be re-entered: binaries, Keychain credentials and the TDLib login live outside the plugin directory.
+- The telegram-all wrapper's lock-refused error (`error.data.docsUrl`) links to the README in che-msg.
+
+### Tests
+- The plugin's tests moved with it, to `tests/che-telegram-mcp/` in che-msg. New check (j): the README's install ids and `marketplace add`, and GitHub links into the plugin from the README and `bin/` (including docsUrl and its anchor), must name the marketplace in the repository's own `.claude-plugin/marketplace.json` (`tests/lib/install_refs.py`). Mutation cases 54 → 63.
+
 ## [1.4.1] - 2026-10-08
 
 Documentation corrections found while verifying [#139](https://github.com/PsychQuant/psychquant-claude-plugins/issues/139), which shares this plugin's skill layout ([#138](https://github.com/PsychQuant/psychquant-claude-plugins/issues/138)). No change to the skills, wrappers or binaries; the wrappers still pin `DESIRED_VERSION` 0.5.0.
