@@ -400,7 +400,7 @@ expect_fail "a docsUrl in a file with no GITHUB_REPO line (regression lock)" "FA
 P=$(fresh); perl -pi -e 's{marketplace add PsychQuant/che-msg}{marketplace add che-msg}' "$P/README.md"
 expect_fail "marketplace add names che-msg without an owner" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'Tracked in PsychQuant/psychquant-claude-plugins#152.' >> "$P/README.md"
-expect_pass "Owner/repo#N shorthand for an old-repository issue"
+expect_fail "Owner/repo#N shorthand for an old-repository issue is reported (fails closed; link /issues/<n>)" "FAIL \(j\)"
 P=$(fresh); printf '%s\n' '' 'https://github.com/PsychQuant/psychquant-claude-plugins/issues/1/../../tree/main/plugins/che-telegram-mcp' >> "$P/README.md"
 expect_fail "issue link followed by dot segments into the old repository" "FAIL \(j\)"
 P=$(fresh); L=$(wc -l < "$P/README.md"); printf '\nx\xe2\x80\xa8claude plugin install che-telegram-mcp@old-mp\n' >> "$P/README.md"
@@ -411,10 +411,43 @@ P=$(fresh); python3 -c 'import sys; open(sys.argv[1], "a").write("\n# a" + " " *
 expect_fast_pass "a README heading with 200000 spaces and one with 80000 [ are read in time" 20
 P=$(fresh); python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 100000)' "$SCRATCH/tree/.claude-plugin/marketplace.json"
 expect_fail "deeply nested marketplace.json reports (j) instead of crashing the parser" "FAIL \(j\)"
-P=$(fresh); printf 'x\n' > "$P/notes.txt"; chmod 000 "$P/notes.txt"
-expect_fail "an unreadable file in the plugin reports (j) instead of crashing the parser" "FAIL \(j\)"
+if [ "$(id -u)" -eq 0 ]; then
+    echo "  - skipped: unreadable-file case (root can read a mode-000 file)"
+else
+    P=$(fresh); printf 'x\n' > "$P/notes.txt"; chmod 000 "$P/notes.txt"
+    expect_fail "an unreadable file in the plugin reports (j) instead of crashing the parser" "FAIL \(j\)"
+fi
 P=$(fresh); python3 -c 'import sys; open(sys.argv[1], "a").write("\n" * 3000000)' "$P/README.md"
 expect_fail "a README over 2 MB is reported, not read" "FAIL \(j\)"
+
+# (j) verify round 6 of PsychQuant/che-msg#42: directories, rule 4 options, shape b,
+# marketplace.json; each case differs on the round-5 lib (cbf36ea) unless marked
+P=$(fresh); mkdir -p "$SCRATCH/ext"; printf '%s\n' 'claude plugin marketplace add PsychQuant/psychquant-claude-plugins' > "$SCRATCH/ext/x.md"; ln -s "$SCRATCH/ext" "$P/linkdir"
+expect_fail "a symlink to a directory is reported, not skipped" "linkdir is a symlink to a directory"
+rm -rf "$SCRATCH/ext"
+if [ "$(id -u)" -eq 0 ]; then
+    echo "  - skipped: unreadable-directory case (root can list a mode-000 directory)"
+else
+    P=$(fresh); mkdir "$P/sub"; printf '%s\n' 'GITHUB_REPO="PsychQuant/psychquant-claude-plugins"' > "$P/sub/x.sh"; chmod 000 "$P/sub"
+    expect_fail "a directory that cannot be listed is reported, not skipped" "sub .*not checked"
+    chmod 755 "$P/sub"
+fi
+P=$(fresh); perl -pi -e 's{marketplace add PsychQuant/che-msg}{marketplace add --scope PsychQuant/che-msg}' "$P/README.md"
+expect_fail "marketplace add --scope <repo> has no marketplace argument" "never says .marketplace add"
+P=$(fresh); perl -pi -e 's{marketplace add PsychQuant/che-msg}{marketplace add /che-msg}' "$P/README.md"
+expect_fail "marketplace add /che-msg (nothing before the slash)" "never says .marketplace add"
+P=$(fresh); printf '%s\n' '' 'See https://github.com/PsychQuant/psychquant-claude-plugins#1' >> "$P/README.md"
+expect_fail "link to the old repository's front page with a numeric anchor" "FAIL \(j\)"
+P=$(fresh); printf '%s\n' '' 'https://github.com/PsychQuant/psychquant-claude-plugins/issues/12abc' >> "$P/README.md"
+expect_fail "issue number followed by letters" "FAIL \(j\)"
+P=$(fresh); perl -0pi -e 's{"source": "\./plugins/che-telegram-mcp"}{"source": {"source": "github", "repo": "PsychQuant/psychquant-claude-plugins"}}' "$SCRATCH/tree/.claude-plugin/marketplace.json"
+expect_fail "marketplace.json sources the plugin from the old repository" "marketplace\.json:[0-9]+ names the former"
+P=$(fresh); perl -pi -e 's/,"docsUrl":"[^"]*"//' "$P/bin/che-telegram-all-mcp-wrapper.sh"; printf '%s\n' '# "docsUrl":"https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/README.md#multi-session-limitation"' >> "$P/hooks/check-mcp.sh"
+expect_fail "the wrapper's docsUrl removed while a hook comment still has one" "no file in bin/ has a docsUrl"
+P=$(fresh); printf '%s\n' '' 'If the server is locked, the error carries a docsUrl that links here.' >> "$P/skills/auth/SKILL.md"
+expect_pass "a skill that mentions docsUrl in prose"
+P=$(fresh); python3 -c 'import sys; open(sys.argv[1], "a").write("\n# a" + " " * 990 + "b" * 1 + ("\n# a" + " " * 990 + "b") * 1499 + ("\n# " + "[" * 990) * 300 + ("\n# " + "_" * 990 + "a") * 100 + "\n")' "$P/README.md"
+expect_fast_pass "1900 README headings just under the length cap are read in time (round 5 lib: about 20 s)" 5
 
 echo
 echo "Results: $PASSED passed, $FAILED failed"
