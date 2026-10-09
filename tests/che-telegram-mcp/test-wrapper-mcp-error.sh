@@ -4,9 +4,9 @@
 #
 # Runs the real wrapper against a private HOME (tests/lib/wrapper_harness.sh).
 # Another session never stops the wrapper. It stops before starting the
-# server only for missing Keychain credentials or a missing binary, and then
-# answers the pending initialize request with a JSON-RPC 2.0 error, because
-# Claude Code otherwise shows only a generic -32000.
+# server only for missing Keychain credentials, a missing binary, or a binary
+# older than 0.6.0, and then answers the pending initialize request with a
+# JSON-RPC 2.0 error, because Claude Code otherwise shows only a generic -32000.
 #
 # Tests:
 #   1. Another session's legacy wrapper lock (~/.cache/che-telegram-all-mcp.lock
@@ -21,7 +21,13 @@
 #   4. Missing binary: with nothing installed and the download failing, the
 #      wrapper answers the same way (exit 1, the error with data.docsUrl, no
 #      binary started) after trying the download through the fake curl.
-#   5. No other test reached the network: only case 4 called the fake curl.
+#   5. A binary older than 0.6.0 (it opens TDLib without the server-side
+#      lock): when the download of the pinned version fails and only a 0.5.0
+#      binary is installed, the wrapper refuses to run it and answers with the
+#      same error; nothing is started as a server.
+#   6. A binary that does not answer --version (as binaries before 0.6.0 do)
+#      is refused the same way.
+#   7. No other test reached the network: only cases 4 and 5 called the fake curl.
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-mcp-error.sh
@@ -116,9 +122,36 @@ check_error "$H" 9
 if [ -s "$H/curl.calls" ]; then pass "the download was attempted (fake curl)"; else fail "no download attempt"; fi
 
 # ----------------------------------------------------------------------
+test_case "An installed binary older than 0.6.0 is not run when the upgrade fails"
+H="$SCRATCH/oldbinary"; make_home "$H" yes 0.5.0
+printf '%s\n' '{"jsonrpc":"2.0","id":11,"method":"initialize","params":{}}' > "$H/in"
+HOME="$H" PATH="$H/fakebin:$PATH" bash "$WRAPPER" < "$H/in" > "$H/out" 2> "$H/err"
+RC=$?
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
+check_error "$H" 11
+if [ -s "$H/curl.calls" ]; then pass "the upgrade was attempted (fake curl)"; else fail "no upgrade attempt"; fi
+
+# ----------------------------------------------------------------------
+test_case "A binary that does not report its version is not run"
+H="$SCRATCH/silent"; make_home "$H" yes silent
+printf '%s\n' '{"jsonrpc":"2.0","id":12,"method":"initialize","params":{}}' > "$H/in"
+HOME="$H" PATH="$H/fakebin:$PATH" bash "$WRAPPER" < "$H/in" > "$H/out" 2> "$H/err"
+RC=$?
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
+# A binary that does not know --version starts as a server when asked for its
+# version, as real binaries before 0.6.0 do. That probe gets no stdin and no
+# credentials and is stopped; what matters is that the binary never received
+# the client's initialize request and is not left running.
+mv "$H/started.pids" "$H/probe.pids" 2>/dev/null
+check_error "$H" 12
+if [ ! -e "$H/stdin.txt" ]; then pass "the binary never received the initialize request"; else fail "the binary received the client's stdin"; fi
+probe=$(head -1 "$H/probe.pids" 2>/dev/null)
+if [ -z "$probe" ] || ! alive "$probe"; then pass "the version probe is not left running"; else fail "the version probe $probe is still running"; fi
+
+# ----------------------------------------------------------------------
 test_case "No other test reached the network"
-others=$(ls "$SCRATCH"/*/curl.calls 2>/dev/null | grep -v '/nobinary/' || true)
-if [ -z "$others" ]; then pass "curl called only by the missing-binary case"; else fail "curl was called: $others"; fi
+others=$(ls "$SCRATCH"/*/curl.calls 2>/dev/null | grep -v -e '/nobinary/' -e '/oldbinary/' || true)
+if [ -z "$others" ]; then pass "curl called only by the download cases"; else fail "curl was called: $others"; fi
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."

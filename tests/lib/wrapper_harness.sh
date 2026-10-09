@@ -13,20 +13,28 @@ HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WRAPPER="${WRAPPER_UNDER_TEST:-$HARNESS_ROOT/plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh}"
 DESIRED_VERSION=$(sed -n 's/^DESIRED_VERSION="\(.*\)"$/\1/p' "$WRAPPER")
 
-# make_home <dir> [credentials: yes|no]
-# The fake binary appends its PID to $HOME/started.pids, writes the first
-# stdin line it reads to $HOME/stdin.txt, then sleeps until signalled.
+# make_home <dir> [credentials: yes|no] [binary version | "silent"]
+# The fake binary answers --version with the given version (default: the
+# wrapper's DESIRED_VERSION), or not at all with "silent", as binaries before
+# 0.6.0 do. Started as a server, it appends its PID to $HOME/started.pids,
+# writes the first stdin line it reads to $HOME/stdin.txt, then sleeps until
+# signalled.
 make_home() {
-    local home=$1 credentials=${2:-yes}
+    local home=$1 credentials=${2:-yes} version=${3:-$DESIRED_VERSION}
     mkdir -p "$home/bin" "$home/fakebin"
-    cat > "$home/bin/CheTelegramAllMCP" <<'EOF'
-#!/bin/bash
+    {
+        echo '#!/bin/bash'
+        if [ "$version" != silent ]; then
+            echo "if [ \"\$1\" = --version ]; then echo 'che-telegram-all-mcp $version'; exit 0; fi"
+        fi
+    } > "$home/bin/CheTelegramAllMCP"
+    cat >> "$home/bin/CheTelegramAllMCP" <<'EOF'
 echo $$ >> "$HOME/started.pids"
 if IFS= read -r -t 2 line; then printf '%s\n' "$line" > "$HOME/stdin.txt"; fi
 exec /bin/sleep 300
 EOF
     chmod +x "$home/bin/CheTelegramAllMCP"
-    echo "$DESIRED_VERSION" > "$home/bin/.CheTelegramAllMCP.version"
+    if [ "$version" = silent ]; then echo "$DESIRED_VERSION"; else echo "$version"; fi > "$home/bin/.CheTelegramAllMCP.version"
     if [ "$credentials" = yes ]; then
         cat > "$home/fakebin/security" <<'EOF'
 #!/bin/bash

@@ -154,7 +154,7 @@ The plugin wrapper `che-telegram-all-mcp-wrapper.sh` SHALL NOT acquire a lock an
 
 ### Requirement: Wrapper reports why it did not start
 
-The wrapper SHALL exit before starting the server in exactly two cases: the API credentials `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are missing from the Keychain, or the server binary is neither installed nor obtainable (no release asset found, or the download failed). In both cases it SHALL exit with status 1 without starting the server and SHALL write to stdout one JSON-RPC 2.0 error answering the pending `initialize` request: the request's `id`, `error.code` -32000, an `error.message` naming the cause, and `error.data.docsUrl` pointing at the section "When telegram-all does not start" of the plugin README.
+The wrapper SHALL exit before starting the server in exactly three cases: the API credentials `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are missing from the Keychain; the server binary is neither installed nor obtainable (no release asset found, or the download failed); or the binary it would run is older than 0.6.0, judged by the binary's own answer to `--version`, run without Telegram credentials and stopped after 5 seconds (binaries before 0.6.0 give no answer and open TDLib without the server-side lock). In all three cases it SHALL exit with status 1 without starting the server and SHALL write to stdout one JSON-RPC 2.0 error answering the pending `initialize` request: the request's `id`, `error.code` -32000, an `error.message` naming the cause, and `error.data.docsUrl` pointing at the section "When telegram-all does not start" of the plugin README.
 
 #### Scenario: Missing credentials answer the initialize request
 
@@ -167,3 +167,8 @@ The wrapper SHALL exit before starting the server in exactly two cases: the API 
 | --------------- | ----------------- |
 | `7` | `7` |
 | `"abc"` | `"abc"` |
+
+#### Scenario: Only an older binary after a failed upgrade
+
+- **WHEN** the installed binary is 0.5.0, the download of the pinned version fails, and Claude Code sends an `initialize` request
+- **THEN** the wrapper does not start the 0.5.0 binary as the server, answers the request with the JSON-RPC error carrying `error.data.docsUrl`, and exits with status 1

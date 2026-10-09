@@ -66,7 +66,7 @@ wrapper 不再取得任何鎖，也不再因為別的 session 而結束；它照
 
 替代方案：保留共用 PID 檔但改成只記錄、不殺——仍會被多個 session 互相覆寫，對清理沒有用處，所以直接移除。
 
-wrapper 只剩兩種情況會在啟動 server 前結束：Keychain 沒有 API 憑證，或取不到 binary（找不到 release asset、下載失敗）。這兩種情況沿用 #31 的做法，回應等待中的 `initialize` 請求一個 JSON-RPC 2.0 錯誤（`code` -32000、說明原因的 `message`、`data.docsUrl` 指向 plugin README 的「When telegram-all does not start」），讓 Claude Code 顯示原因，而不是籠統的 -32000。這也讓結構測試 check (j) 仍有 wrapper 的 `docsUrl` 可檢查——原本唯一的 `docsUrl` 在被移除的 lock-refused 錯誤裡，check (j) 要求 `bin/` 至少有一個。使用者 2026-10-09 同意。
+wrapper 只剩三種情況會在啟動 server 前結束：Keychain 沒有 API 憑證、取不到 binary（找不到 release asset、下載失敗），或找到的 binary 早於 0.6.0。第三種是發布前的實機下載測試發現的：下載失敗時舊 wrapper 會保留上一版 binary 繼續用，而新 wrapper 已不取鎖，0.5.x 的 binary 又是一啟動就開 TDLib，兩個 session 就可能同時開同一份資料庫。所以 wrapper 先以不帶 Telegram 憑證的環境問 binary 的 `--version`（0.6.0 起在碰 TDLib 前就回答；舊版不回答，5 秒後停掉），版本不足或沒有回答就不執行。代價：網路不通又只有舊 binary 時，telegram-all 無法使用，直到手動安裝新版。這三種情況沿用 #31 的做法，回應等待中的 `initialize` 請求一個 JSON-RPC 2.0 錯誤（`code` -32000、說明原因的 `message`、`data.docsUrl` 指向 plugin README 的「When telegram-all does not start」），讓 Claude Code 顯示原因，而不是籠統的 -32000。這也讓結構測試 check (j) 仍有 wrapper 的 `docsUrl` 可檢查——原本唯一的 `docsUrl` 在被移除的 lock-refused 錯誤裡，check (j) 要求 `bin/` 至少有一個。使用者 2026-10-09 同意。
 
 ### 本機讀取器直接解 binlog 與 SQLCipher
 

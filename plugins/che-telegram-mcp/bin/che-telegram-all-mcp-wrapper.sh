@@ -151,6 +151,34 @@ if $NEED_DOWNLOAD; then
     fi
 fi
 
+# --- Refuse a binary older than the server-side lock (PsychQuant/che-msg#58) ---
+# From 0.6.0 the server decides which session opens TDLib, and this wrapper
+# takes no lock of its own. An older binary opens TDLib at startup without
+# coordinating, so running one — for example the previous version, kept
+# because the download above failed — could let two sessions open the same
+# TDLib database. 0.6.0 and later answer --version before touching TDLib;
+# older binaries print nothing (they start as a server and stop at the empty
+# stdin). The probe runs without Telegram credentials, so even an old binary
+# cannot log in or open its database, and is stopped after 5 seconds.
+MIN_BINARY_VERSION="0.6.0"
+VERSION_OUT=$(mktemp "${TMPDIR:-/tmp}/che-telegram-all-version-XXXXXX")
+env -u TELEGRAM_API_ID -u TELEGRAM_API_HASH -u TELEGRAM_PHONE -u TELEGRAM_2FA_PASSWORD \
+    "$BINARY" --version </dev/null >"$VERSION_OUT" 2>/dev/null &
+VERSION_PID=$!
+for _ in $(seq 1 50); do
+    kill -0 "$VERSION_PID" 2>/dev/null || break
+    sleep 0.1
+done
+kill -KILL "$VERSION_PID" 2>/dev/null
+wait "$VERSION_PID" 2>/dev/null
+BINARY_VERSION=$(sed -n 's/^che-telegram-all-mcp \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' "$VERSION_OUT" | head -1)
+rm -f "$VERSION_OUT"
+if [[ -z "$BINARY_VERSION" ]] || \
+   [[ "$(printf '%s\n%s\n' "$MIN_BINARY_VERSION" "$BINARY_VERSION" | sort -V | head -1)" != "$MIN_BINARY_VERSION" ]]; then
+    echo "$BINARY_NAME: $BINARY reports version ${BINARY_VERSION:-unknown}; this wrapper needs $MIN_BINARY_VERSION or later" >&2
+    fail_startup "CheTelegramAllMCP $MIN_BINARY_VERSION or later is required, and the binary found is older (it would open TDLib without coordinating with other sessions). The download of the new version did not succeed; install it by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
+fi
+
 # Read credentials from macOS Keychain
 export TELEGRAM_API_ID="$(security find-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_ID" -w 2>/dev/null)"
 export TELEGRAM_API_HASH="$(security find-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_HASH" -w 2>/dev/null)"

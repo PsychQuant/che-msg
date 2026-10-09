@@ -238,10 +238,11 @@ A value that is not a whole number of seconds (or is negative) falls back to 600
 
 ### When telegram-all does not start
 
-The wrapper stops before starting the server in two cases only, and `/mcp` then shows the reason:
+The wrapper stops before starting the server in three cases only, and `/mcp` then shows the reason:
 
 - **API credentials missing**: store `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in the Keychain as in step 2 of [Track A](#track-a--personal-account-only-most-common), then reconnect with `/mcp`.
 - **Binary not available**: the download failed or found no release asset. Install it by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
+- **Binary too old**: the binary found is older than 0.6.0 — typically the previous version, kept because the download of the new one failed. Binaries before 0.6.0 open TDLib without coordinating with other sessions, so the wrapper does not run them. Install the current one by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
 
 Another session using `telegram-all` is never a reason: the wrapper takes no lock and stops only the server it started itself.
 
@@ -272,7 +273,7 @@ Plugin version: 1.4.2 (currently pins `che-telegram-all-mcp` v0.5.0 + `che-teleg
 **1.5.0** (2026-10-09)
 
 - **Several sessions at once**: telegram-all no longer refuses to start in a second Claude Code session. The server opens TDLib only when a tool needs it, closes it after `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` seconds idle, and while another session holds it answers the read tools from TDLib's local cache. See [Multiple sessions](#multiple-sessions) and [che-msg#58](https://github.com/PsychQuant/che-msg/issues/58).
-- The wrapper takes no lock, keeps no shared PID file and stops only its own binary; missing credentials or a missing binary now show their reason in `/mcp`.
+- The wrapper takes no lock, keeps no shared PID file and stops only its own binary; missing credentials, a missing binary or a binary older than 0.6.0 (which would open TDLib without coordinating) now show their reason in `/mcp`.
 - Binaries 0.6.0 (`DESIRED_VERSION`).
 
 **1.4.2** (2026-10-08)

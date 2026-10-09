@@ -17,7 +17,8 @@ Several Claude Code sessions can enable telegram-all together ([che-msg#58](http
 
 ### Changed
 - **Behavior change:** the telegram-all wrapper takes no lock and never refuses to start because another session runs telegram-all. It keeps no shared PID file (`~/.cache/che-telegram-all-mcp.pid`) and signals only the binary it started; before, a second wrapper without a lock would have killed the first session's server. The server (binary 0.6.0) now decides who opens TDLib: it opens TDLib on first use, closes it after `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` seconds idle (default 600), and while another session holds it answers the five read tools from TDLib's local cache, marked `source: local-cache`.
-- When the wrapper stops before starting the server — API credentials missing from the Keychain, or no binary to be had — it answers the pending `initialize` request with a JSON-RPC error whose `data.docsUrl` links the README section "When telegram-all does not start", so `/mcp` shows the reason instead of a generic -32000.
+- **Behavior change:** the telegram-all wrapper does not run a binary older than 0.6.0 (it asks the binary for `--version`; older binaries do not answer). Before, a failed download kept the previous binary; with this wrapper's lock gone, a 0.5.x binary would open TDLib without coordinating with other sessions.
+- When the wrapper stops before starting the server — API credentials missing from the Keychain, no binary to be had, or only a binary older than 0.6.0 — it answers the pending `initialize` request with a JSON-RPC error whose `data.docsUrl` links the README section "When telegram-all does not start", so `/mcp` shows the reason instead of a generic -32000.
 - README: "Multiple sessions" replaces "Multi-session limitation", including how sessions still on 1.4.x coexist and how to remove a lock directory left by a killed 1.4.x wrapper.
 
 ### Tests
