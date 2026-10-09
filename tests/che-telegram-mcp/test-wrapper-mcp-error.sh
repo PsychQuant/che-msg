@@ -18,7 +18,10 @@
 #      id, code -32000, a message, and data.docsUrl pointing at the README
 #      section "When telegram-all does not start".
 #   3. The same with a string request id.
-#   4. No test reached the network: the fake curl was never called.
+#   4. Missing binary: with nothing installed and the download failing, the
+#      wrapper answers the same way (exit 1, the error with data.docsUrl, no
+#      binary started) after trying the download through the fake curl.
+#   5. No other test reached the network: only case 4 called the fake curl.
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-mcp-error.sh
@@ -102,8 +105,20 @@ HOME="$H" PATH="$H/fakebin:$PATH" bash "$WRAPPER" < "$H/in" > "$H/out" 2> "$H/er
 check_error "$H" '"abc"'
 
 # ----------------------------------------------------------------------
-test_case "No test reached the network"
-if ! ls "$SCRATCH"/*/curl.calls >/dev/null 2>&1; then pass "curl never called"; else fail "curl was called"; fi
+test_case "Missing binary answers the initialize request"
+H="$SCRATCH/nobinary"; make_home "$H"
+rm -f "$H/bin/CheTelegramAllMCP" "$H/bin/.CheTelegramAllMCP.version"
+printf '%s\n' '{"jsonrpc":"2.0","id":9,"method":"initialize","params":{}}' > "$H/in"
+HOME="$H" PATH="$H/fakebin:$PATH" bash "$WRAPPER" < "$H/in" > "$H/out" 2> "$H/err"
+RC=$?
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
+check_error "$H" 9
+if [ -s "$H/curl.calls" ]; then pass "the download was attempted (fake curl)"; else fail "no download attempt"; fi
+
+# ----------------------------------------------------------------------
+test_case "No other test reached the network"
+others=$(ls "$SCRATCH"/*/curl.calls 2>/dev/null | grep -v '/nobinary/' || true)
+if [ -z "$others" ]; then pass "curl called only by the missing-binary case"; else fail "curl was called: $others"; fi
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."

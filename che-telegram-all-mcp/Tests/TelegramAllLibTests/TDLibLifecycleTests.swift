@@ -202,6 +202,50 @@ final class TDLibLifecycleTests: XCTestCase {
         XCTAssertTrue(isOpen)
     }
 
+    // MARK: - Calls in progress
+
+    /// A call that outlasts the idle timeout must not have TDLib closed under
+    /// it, and idle time counts from when the last call ended.
+    func testIdleCloseWaitsForACallInProgressAndCountsFromItsEnd() async throws {
+        let lifecycle = makeLifecycle()
+        let client = try await lifecycle.beginCall()      // t = 0, a long call starts
+
+        clock.now = 700                                   // still running past the timeout
+        await lifecycle.checkIdle()
+        var isOpen = await lifecycle.isOpen
+        XCTAssertTrue(isOpen, "TDLib was closed under a call in progress")
+
+        await lifecycle.endCall()                         // the call ends at t = 700
+        clock.now = 1299
+        await lifecycle.checkIdle()
+        isOpen = await lifecycle.isOpen
+        XCTAssertTrue(isOpen, "idle time must count from the end of the call")
+
+        clock.now = 1300
+        await lifecycle.checkIdle()
+        isOpen = await lifecycle.isOpen
+        XCTAssertFalse(isOpen)
+        XCTAssertTrue(lockIsFree())
+        XCTAssertEqual(client.closeTimeouts, [30])
+    }
+
+    func testTwoOverlappingCallsKeepTDLibOpenUntilBothEnd() async throws {
+        let lifecycle = makeLifecycle()
+        _ = try await lifecycle.beginCall()
+        _ = try await lifecycle.beginCall()
+        clock.now = 700
+        await lifecycle.endCall()
+        clock.now = 2000
+        await lifecycle.checkIdle()
+        var isOpen = await lifecycle.isOpen
+        XCTAssertTrue(isOpen, "one call is still in progress")
+        await lifecycle.endCall()
+        clock.now = 2600
+        await lifecycle.checkIdle()
+        isOpen = await lifecycle.isOpen
+        XCTAssertFalse(isOpen)
+    }
+
     // MARK: - Shutdown
 
     /// The server closes TDLib before the process exits, so TDLib never shuts

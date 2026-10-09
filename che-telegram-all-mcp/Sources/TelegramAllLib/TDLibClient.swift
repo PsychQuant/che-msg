@@ -143,7 +143,10 @@ public final class TDLibClient {
         // manager. A client already closed has left the manager.
         guard Self.manager.clients.contains(client.id) else { return }
         try? client.close(completion: { _ in })
-        while Self.manager.clients.contains(client.id) {}
+        let deadline = Date().addingTimeInterval(30)
+        while Self.manager.clients.contains(client.id), Date() < deadline {
+            usleep(10_000)
+        }
     }
 
     /// Waits until authorization has gone as far as it can without a caller

@@ -58,6 +58,19 @@ final class TDLibProcessLockTests: XCTestCase {
         return process.processIdentifier
     }
 
+    /// A running process whose command line names the legacy wrapper script,
+    /// as `/bin/bash …/che-telegram-all-mcp-wrapper.sh` does.
+    private func liveLegacyWrapper() throws -> Int32 {
+        let script = cache.appendingPathComponent("che-telegram-all-mcp-wrapper.sh")
+        try "sleep 30\nexit 0\n".write(to: script, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [script.path]
+        try process.run()
+        addTeardownBlock { process.terminate(); process.waitUntilExit() }
+        return process.processIdentifier
+    }
+
     private func exitedProcess() throws -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
@@ -83,10 +96,17 @@ final class TDLibProcessLockTests: XCTestCase {
 
     /// Scenario "Legacy wrapper lock with a live owner blocks opening".
     func testLegacyOwnerThatIsAliveHoldsTDLib() throws {
-        let legacyPid = try liveProcess()
+        let legacyPid = try liveLegacyWrapper()
         try writeLegacyOwner(legacyPid)
         XCTAssertEqual(makeLock().acquire(), .heldBy(pid: legacyPid))
         XCTAssertTrue(flockIsFree(), "the flock must not stay taken while the legacy owner holds TDLib")
+    }
+
+    /// A crashed wrapper can leave the directory behind, and its PID can later
+    /// belong to an unrelated process: only the wrapper script counts.
+    func testLegacyOwnerPidReusedByAnotherProgramIsIgnored() throws {
+        try writeLegacyOwner(try liveProcess())
+        XCTAssertEqual(makeLock().acquire(), .acquired)
     }
 
     /// Scenario "Legacy wrapper lock with a dead owner is ignored".
@@ -120,6 +140,22 @@ final class TDLibProcessLockTests: XCTestCase {
     func testEmptyLegacyDirectoryDoesNotBlock() throws {
         try FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true)
         XCTAssertEqual(makeLock().acquire(), .acquired)
+    }
+
+    /// A lock file that cannot be created is reported once on the log instead
+    /// of passing silently as "held by another process".
+    func testLockFileThatCannotBeOpenedIsReportedOnce() throws {
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: cache.path)
+        addTeardownBlock { [cache] in
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cache!.path)
+        }
+        final class Lines: @unchecked Sendable { var all: [String] = [] }
+        let lines = Lines()
+        let lock = TDLibProcessLock(cacheDirectory: cache, pid: ownPid, log: { lines.all.append($0) })
+        XCTAssertEqual(lock.acquire(), .heldBy(pid: nil))
+        XCTAssertEqual(lock.acquire(), .heldBy(pid: nil))
+        XCTAssertEqual(lines.all.count, 1)
+        XCTAssertTrue(lines.all.first?.contains("che-telegram-all-mcp.tdlib.lock") == true, lines.all.first ?? "")
     }
 
     func testHolderNamesWhoeverHoldsTDLib() throws {

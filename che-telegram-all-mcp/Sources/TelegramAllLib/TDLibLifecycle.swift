@@ -39,6 +39,7 @@ public actor TDLibLifecycle<Client: TDLibClosable> {
     private var state: State = .closed
     private var lastUse: TimeInterval = 0
     private var closePending = false
+    private var callsInProgress = 0
 
     /// - Parameters:
     ///   - idleTimeout: seconds without a call before TDLib is closed; nil never closes.
@@ -96,10 +97,25 @@ public actor TDLibLifecycle<Client: TDLibClosable> {
         }
     }
 
+    /// The TDLib client for a tool call, opened if needed. The call counts as
+    /// in progress until `endCall`; the idle close never closes TDLib while a
+    /// call is in progress. Throws like `client()`.
+    public func beginCall() async throws -> Client {
+        let client = try await client()
+        callsInProgress += 1
+        return client
+    }
+
+    /// Ends a call begun with `beginCall`; idle time counts from now.
+    public func endCall() {
+        callsInProgress = max(0, callsInProgress - 1)
+        lastUse = clock()
+    }
+
     /// Closes TDLib and releases the lock when it has been idle for the
     /// timeout, or retries a close that did not finish last time.
     public func checkIdle() async {
-        guard let idleTimeout, case .open(let client) = state,
+        guard let idleTimeout, case .open(let client) = state, callsInProgress == 0,
               closePending || clock() - lastUse >= idleTimeout else { return }
         let task = Task { await client.close(timeout: Self.closeTimeout) }
         state = .closing(task, client)

@@ -384,12 +384,22 @@ public final class CheTelegramAllMCPServer {
         }
         let tdlib: TDLibClient
         do {
-            tdlib = try await lifecycle.client()
+            tdlib = try await lifecycle.beginCall()
         } catch TDLibLifecycle<TDLibClient>.AccessError.heldByAnotherProcess(let pid) {
             return await handleWhileTDLibIsHeld(name: name, arguments: args, holderPid: pid)
         } catch {
             return errorResultFromParse(error)
         }
+        // The idle close waits for calls in progress and counts idle time from
+        // the end of the last one, so a long export is never cut off.
+        let result = await handleWithTDLib(name: name, arguments: args, tdlib: tdlib)
+        await lifecycle.endCall()
+        return result
+    }
+
+    /// Runs `name` against an open TDLib client.
+    private func handleWithTDLib(name: String, arguments args: [String: Value],
+                                 tdlib: TDLibClient) async -> CallTool.Result {
         do {
             let result: String
 

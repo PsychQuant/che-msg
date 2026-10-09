@@ -48,10 +48,7 @@ final class LocalReaderDatabaseTests: XCTestCase {
     func testReadingADirectoryWithoutAWriterChangesNoFile() throws {
         let dir = try copyOfFixture()
         let before = try snapshot(dir)
-        do {
-            let database = try TDLibCacheDatabase(directory: dir.path)
-            _ = try database.scalarInt("SELECT count(*) FROM messages")
-        }
+        _ = try LocalTDLibReader(directory: dir.path).getChatHistory(chatId: 777)
         XCTAssertEqual(try snapshot(dir), before)
     }
 

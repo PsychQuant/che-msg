@@ -249,6 +249,12 @@ Another session using `telegram-all` is never a reason: the wrapper takes no loc
 
 Up to v1.4.x the wrapper took a lock before starting the server, and a second session's wrapper refused to start ("Another instance of CheTelegramAllMCP is already running"). A session started with such a wrapper keeps its lock directory `~/.cache/che-telegram-all-mcp.lock` while it runs; newer servers treat TDLib as held by it until that wrapper exits, so the two never open TDLib at once. Restart that session to move it to the new behaviour.
 
+A v1.4.x wrapper that was killed outright (or a Mac that lost power) leaves that lock directory behind. Newer servers ignore it once its `owner.pid` no longer belongs to a running `che-telegram-all-mcp-wrapper.sh`. To remove it by hand, first make sure no session still runs a v1.4.x wrapper, then:
+
+```bash
+rm -rf ~/.cache/che-telegram-all-mcp.lock
+```
+
 ## Permissions
 
 This plugin requires:

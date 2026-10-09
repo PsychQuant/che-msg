@@ -101,6 +101,17 @@ final class LocalReaderBinlogTests: XCTestCase {
         XCTAssertEqual(values["sqlite_key"]?.count, 32, "erasing one entry must leave the others")
     }
 
+    /// TDLib keeps one event id per key; should two ids ever hold the same
+    /// key, the later event wins rather than whichever a hash table yields.
+    func testLaterEventWinsWhenTwoIdsHoldTheSameKey() throws {
+        let dir = try LocalReaderFixture.copy(for: self)   // auth = ok
+        let binlog = dir.appendingPathComponent("td.binlog").path
+        try LocalReaderFixture.appendBinlogEvents([.keyValue("auth", "logout")], to: binlog)   // a new id
+        for _ in 0..<5 {
+            XCTAssertEqual(try TDLibBinlogReader.keyValues(fromBinlogAt: binlog)["auth"], Array("logout".utf8))
+        }
+    }
+
     func testMissingFileThrowsBinlogUnreadable() {
         XCTAssertThrowsError(try TDLibBinlogReader.sqliteKey(fromBinlogAt: "/nonexistent/td.binlog")) {
             guard case .binlogUnreadable = $0 as? LocalReaderError else {

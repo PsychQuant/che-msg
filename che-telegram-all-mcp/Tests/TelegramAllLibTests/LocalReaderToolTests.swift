@@ -188,6 +188,7 @@ final class LocalReaderToolTests: XCTestCase {
     func testNoOutputContainsTheDatabaseKey() async throws {
         let dir = try cacheDirectory()
         let key = try TDLibBinlogReader.sqliteKey(fromBinlogAt: dir.appendingPathComponent("td.binlog").path)
+        let binlogKey = try binlogEncryptionKey(dir)
         let reader = LocalTDLibReader(directory: dir.path)
         let output = dir.deletingLastPathComponent().appendingPathComponent("dump-\(UUID().uuidString).md")
         addTeardownBlock { try? FileManager.default.removeItem(at: output) }
@@ -208,13 +209,29 @@ final class LocalReaderToolTests: XCTestCase {
         // The 20,000-message request writes a cap warning, which proves stderr was captured.
         XCTAssertTrue(stderrText.contains("capped maxMessages"), "stderr was not captured")
 
-        let hex = key.map { String(format: "%02x", $0) }.joined()
-        let forms = [hex, hex.uppercased(), key.base64EncodedString()]
-        for text in outputs {
-            for form in forms { XCTAssertFalse(text.contains(form), "key appears in an output") }
-            XCTAssertNil(Data(text.utf8).range(of: key), "raw key bytes appear in an output")
+        // Both keys: the SQLite key and the binlog's AES-CTR key.
+        for secret in [key, binlogKey] {
+            let hex = secret.map { String(format: "%02x", $0) }.joined()
+            let forms = [hex, hex.uppercased(), secret.base64EncodedString()]
+            for text in outputs {
+                for form in forms { XCTAssertFalse(text.contains(form), "a key appears in an output") }
+                XCTAssertNil(Data(text.utf8).range(of: secret), "raw key bytes appear in an output")
+            }
         }
         XCTAssertGreaterThan(outputs.count, 8)
+    }
+
+    /// The binlog's AES-CTR key, derived from its encryption event.
+    private func binlogEncryptionKey(_ dir: URL) throws -> Data {
+        let file = [UInt8](try Data(contentsOf: dir.appendingPathComponent("td.binlog")))
+        var cursor = 0
+        while let event = TDLibBinlogReader.nextEvent(in: file, at: cursor) {
+            if event.type == TDLibBinlogReader.encryptionEventType {
+                return Data(try TDLibBinlogReader.encryptionKey(from: event.data).key)
+            }
+            cursor += event.size
+        }
+        throw XCTSkip("fixture binlog has no encryption event")
     }
 
     private func tamperedDirectory() throws -> String {

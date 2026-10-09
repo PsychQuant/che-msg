@@ -9,23 +9,6 @@ import XCTest
 /// `common`, and a chat whose record cannot be decoded is listed as `unknown`
 /// without a title.
 final class LocalReaderChatListTests: XCTestCase {
-    private func user(_ first: String, _ last: String?) -> [UInt8] {
-        var w = TLWriter()
-        w.int32(57); w.uint32(last == nil ? 0 : flags(8)); w.uint32(0)
-        w.string(first)
-        if let last { w.string(last) }
-        return w.bytes
-    }
-
-    private func channel(_ title: String, megagroup: Bool) -> [UInt8] {
-        var w = TLWriter()
-        w.int32(57); w.uint32(megagroup ? flags(7, 12, 29) : flags(12, 29)); w.uint32(0)
-        w.uint64(UInt64(4) << 28)
-        w.int64(99)
-        w.string(title)
-        return w.bytes
-    }
-
     private func secretChat(userId: Int64) -> [UInt8] {
         var w = TLWriter()
         w.int32(57); w.uint32(0); w.int64(5); w.int64(userId)
@@ -47,10 +30,10 @@ final class LocalReaderChatListTests: XCTestCase {
         LocalReaderFixture.putDialog(db, id: -1_000_000_000_043, order: 100, folder: 1)
         LocalReaderFixture.putDialog(db, id: 1003, order: 50, folder: 0)
         LocalReaderFixture.putDialog(db, id: 1002, order: 0, folder: 0)
-        LocalReaderFixture.putCommon(db, "us1001", user("Ada", "Lovelace"))
-        LocalReaderFixture.putCommon(db, "us1002", user("Grace", nil))
-        LocalReaderFixture.putCommon(db, "ch42", channel("Lab Chat", megagroup: true))
-        LocalReaderFixture.putCommon(db, "ch43", channel("Daily News", megagroup: false))
+        LocalReaderFixture.putCommon(db, "us1001", LocalReaderRecords.user("Ada", "Lovelace"))
+        LocalReaderFixture.putCommon(db, "us1002", LocalReaderRecords.user("Grace", nil))
+        LocalReaderFixture.putCommon(db, "ch42", LocalReaderRecords.channel("Lab Chat", megagroup: true))
+        LocalReaderFixture.putCommon(db, "ch43", LocalReaderRecords.channel("Daily News", megagroup: false))
         LocalReaderFixture.putCommon(db, "gr5", [57, 0, 0, 0, 0, 0])   // cut after the version
         LocalReaderFixture.putCommon(db, "sc-7", secretChat(userId: 1001))
         // Full-info records share the prefixes; they must never be read as chats.

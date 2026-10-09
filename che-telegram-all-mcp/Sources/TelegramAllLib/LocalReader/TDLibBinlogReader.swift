@@ -81,7 +81,8 @@ public enum TDLibBinlogReader {
             }
         }
         var values: [String: [UInt8]] = [:]
-        for entry in entries.values {
+        for id in entries.keys.sorted() {   // a later event wins a shared key
+            let entry = entries[id]!
             values[String(decoding: entry.key, as: UTF8.self)] = entry.value
         }
         return values
