@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-09
+
+Several Claude Code sessions can enable telegram-all together ([che-msg#58](https://github.com/PsychQuant/che-msg/issues/58)). The wrappers pin binary `DESIRED_VERSION` 0.6.0.
+
+### Changed
+- **Behavior change:** the telegram-all wrapper takes no lock and never refuses to start because another session runs telegram-all. It keeps no shared PID file (`~/.cache/che-telegram-all-mcp.pid`) and signals only the binary it started; before, a second wrapper without a lock would have killed the first session's server. The server (binary 0.6.0) now decides who opens TDLib: it opens TDLib on first use, closes it after `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` seconds idle (default 600), and while another session holds it answers the five read tools from TDLib's local cache, marked `source: local-cache`.
+- When the wrapper stops before starting the server — API credentials missing from the Keychain, or no binary to be had — it answers the pending `initialize` request with a JSON-RPC error whose `data.docsUrl` links the README section "When telegram-all does not start", so `/mcp` shows the reason instead of a generic -32000.
+- README: "Multiple sessions" replaces "Multi-session limitation", including how sessions still on 1.4.x coexist and how to remove a lock directory left by a killed 1.4.x wrapper.
+
+### Tests
+- `test-wrapper-pid.sh` and `test-wrapper-mcp-error.sh` run the real wrapper against a private HOME (`tests/lib/wrapper_harness.sh`: fake binary, fake `security`, a fake `curl` that never reaches the network) instead of a hand-copied excerpt. They cover a second wrapper leaving the first binary running, a wrapper exit stopping only its own binary, a live `CheTelegramAllMCP` in the old shared PID file left alone, a 1.4.x lock directory not stopping the wrapper, and the two startup errors.
+
 ## [1.4.2] - 2026-10-08
 
 The plugin moved from PsychQuant/psychquant-claude-plugins to PsychQuant/che-msg, which now publishes it as the `che-msg` marketplace ([che-msg#42](https://github.com/PsychQuant/che-msg/issues/42)). No change to the skills, hooks or binaries; the wrappers still pin `DESIRED_VERSION` 0.5.0.

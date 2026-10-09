@@ -13,7 +13,7 @@ GITHUB_REPO="PsychQuant/che-msg"
 INSTALL_DIR="$HOME/bin"
 INSTALLED_BINARY="$INSTALL_DIR/$BINARY_NAME"
 VERSION_FILE="$INSTALL_DIR/.${BINARY_NAME}.version"
-DESIRED_VERSION="0.5.0"
+DESIRED_VERSION="0.6.0"
 DOWNLOAD_TIMEOUT=600  # universal binary ~220MB; allow slow links
 
 # --- Startup errors Claude Code can show (#31, PsychQuant/che-msg#58) ---

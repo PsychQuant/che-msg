@@ -67,7 +67,7 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 - 安裝：`claude plugin marketplace add PsychQuant/che-msg`，再 `claude plugin install <plugin>@che-msg`
 - 改版：`plugins/<name>/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json` 的 `version` 一起改，CHANGELOG 同步
-- binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（目前 0.5.0）。發新 binary 後要 bump 這個 pin，plugin 版號也跟著 bump
+- binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（目前 0.6.0）。發新 binary 後要 bump 這個 pin，plugin 版號也跟著 bump
 - 結構測試的 check (j) 把關使用者會被導向哪個 marketplace，規則在 `tests/lib/install_refs.py`。它防的是不小心留下的舊引用，不防蓄意規避（能改 README 的人也能改這支測試）：
   - plugin 目錄內除最上層 CHANGELOG.md 以外的所有檔案、根 README.md、`.claude-plugin/marketplace.json` 裡，舊 marketplace 名稱只能出現在三種地方：uninstall 那一行的 install id、舊 repo 某個 issue／PR 的連結（`/issues/<n>`、`/pull/<n>`，不接受 `Owner/repo#N` 簡寫）、一般字詞。其他形式（`owner/舊名`，例如 `GITHUB_REPO`、`marketplace add` 的參數、plugin 的 `source`，以及任何指進舊 repo 的連結）都算錯
   - plugin README 的 `<plugin>@X` 都要是 `@che-msg`（uninstall 那行除外），而且至少要有一次 `install <plugin>@che-msg` 和一次 `marketplace add …/che-msg`。這兩項是「至少出現一次」，不擋另外再寫一行指向第三個 marketplace 的 `marketplace add`

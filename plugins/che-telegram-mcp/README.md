@@ -269,6 +269,12 @@ Plugin version: 1.4.2 (currently pins `che-telegram-all-mcp` v0.5.0 + `che-teleg
 
 ### Changelog
 
+**1.5.0** (2026-10-09)
+
+- **Several sessions at once**: telegram-all no longer refuses to start in a second Claude Code session. The server opens TDLib only when a tool needs it, closes it after `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` seconds idle, and while another session holds it answers the read tools from TDLib's local cache. See [Multiple sessions](#multiple-sessions) and [che-msg#58](https://github.com/PsychQuant/che-msg/issues/58).
+- The wrapper takes no lock, keeps no shared PID file and stops only its own binary; missing credentials or a missing binary now show their reason in `/mcp`.
+- Binaries 0.6.0 (`DESIRED_VERSION`).
+
 **1.4.2** (2026-10-08)
 
 - **Moved to the `che-msg` marketplace**: the plugin now ships from [PsychQuant/che-msg](https://github.com/PsychQuant/che-msg), the repository that builds and releases its binaries. Install with `/plugin marketplace add PsychQuant/che-msg` and `/plugin install che-telegram-mcp@che-msg`; if you installed from psychquant-claude-plugins, follow [the steps above](#installed-it-from-psychquant-claude-plugins-before). See [che-msg#42](https://github.com/PsychQuant/che-msg/issues/42).
