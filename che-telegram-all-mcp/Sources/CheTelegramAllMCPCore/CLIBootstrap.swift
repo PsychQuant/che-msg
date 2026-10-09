@@ -31,7 +31,7 @@ public enum CLIBootstrap {
     /// Bumping requires updating all three places. Future cleanup: thread this
     /// constant through to `Server.swift` so only one literal exists. Out of
     /// scope for #29.
-    public static let version = "0.5.0"
+    public static let version = "0.6.0"
 
     /// Help text printed by `--help` / `-h`. Plain text, no markdown — this
     /// goes to a terminal.
