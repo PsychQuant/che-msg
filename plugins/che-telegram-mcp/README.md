@@ -79,7 +79,7 @@ You actually use both. Run all three keychain commands from Track A **plus** the
 
 ### Installed it from psychquant-claude-plugins before?
 
-Up to 1.4.1 this plugin was published from the `psychquant-claude-plugins` marketplace. From 1.4.2 it ships from this repository's `che-msg` marketplace, next to the binaries it downloads. Switch over in your shell, uninstalling first — with both copies enabled, two `telegram-all` wrappers start and the second is refused by the TDLib lock:
+Up to 1.4.1 this plugin was published from the `psychquant-claude-plugins` marketplace. From 1.4.2 it ships from this repository's `che-msg` marketplace, next to the binaries it downloads. Switch over in your shell, uninstalling first — with both copies enabled, the session starts two `telegram-all` servers and lists every tool twice:
 
 ```bash
 claude plugin uninstall che-telegram-mcp@psychquant-claude-plugins   # add --scope project if you installed it there
@@ -106,7 +106,7 @@ If none are found on first invocation, the wrapper **lazy-downloads** the binary
 
 The wrapper pins a **`DESIRED_VERSION`** matching the binary the plugin expects and writes a `~/bin/.${BINARY_NAME}.version` sidecar each time it installs.
 
-When the plugin is updated and the desired version changes, the wrapper detects the sidecar mismatch on the next MCP server spawn and atomically re-downloads (`.tmp` → `mv`) — falling back to the last installed binary if the network fails. Source builds under `~/Developer/...` are never auto-replaced.
+When the plugin is updated and the desired version changes, the wrapper detects the sidecar mismatch on the next MCP server spawn and atomically re-downloads (`.tmp` → `mv`) — falling back to the last installed binary if the network fails. For telegram-all that fallback holds only for a binary of 0.6.0 or later: the wrapper does not run an older one (see [When telegram-all does not start](#when-telegram-all-does-not-start)). Source builds under `~/Developer/...` are never auto-replaced.
 
 A **SessionStart hook** (`hooks/check-mcp.sh`) verifies on every session that:
 
@@ -120,11 +120,15 @@ It prints `⚠️` warnings with copy-pasteable fix commands when something is m
 
 ```bash
 mkdir -p ~/bin
-curl -L https://github.com/PsychQuant/che-msg/releases/latest/download/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
-curl -L https://github.com/PsychQuant/che-msg/releases/latest/download/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.6.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.6.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
 chmod +x ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
 xattr -dr com.apple.quarantine ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
+echo 0.6.0 > ~/bin/.CheTelegramAllMCP.version
+echo 0.6.0 > ~/bin/.CheTelegramBotMCP.version
 ```
+
+The last two lines record the installed version. Without them the wrapper still sees the old version and downloads the binary again on the next start.
 
 > **Universal binary**: prebuilt binaries are Mach-O universal (arm64 + x86_64), so they run on both Apple Silicon and Intel Macs. Building from source: `git clone https://github.com/PsychQuant/che-msg.git && cd che-msg/che-telegram-all-mcp && swift build -c release`.
 
@@ -218,53 +222,43 @@ Or just ask naturally:
 
 `get_me`, `get_updates`, `send_message`, `forward_message`, `get_chat`, `get_chat_administrators`, `get_chat_member_count`, `get_chat_member`, `set_chat_title`, `set_chat_description`, `pin_chat_message`, `unpin_chat_message`, `unpin_all_chat_messages`, `ban_chat_member`, `unban_chat_member`, `restrict_chat_member`, `promote_chat_member`, `leave_chat`, `delete_message`, `edit_message_text`, `copy_message`, `send_photo`, `send_document`, `send_video`, `send_audio`, `send_sticker`, `send_location`, `send_poll`, `set_my_commands`, `get_my_commands`, `delete_my_commands`
 
-## Multi-session limitation
+## Multiple sessions
 
-`telegram-all` uses [TDLib](https://core.telegram.org/tdlib), which keeps the session in a SQLite database with an exclusive WAL lock — **only one process can hold it at a time**. `telegram-bot` is not affected (Bot API is HTTP-based and stateless, so any number of Claude Code sessions can run it in parallel).
+`telegram-all` uses [TDLib](https://core.telegram.org/tdlib), which lets only one process at a time open its database. `telegram-bot` is not affected (the Bot API is HTTP-based and stateless, so any number of Claude Code sessions can run it).
 
-If you have **two or more Claude Code sessions open simultaneously**, only the first session can spawn `telegram-all`. The second session's wrapper detects the lock + refuses to start (preventing TDLib database corruption from concurrent writes).
+Several Claude Code sessions can enable `telegram-all` together. Each session starts its own server, and the servers share TDLib this way:
 
-### What you'll see in v1.3.2+
+- A server opens TDLib only when a tool first needs it, and closes it again once no call has used it for the idle timeout, so another session can open it. The timeout is `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` in seconds: 600 by default, `0` keeps TDLib open for the server's whole life.
+- While another session's server holds TDLib, `get_chats`, `search_chats`, `get_chat_history`, `search_messages` and `dump_chat_to_markdown` are answered from TDLib's local cache. The result has a second part that starts with `source: local-cache`, names the process holding TDLib, counts the records that could not be decoded, and gives for each chat the date of its newest cached message. The cache holds only the messages TDLib has loaded, so newer messages can exist on Telegram.
+- `get_me`, `get_user`, `get_contacts`, `get_chat` and `get_chat_members` return `{"type":"local_reader_unsupported",…}`. Sending, editing, `auth_*`, `logout` and every other tool return `{"type":"tdlib_in_use","lock_holder_pid":…}`: use the session that holds TDLib, or wait until it has been idle for its timeout.
 
-`/mcp` displays a human-readable error such as:
+To change the timeout, set the variable for the MCP server, for example in `~/.claude/settings.json`:
 
+```json
+{ "env": { "CHE_TELEGRAM_ALL_IDLE_TIMEOUT": "300" } }
 ```
-mcp__plugin_che-telegram-mcp_telegram-all: Another instance of CheTelegramAllMCP is already running (lock held by PID 11252). Use the existing Claude Code window, or kill the previous wrapper first.
-```
 
-The error envelope also carries `data.recoveryCommand` and `data.docsUrl` (this section) for clients that show structured error data.
+A value that is not a whole number of seconds (or is negative) falls back to 600 and prints one warning.
 
-### Recovery cookbook
+### When telegram-all does not start
 
-When you need to free the lock for the current session:
+The wrapper stops before starting the server in three cases only, and `/mcp` then shows the reason:
+
+- **API credentials missing**: store `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in the Keychain as in step 2 of [Track A](#track-a--personal-account-only-most-common), then reconnect with `/mcp`.
+- **Binary not available**: the download failed or found no release asset. Install it by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
+- **Binary too old**: the binary found is older than 0.6.0 — typically the previous version, kept because the download of the new one failed, or an old copy outside `~/bin` (such as `~/.local/bin`), which the wrapper never upgrades. The message names the binary and why it was not upgraded. Binaries before 0.6.0 open TDLib without coordinating with other sessions, so the wrapper does not run them. Install the current one by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
+
+Another session using `telegram-all` is never a reason: the wrapper takes no lock and stops only the server it started itself.
+
+### Sessions still running plugin v1.4.x or earlier
+
+Up to v1.4.x the wrapper took a lock before starting the server, and a second session's wrapper refused to start ("Another instance of CheTelegramAllMCP is already running"). A session started with such a wrapper keeps its lock directory `~/.cache/che-telegram-all-mcp.lock` while it runs; newer servers treat TDLib as held by it until that wrapper exits, so the two never open TDLib at once. Restart that session to move it to the new behaviour.
+
+A v1.4.x wrapper that was killed outright (or a Mac that lost power) leaves that lock directory behind. Newer servers ignore it once its `owner.pid` no longer belongs to a running `che-telegram-all-mcp-wrapper.sh`. To remove it by hand, first make sure no session still runs a v1.4.x wrapper, then:
 
 ```bash
-# 1. Kill any running telegram-all binary (single instance assumption — safe).
-#    Use `2>/dev/null` and `; ` (not `&&`) — the orphan-lock case (where
-#    you most need recovery) has no process to kill, and `&&` would skip
-#    the cleanup below. `; ` ensures the lock removal always runs.
-pkill CheTelegramAllMCP 2>/dev/null
-
-# 2. Remove BOTH lock variants. macOS without flock uses `.lock` directory;
-#    Linux with flock uses `.lock.flock` file. The wrapper picks one at
-#    runtime — recovery should clean both so it works on any platform.
-rm -rf ~/.cache/che-telegram-all-mcp.lock ~/.cache/che-telegram-all-mcp.lock.flock
-
-# 3. (Optional) Confirm no stale process holds TDLib DB files.
-lsof ~/Library/Application\ Support/che-telegram-all-mcp/tdlib/db.sqlite 2>/dev/null
-
-# 4. Restart Claude Code or run /mcp to reconnect.
+rm -rf ~/.cache/che-telegram-all-mcp.lock
 ```
-
-Step 1 is graceful — the binary handles `SIGTERM` and `wait`s for TDLib to checkpoint the WAL before exiting. Step 2 removes the wrapper's atomic-claim guard (both `.lock` directory for mkdir mode and `.lock.flock` file for flock mode). After both, the next Claude Code session that spawns `telegram-all` will succeed.
-
-### Pre-v1.3.2 symptom
-
-If you're on `che-telegram-mcp` plugin **v1.3.1 or earlier**, the lock-refused branch only wrote to stderr (which Claude Code's MCP transport doesn't surface), so users would just see a generic `-32000 Server error` with no recovery hint. Upgrade to **v1.3.2+** for the human-readable message described above. See [#31](https://github.com/PsychQuant/che-msg/issues/31) for the diagnosis.
-
-### Why we don't auto-clean stale binaries
-
-Killing a TDLib process mid-write can corrupt the database (WAL checkpoint mid-flight). The wrapper deliberately requires manual intervention so the user — who knows whether the other Claude Code session is genuinely abandoned or just backgrounded — makes the destructive call.
 
 ## Permissions
 
@@ -276,9 +270,15 @@ This plugin requires:
 
 ## Version
 
-Plugin version: 1.4.2 (currently pins `che-telegram-all-mcp` v0.5.0 + `che-telegram-bot-mcp` v0.5.0 binaries; wrapper auto-upgrades on version mismatch)
+Plugin version: 1.5.0 (currently pins `che-telegram-all-mcp` v0.6.0 + `che-telegram-bot-mcp` v0.6.0 binaries; wrapper auto-upgrades on version mismatch)
 
 ### Changelog
+
+**1.5.0** (2026-10-09)
+
+- **Several sessions at once**: telegram-all no longer refuses to start in a second Claude Code session. The server opens TDLib only when a tool needs it, closes it after `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` seconds idle, and while another session holds it answers the read tools from TDLib's local cache. See [Multiple sessions](#multiple-sessions) and [che-msg#58](https://github.com/PsychQuant/che-msg/issues/58).
+- The wrapper takes no lock, keeps no shared PID file and stops only its own binary; missing credentials, a missing binary or a binary older than 0.6.0 (which would open TDLib without coordinating) now show their reason in `/mcp`.
+- Binaries 0.6.0 (`DESIRED_VERSION`).
 
 **1.4.2** (2026-10-08)
 

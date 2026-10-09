@@ -17,8 +17,13 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "CTDLibSQLite",
+            path: "Sources/CTDLibSQLite"
+        ),
+        .target(
             name: "TelegramAllLib",
             dependencies: [
+                "CTDLibSQLite",
                 .product(name: "TDLibKit", package: "TDLibKit"),
                 .product(name: "TDLibFramework", package: "TDLibFramework"),
             ],
@@ -47,8 +52,9 @@ let package = Package(
         ),
         .testTarget(
             name: "TelegramAllLibTests",
-            dependencies: ["TelegramAllLib"],
-            path: "Tests/TelegramAllLibTests"
+            dependencies: ["TelegramAllLib", "CTDLibSQLite"],
+            path: "Tests/TelegramAllLibTests",
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "E2ETests",
@@ -57,7 +63,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CheTelegramAllMCPTests",
-            dependencies: ["CheTelegramAllMCPCore"],
+            dependencies: ["CheTelegramAllMCPCore", "TelegramAllLib"],
             path: "Tests/CheTelegramAllMCPTests"
         ),
     ]

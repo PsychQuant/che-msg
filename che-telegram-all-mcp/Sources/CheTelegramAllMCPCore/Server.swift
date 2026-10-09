@@ -32,9 +32,20 @@ public final class CheTelegramAllMCPServer {
     private let server: Server
     private let transport: StdioTransport
     private let tools: [Tool]
-    private let tdlib: TDLibClient
+    /// TDLib opens on the first call that needs it and closes after the idle
+    /// timeout; nothing is opened or locked at startup (PsychQuant/che-msg#58).
+    private let lifecycle: TDLibLifecycle<TDLibClient>
+    private let idleTimeout: TimeInterval?
 
-    public init() async throws {
+    private let reader: LocalCacheReading
+
+    public convenience init() async throws {
+        try await self.init(lock: TDLibProcessLock(), idleTimeout: IdleTimeout.fromEnvironment())
+    }
+
+    init(lock: TDLibProcessLock, idleTimeout: TimeInterval?,
+         reader: LocalCacheReading = LocalTDLibReader(directory: TDLibClient.databaseDirectory)) async throws {
+        self.reader = reader
         // Diagnostic hook (#29): when CHE_TELEGRAM_LOG_STARTUP=1, print
         // per-phase wall-clock to stderr so we can attribute the ~10s cold
         // start (TDLib framework load? tools registration? handler wiring?).
@@ -49,14 +60,21 @@ public final class CheTelegramAllMCPServer {
         let logStartup = shouldLogStartup(env: ProcessInfo.processInfo.environment)
         let totalStart = DispatchTime.now()
 
-        let tdlibStart = DispatchTime.now()
-        do {
-            tdlib = try await TDLibClient()
-            if logStartup { logStartupDuration("tdlib_init", since: tdlibStart) }
-        } catch {
-            if logStartup { logStartupDuration("tdlib_init_FAILED", since: tdlibStart) }
-            if logStartup { logStartupDuration("total_FAILED", since: totalStart) }
-            throw error
+        // TDLib itself opens on first use; its timing is logged then.
+        self.idleTimeout = idleTimeout
+        lifecycle = TDLibLifecycle(lock: lock, idleTimeout: idleTimeout) {
+            let tdlibStart = DispatchTime.now()
+            do {
+                let client = try await TDLibClient()
+                // Opened on demand, TDLib is still logging in; answering now
+                // would report "Not authenticated" for a logged-in account.
+                await client.waitForAuthorizationToSettle(timeout: 30)
+                if logStartup { logStartupDuration("tdlib_init", since: tdlibStart) }
+                return client
+            } catch {
+                if logStartup { logStartupDuration("tdlib_init_FAILED", since: tdlibStart) }
+                throw error
+            }
         }
 
         let toolsStart = DispatchTime.now()
@@ -67,7 +85,7 @@ public final class CheTelegramAllMCPServer {
 
         server = Server(
             name: "che-telegram-all-mcp",
-            version: "0.5.0",
+            version: CLIBootstrap.version,
             capabilities: .init(tools: .init())
         )
 
@@ -82,8 +100,32 @@ public final class CheTelegramAllMCPServer {
     }
 
     public func run() async throws {
-        try await server.start(transport: transport)
-        await server.waitUntilCompleted()
+        let idleChecks = idleTimeout.map { timeout in
+            Task { [lifecycle] in
+                let interval = UInt64(min(30, timeout) * 1_000_000_000)
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: interval)
+                    await lifecycle.checkIdle()
+                }
+            }
+        }
+        do {
+            try await server.start(transport: transport)
+            await server.waitUntilCompleted()
+        } catch {
+            idleChecks?.cancel()
+            await lifecycle.shutdown()
+            throw error
+        }
+        // Close TDLib here, before returning, rather than leaving it to a
+        // deinit that may run on another thread while the process exits.
+        idleChecks?.cancel()
+        await lifecycle.shutdown()
+    }
+
+    /// Whether this process has a TDLib client right now.
+    var isTDLibOpen: Bool {
+        get async { await lifecycle.isOpen }
     }
 
     // MARK: - Tool Definitions
@@ -336,7 +378,28 @@ public final class CheTelegramAllMCPServer {
 
     // MARK: - Tool Call Dispatch
 
-    private func handleToolCall(name: String, arguments args: [String: Value]) async -> CallTool.Result {
+    func handleToolCall(name: String, arguments args: [String: Value]) async -> CallTool.Result {
+        guard tools.contains(where: { $0.name == name }) else {
+            return errorResult("Unknown tool: \(name)")
+        }
+        let tdlib: TDLibClient
+        do {
+            tdlib = try await lifecycle.beginCall()
+        } catch TDLibLifecycle<TDLibClient>.AccessError.heldByAnotherProcess(let pid) {
+            return await handleWhileTDLibIsHeld(name: name, arguments: args, holderPid: pid)
+        } catch {
+            return errorResultFromParse(error)
+        }
+        // The idle close waits for calls in progress and counts idle time from
+        // the end of the last one, so a long export is never cut off.
+        let result = await handleWithTDLib(name: name, arguments: args, tdlib: tdlib)
+        await lifecycle.endCall()
+        return result
+    }
+
+    /// Runs `name` against an open TDLib client.
+    private func handleWithTDLib(name: String, arguments args: [String: Value],
+                                 tdlib: TDLibClient) async -> CallTool.Result {
         do {
             let result: String
 
@@ -578,6 +641,52 @@ public final class CheTelegramAllMCPServer {
             // error types still fall through to localizedDescription inside
             // errorResultFromParse. Improves observability for the cluster
             // #22 / #23 / #25 throw paths that were previously silent.
+            return errorResultFromParse(error)
+        }
+    }
+
+    // MARK: - While Another Process Holds TDLib
+
+    /// Routes a call made while another process holds TDLib: the five reading
+    /// tools are answered from TDLib's local cache with a source note, the
+    /// other read tools report `local_reader_unsupported`, and every other
+    /// tool reports `tdlib_in_use`. Arguments are checked as in TDLib mode.
+    private func handleWhileTDLibIsHeld(name: String, arguments args: [String: Value],
+                                        holderPid: Int32?) async -> CallTool.Result {
+        if localReaderUnsupportedTools.contains(name) {
+            return localReaderUnsupportedResult(tool: name, holderPid: holderPid)
+        }
+        guard localReaderTools.contains(name) else { return tdlibInUseResult(holderPid: holderPid) }
+        do {
+            let answer: LocalTDLibReader.Result
+            switch name {
+            case "get_chats":
+                answer = try reader.getChats(limit: try parseLimit(args, default: 50))
+            case "search_chats":
+                guard let query = args["query"]?.stringValue else { return errorResult("query is required") }
+                answer = try reader.searchChats(query: query, limit: try parseLimit(args, default: 20))
+            case "get_chat_history":
+                let parsed = try parseGetChatHistoryArgs(args)
+                answer = try reader.getChatHistory(chatId: parsed.chatId, limit: parsed.limit,
+                                                   fromMessageId: parsed.fromMessageId, maxMessages: parsed.maxMessages,
+                                                   sinceDate: parsed.sinceDate, untilDate: parsed.untilDate)
+            case "search_messages":
+                let chatId = try requiredInt64(args, "chat_id")
+                guard let query = args["query"]?.stringValue else { return errorResult("query is required") }
+                answer = try reader.searchMessages(chatId: chatId, query: query, limit: try parseLimit(args, default: 50))
+            default:
+                let parsed = try parseDumpChatToMarkdownArgs(args)
+                answer = try await reader.dumpChatToMarkdown(chatId: parsed.chatId, outputPath: parsed.outputPath,
+                                                             maxMessages: parsed.maxMessages, sinceDate: parsed.sinceDate,
+                                                             untilDate: parsed.untilDate, selfLabel: parsed.selfLabel)
+            }
+            return CallTool.Result(content: [
+                .text(text: answer.json, annotations: nil, _meta: nil),
+                .text(text: localCacheNote(holderPid: holderPid, result: answer), annotations: nil, _meta: nil),
+            ], isError: false)
+        } catch let error as LocalReaderError {
+            return localReaderUnavailableResult(error, holderPid: holderPid)
+        } catch {
             return errorResultFromParse(error)
         }
     }

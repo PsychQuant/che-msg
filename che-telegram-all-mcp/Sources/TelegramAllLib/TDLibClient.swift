@@ -48,7 +48,12 @@ internal func mapTDLibError(_ error: Swift.Error) throws {
 
 /// Manages a TDLib client session with authentication state tracking.
 public final class TDLibClient {
-    private let manager: TDLibClientManager
+    /// One manager, and so one `td_receive` loop, for the whole process. TDLib
+    /// allows only one thread at a time in `td_receive`, and every manager runs
+    /// its own loop that can stay blocked in it for 10 seconds, so a client
+    /// reopened after an idle close must not bring a second manager
+    /// (PsychQuant/che-msg#58).
+    private static let manager = TDLibClientManager()
     private let client: TDLibKit.TDLibClient
     private let dbPath: String
 
@@ -109,14 +114,12 @@ public final class TDLibClient {
         let logRequest = #"{"@type":"setLogVerbosityLevel","new_verbosity_level":\#(logVerbosity)}"#
         _ = td_execute(logRequest)
 
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        dbPath = appSupport.appendingPathComponent("che-telegram-all-mcp/tdlib").path
+        dbPath = Self.databaseDirectory
         try FileManager.default.createDirectory(atPath: dbPath, withIntermediateDirectories: true)
 
         let decoder = makeUpdateDecoder()
         let weakRef = Weak()
-        manager = TDLibClientManager()
-        client = manager.createClient { data, _ in
+        client = Self.manager.createClient { data, _ in
             guard let strongSelf = weakRef.value else { return }
             do {
                 let update = try decoder.decode(Update.self, from: data)
@@ -128,8 +131,52 @@ public final class TDLibClient {
         weakRef.value = self
     }
 
+    /// The TDLib database directory (`td.binlog`, `db.sqlite`).
+    public static var databaseDirectory: String {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("che-telegram-all-mcp/tdlib").path
+    }
+
     deinit {
-        manager.closeClients()
+        // Close this client and wait until TDLib has, as
+        // `TDLibClientManager.closeClients` did when each client had its own
+        // manager. A client already closed has left the manager.
+        guard Self.manager.clients.contains(client.id) else { return }
+        try? client.close(completion: { _ in })
+        let deadline = Date().addingTimeInterval(30)
+        while Self.manager.clients.contains(client.id), Date() < deadline {
+            usleep(10_000)
+        }
+    }
+
+    /// Waits until authorization has gone as far as it can without a caller
+    /// (`authorizationIsSettled`), or until `timeout` seconds pass. A client
+    /// opened on demand otherwise answers its first call with "Not
+    /// authenticated" while TDLib is still logging in (PsychQuant/che-msg#58).
+    public func waitForAuthorizationToSettle(timeout: TimeInterval) async {
+        let env = ProcessInfo.processInfo.environment
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let settled = authorizationIsSettled(
+                state: getAuthState(), hasAutoFireError: getLastAutoFireError() != nil,
+                envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init), envApiHash: env["TELEGRAM_API_HASH"],
+                envPhone: env["TELEGRAM_PHONE"], envPassword: env["TELEGRAM_2FA_PASSWORD"])
+            if settled { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    /// Asks TDLib to close and waits for `authorizationStateClosed`. Returns
+    /// false if TDLib has not reported it within `timeout` seconds.
+    public func close(timeout: TimeInterval) async -> Bool {
+        if getAuthState() == .closed { return true }
+        _ = try? await client.close()
+        let deadline = Date().addingTimeInterval(timeout)
+        while getAuthState() != .closed {
+            guard Date() < deadline else { return false }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return true
     }
 
     // MARK: - Update Handler
@@ -752,3 +799,5 @@ public final class TDLibClient {
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 }
+
+extension TDLibClient: TDLibClosable {}

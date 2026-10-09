@@ -2,9 +2,31 @@
 
 ## [Unreleased]
 
+### Changed
+- The line `--version` prints is defined once, as `CLIBootstrap.versionLine`, and a test pins it exactly: the plugin wrapper (che-telegram-mcp 1.5.0) parses it and refuses to start a binary whose line does not match ([#58](https://github.com/PsychQuant/che-msg/issues/58)). The MCP `serverInfo` version now reads `CLIBootstrap.version` instead of repeating the literal. Output is unchanged from 0.6.0.
+
+## [0.6.0] - 2026-10-09
+
+Two parts: several Claude Code sessions can now run telegram-all together ([#58](https://github.com/PsychQuant/che-msg/issues/58)), and the parser-consistency cluster, merged after 0.5.5 but not released until now.
+
+### Several sessions share TDLib (#58)
+
+#### Added
+
+- **Local cache reader** (`LocalTDLibReader`): while another process holds TDLib, `get_chats`, `search_chats`, `get_chat_history`, `search_messages` and `dump_chat_to_markdown` are answered from TDLib's own encrypted SQLite cache, opened read-only with the key decoded from `td.binlog`. Only TDLib 1.8.60 (`cb863c16`) with SQLite `user_version` 14 is accepted, and only a folder that is logged in. The JSON keeps the TDLib-mode field names; a field the reader cannot determine (`unread_count`, photo and document `caption`) is omitted, and a chat or message it cannot decode is listed with `type: "unknown"`. A second content item starts with `source: local-cache`, names the process holding TDLib, counts undecodable records and dates each chat's newest cached message, since the cache holds only what TDLib has loaded.
+- **Error results** `{"type":"tdlib_in_use","lock_holder_pid":…}` (tools that need TDLib), `{"type":"local_reader_unsupported","tool":…}` (`get_me`, `get_user`, `get_contacts`, `get_chat`, `get_chat_members`) and `{"type":"local_reader_unavailable","reason":…}` (cache unreadable: `unsupported_tdlib_version`, `key_not_found`, `database_unreadable`, `not_authenticated`).
+- **`CHE_TELEGRAM_ALL_IDLE_TIMEOUT`**: seconds without a call before TDLib closes (default 600, `0` never closes; an invalid value warns once and uses 600).
+
+#### Changed
+
+- **Behavior change:** the server no longer opens TDLib at startup. The first call that needs it takes a `flock` on `~/.cache/che-telegram-all-mcp.tdlib.lock` (PID in `che-telegram-all-mcp.tdlib.owner`), opens TDLib and waits up to 30 s for login before answering. TDLib closes, and the lock is released, after the idle timeout counted from the end of the last call, and when the MCP connection ends. A lock directory left by a pre-0.6 wrapper counts as held while its `owner.pid` still runs that wrapper.
+- `TDLibClient` uses one `TDLibClientManager` per process, so a client reopened after an idle close never runs a second `td_receive` loop.
+
+### Parser-consistency cluster
+
 Parser-consistency cluster — closes the gap left by #8 (`parseMaxMessages`).
 
-### Added
+#### Added
 
 - **`int64ArgValueStrict` helper (#22)**: throwing variant of `int64ArgValue` for parsers in `HandlerArgs.swift`. On `.string("not-numeric")`, throws `"\(key) must be an integer; got \"\(s)\""` with quoted user input for debug clarity. On `.bool` / `.array` / `.object` / fractional `.double`, throws `"\(key) must be an integer"` (no-quote — no meaningful string form). Used by `parseGetChatHistoryArgs` for `chat_id` + `from_message_id` and by `parseDumpChatToMarkdownArgs` for `chat_id`. Non-strict `int64ArgValue` retained for ~20 direct `Server.swift` callsites tracked separately as #33.
 - **`parseLimit` helper (#25)**: modeled on `parseMaxMessages`. Rejects non-numeric strings, zero/negative, and over-`validateLimitCap` (10_000) limits. Accepts whole-number doubles per MCP SDK's `Int(_:strict:false)` (JS / Python JSON encoders emit integers as doubles per JSON spec). The default / `.null` paths are also cap-validated (parity with `parseMaxMessagesWithDefault`, #23; mutation-guarded by `testLimitNullUsesDefault` + `testLimitDefaultOverCapRejected` — closes a verify follow-up flagged by Codex + logic + devil's-advocate).
@@ -12,7 +34,7 @@ Parser-consistency cluster — closes the gap left by #8 (`parseMaxMessages`).
 - **`parseMaxMessagesWithDefault(args, default:)` helper (#23 verify F2)**: variant that flows the default-value through `validateMaxMessagesCap`. Mutation-resistant: deleting the cap call on the default branch makes `testParseMaxMessagesWithDefaultAppliesCapToDefaultPath` (cap=11000 over 10_000 ceiling) fail. Replaces the earlier inline `?? 5000 + try validateMaxMessagesCap(maxMessages)` belt-and-suspenders pattern whose test was a placebo.
 - **`requiredInt64` + grouped Int64 parsers (#33)**: `requiredInt64(args, key)` (absent → `"X is required"`, junk → `"X must be an integer; got ..."`) plus `parseChatMessageIds` / `parseChatUserIds` / `parseChatForwardIds` / `parseSendMessageIds` structs in `HandlerArgs.swift`. These are the **testable seam** for the 20 direct `Server.swift` callsites — they were inline in `handleToolCall`, a `private` method on a TDLib-booting Server, so un-unit-testable in place. Each parser is mutation-resistantly tested in `ServerHandlerLogicTests.swift` (handler-level RED→GREEN).
 
-### Fixed
+#### Fixed
 
 - **(#22) `chat_id` / `from_message_id` type-mismatch error message** — was misleading "X is required" (silent nil from non-strict `int64ArgValue`); now throws "X must be an integer; got \"...\"" with the user's raw value quoted. Parser-layer slice (3 callsites in `HandlerArgs.swift`). The remaining 20 direct `int64ArgValue` callsites in `Server.swift` (e.g. `get_chat`, `send_message`, `pin_message`) were **completed in #33** (this release).
 - **(#23) `parseDumpChatToMarkdownArgs` default-5000 path bypassed `validateMaxMessagesCap`** — the cap's docstring claimed single source of truth but the literal `?? 5000` fallback silently bypassed it. Now flows through `parseMaxMessagesWithDefault`; future cap policy tightening (e.g. 1000 for paid tier) will propagate to the default path atomically.
@@ -20,11 +42,11 @@ Parser-consistency cluster — closes the gap left by #8 (`parseMaxMessages`).
 - **(catch-all observability)** `handleToolCall` outer catch (L591) uses `errorResultFromParse(error)` instead of `errorResult(error.localizedDescription)`. `HandlerArgError` + `DateParseError` now surface their human-readable `.description` to MCP clients via the catch-all path; other error types unchanged.
 - **(#33) `Server.swift` 20 direct `int64ArgValue` callsites** across 14 handlers (`get_user`, `get_chat`, `send_message`, `edit_message`, `delete_messages`, `forward_messages`, `search_messages`, `get_chat_members`, `pin_message`, `unpin_message`, `set_chat_title`, `set_chat_description`, `mark_as_read`, `add_chat_member`) migrated to the strict parsers. Junk `chat_id` / `message_id` / `user_id` / `from_chat_id` now throws a type error (`"X must be an integer; got \"...\""` for a non-numeric string — raw value quoted; `"X must be an integer"` for `.bool` / `.array` / `.object` / fractional `.double`) instead of the misleading `"X is required"`. Completes the #22 residual.
 
-### Removed
+#### Removed
 
 - **Non-strict `int64ArgValue` (#33)** — removed now that all callsites route through `int64ArgValueStrict` / `requiredInt64`. It was the silent-fallback footgun behind the entire #22/#33 bug class; deleting it prevents a future callsite from reintroducing the misleading-error behavior.
 
-### Behavior changes
+#### Behavior changes
 
 Observable on the wire for existing MCP clients (surfaced by PR #32 verify — devil's-advocate + regression + Codex):
 
@@ -35,7 +57,7 @@ Observable on the wire for existing MCP clients (surfaced by PR #32 verify — d
 - **(#33) `reply_to_message_id` junk now throws.** A non-numeric `reply_to_message_id` on `send_message` previously silently dropped the reply target (message sent with no reply); it now throws `reply_to_message_id must be an integer; got "..."`. Absent / `.null` still sends with no reply (unchanged).
 - **(#33) The 14 migrated multi-key handlers report the first bad field individually.** Combined messages like `"chat_id and text are required"` are replaced by per-field messages (`"chat_id is required"` / `"chat_id must be an integer; got ..."` / `"text is required"`). The combined form was itself misleading when only one field was bad (the #22 bug shape) — this is a net improvement, not just a change. Handlers outside #33 scope (e.g. `create_group`, whose only int64 is the array `user_ids`) keep their combined message.
 
-### Notes
+#### Notes
 
 #33 (the residual `Server.swift` scope) is **complete**: all 20 direct callsites migrated to the strict parsers and the non-strict `int64ArgValue` removed. The #22→#33 cluster intentionally split parser-layer (#22, narrow review surface) from the Server-layer migration (#33) — both now landed.
 

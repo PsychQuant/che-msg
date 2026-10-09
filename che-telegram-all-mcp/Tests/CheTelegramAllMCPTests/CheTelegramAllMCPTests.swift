@@ -1,4 +1,5 @@
 import XCTest
+import TelegramAllLib
 @testable import CheTelegramAllMCPCore
 
 final class CheTelegramAllMCPTests: XCTestCase {
@@ -60,5 +61,21 @@ final class CheTelegramAllMCPTests: XCTestCase {
     func testServerInitSucceeds() async throws {
         let server = try await CheTelegramAllMCPServer()
         XCTAssertNotNil(server)
+    }
+
+    /// Scenario "Server starts without holding TDLib" (telegram-tdlib-lifecycle;
+    /// PsychQuant/che-msg#58): after startup no TDLib client exists and the
+    /// TDLib lock is free.
+    func testServerStartsWithoutOpeningOrLockingTDLib() async throws {
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("server-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let server = try await CheTelegramAllMCPServer(lock: TDLibProcessLock(cacheDirectory: cache, pid: getpid()),
+                                                       idleTimeout: 600)
+        let isOpen = await server.isTDLibOpen
+        XCTAssertFalse(isOpen)
+        let fd = open(cache.appendingPathComponent("che-telegram-all-mcp.tdlib.lock").path, O_RDWR | O_CREAT, 0o600)
+        defer { close(fd) }
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0, "the server must not hold the TDLib lock at startup")
     }
 }
