@@ -98,6 +98,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `TELEGRAM_API_HASH` | Yes | Telegram API hash (string). Auto-fired alongside `TELEGRAM_API_ID`. |
 | `TELEGRAM_PHONE` | No | Phone number in international format (e.g., `+886912345678`). Auto-fired when state is `waitingForPhoneNumber`. Useful for SSH / remote setup. |
 | `TELEGRAM_2FA_PASSWORD` | No | 2FA password. Auto-fired when state is `waitingForPassword`. |
+| `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` | No | Seconds TDLib may stay idle before the server closes it and releases the lock (default `600`; `0` keeps it open). A non-numeric or negative value falls back to 600 with a warning on stderr. |
 
 > SMS verification code is **never** auto-fired from environment — it must be supplied via `auth_run(code: "...")` or `auth_send_code(code: "...")` in a one-shot delivery.
 >
@@ -132,6 +133,18 @@ Done:   auth_status           →  Should show {state: "ready", next_step: null}
 ```
 
 Session data is stored in: `~/Library/Application Support/che-telegram-all-mcp/tdlib/`
+
+## Several sessions (0.6.0+)
+
+Several Claude Code sessions can run this server at the same time ([#58](https://github.com/PsychQuant/che-msg/issues/58)). TDLib allows one process per database, so the servers share it:
+
+- A server does not open TDLib at startup. It opens TDLib on the first call that needs it, taking the lock `~/.cache/che-telegram-all-mcp.tdlib.lock` (owner PID in `~/.cache/che-telegram-all-mcp.tdlib.owner`), and closes it after `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` seconds without calls, never during a call. It also closes TDLib and releases the lock when the MCP connection ends.
+- While another process holds TDLib, five read tools — `get_chats`, `search_chats`, `get_chat_history`, `search_messages`, `dump_chat_to_markdown` — are answered from TDLib's local cache, read-only. The answer carries a second text item starting `source: local-cache`, naming the holder, the number of records that could not be decoded, and per chat the date of the newest cached message; the cache holds only what TDLib has loaded, so newer messages can exist on Telegram.
+- `get_me`, `get_user`, `get_contacts`, `get_chat` and `get_chat_members` return `local_reader_unsupported`; write tools, `auth_*` and `logout` return `tdlib_in_use` with `lock_holder_pid`. Retry after the holder goes idle.
+- The reader accepts only the TDLib version it was verified against (1.8.60); otherwise it returns `local_reader_unavailable` with reason `unsupported_tdlib_version` rather than guess.
+- A wrapper from plugin che-telegram-mcp 1.4.x or older still holds its own lock directory (`~/.cache/che-telegram-all-mcp.lock`); 0.6.0 servers treat it as a holder while that wrapper runs.
+
+The `telegram-all` CLI does not take this lock yet ([#61](https://github.com/PsychQuant/che-msg/issues/61)); do not run it while a session holds TDLib.
 
 ## Tools (27)
 
