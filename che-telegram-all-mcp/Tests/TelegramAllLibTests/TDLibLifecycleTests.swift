@@ -202,6 +202,40 @@ final class TDLibLifecycleTests: XCTestCase {
         XCTAssertTrue(isOpen)
     }
 
+    // MARK: - Shutdown
+
+    /// The server closes TDLib before the process exits, so TDLib never shuts
+    /// down concurrently with the process's own teardown.
+    func testShutdownClosesAnOpenClientAndReleasesTheLock() async throws {
+        let lifecycle = makeLifecycle(idleTimeout: nil)
+        let client = try await lifecycle.client()
+        await lifecycle.shutdown()
+        let isOpen = await lifecycle.isOpen
+        XCTAssertFalse(isOpen)
+        XCTAssertTrue(lockIsFree())
+        XCTAssertEqual(client.closeTimeouts, [30])
+    }
+
+    func testShutdownDuringOpenWaitsAndThenCloses() async throws {
+        opener.delayNanoseconds = 100_000_000
+        let lifecycle = makeLifecycle()
+        let opening = Task { try await lifecycle.client() }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        await lifecycle.shutdown()
+        let client = try await opening.value
+        XCTAssertEqual(client.closeTimeouts, [30])
+        let isOpen = await lifecycle.isOpen
+        XCTAssertFalse(isOpen)
+        XCTAssertTrue(lockIsFree())
+    }
+
+    func testShutdownWithNothingOpenDoesNothing() async {
+        let lifecycle = makeLifecycle()
+        await lifecycle.shutdown()
+        XCTAssertTrue(opener.opened.isEmpty)
+        XCTAssertTrue(lockIsFree())
+    }
+
     // MARK: - Spec example "idle timeout values"
 
     func testIdleTimeoutValues() {

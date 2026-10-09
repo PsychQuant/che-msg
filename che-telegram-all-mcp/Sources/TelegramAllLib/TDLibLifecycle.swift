@@ -106,6 +106,31 @@ public actor TDLibLifecycle<Client: TDLibClosable> {
         settleClose(await task.value, client: client)
     }
 
+    /// Closes TDLib, if this process has it open or is opening it, and
+    /// releases the lock. The server awaits this before it exits, so TDLib
+    /// never shuts down concurrently with the process's own teardown (a close
+    /// racing process exit crashed TDLib in `Td::clear`). A close that does
+    /// not finish is not retried; the kernel drops the flock at exit.
+    public func shutdown() async {
+        while true {
+            switch state {
+            case .closed:
+                return
+            case .opening(let task):
+                _ = try? await task.value
+                await Task.yield()   // let the opener record the result
+            case .closing(let task, let client):
+                settleClose(await task.value, client: client)
+                if case .open = state { return }
+            case .open(let client):
+                let task = Task { await client.close(timeout: Self.closeTimeout) }
+                state = .closing(task, client)
+                settleClose(await task.value, client: client)
+                return
+            }
+        }
+    }
+
     /// Applies a finished close; whichever of `checkIdle` and `client` sees it
     /// first does so, the other finds the state already settled.
     private func settleClose(_ closed: Bool, client: Client) {

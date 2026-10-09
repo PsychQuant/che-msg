@@ -66,6 +66,9 @@ public final class CheTelegramAllMCPServer {
             let tdlibStart = DispatchTime.now()
             do {
                 let client = try await TDLibClient()
+                // Opened on demand, TDLib is still logging in; answering now
+                // would report "Not authenticated" for a logged-in account.
+                await client.waitForAuthorizationToSettle(timeout: 30)
                 if logStartup { logStartupDuration("tdlib_init", since: tdlibStart) }
                 return client
             } catch {
@@ -106,9 +109,18 @@ public final class CheTelegramAllMCPServer {
                 }
             }
         }
-        defer { idleChecks?.cancel() }
-        try await server.start(transport: transport)
-        await server.waitUntilCompleted()
+        do {
+            try await server.start(transport: transport)
+            await server.waitUntilCompleted()
+        } catch {
+            idleChecks?.cancel()
+            await lifecycle.shutdown()
+            throw error
+        }
+        // Close TDLib here, before returning, rather than leaving it to a
+        // deinit that may run on another thread while the process exits.
+        idleChecks?.cancel()
+        await lifecycle.shutdown()
     }
 
     /// Whether this process has a TDLib client right now.

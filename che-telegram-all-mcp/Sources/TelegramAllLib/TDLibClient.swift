@@ -146,6 +146,23 @@ public final class TDLibClient {
         while Self.manager.clients.contains(client.id) {}
     }
 
+    /// Waits until authorization has gone as far as it can without a caller
+    /// (`authorizationIsSettled`), or until `timeout` seconds pass. A client
+    /// opened on demand otherwise answers its first call with "Not
+    /// authenticated" while TDLib is still logging in (PsychQuant/che-msg#58).
+    public func waitForAuthorizationToSettle(timeout: TimeInterval) async {
+        let env = ProcessInfo.processInfo.environment
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let settled = authorizationIsSettled(
+                state: getAuthState(), hasAutoFireError: getLastAutoFireError() != nil,
+                envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init), envApiHash: env["TELEGRAM_API_HASH"],
+                envPhone: env["TELEGRAM_PHONE"], envPassword: env["TELEGRAM_2FA_PASSWORD"])
+            if settled { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
     /// Asks TDLib to close and waits for `authorizationStateClosed`. Returns
     /// false if TDLib has not reported it within `timeout` seconds.
     public func close(timeout: TimeInterval) async -> Bool {

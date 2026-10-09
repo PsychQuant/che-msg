@@ -54,3 +54,15 @@ internal func decideAutoFire(
         return .noOp
     }
 }
+
+/// Whether TDLib's authorization has gone as far as it can without a caller:
+/// it is ready or closed, an automatic step failed, or the current state needs
+/// input the environment does not provide (`decideAutoFire` has nothing to
+/// fire). A client opened on demand waits for this before its first call
+/// (PsychQuant/che-msg#58).
+internal func authorizationIsSettled(state: TDLibClient.AuthState, hasAutoFireError: Bool, envApiId: Int?,
+                                     envApiHash: String?, envPhone: String?, envPassword: String?) -> Bool {
+    if state == .ready || state == .closed || hasAutoFireError { return true }
+    return decideAutoFire(state: state, envApiId: envApiId, envApiHash: envApiHash, envPhone: envPhone,
+                          envPassword: envPassword, envAuthCode: nil) == .noOp
+}
