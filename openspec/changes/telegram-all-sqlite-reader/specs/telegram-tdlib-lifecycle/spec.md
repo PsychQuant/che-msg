@@ -25,7 +25,7 @@ The server SHALL NOT create a TDLib client or acquire the TDLib lock during star
 
 ### Requirement: TDLib closes after an idle period and releases the lock
 
-The server SHALL close TDLib and release the TDLib lock after no tool call has used TDLib for the idle timeout. The idle timeout SHALL be read from the environment variable `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` in seconds, SHALL default to 600, and the value `0` SHALL disable idle closing. The server SHALL release the lock only after TDLib reports `authorizationStateClosed`. When its MCP connection ends, the server SHALL close TDLib and release the lock before its process exits, whatever the idle timeout.
+The server SHALL close TDLib and release the TDLib lock after no tool call has used TDLib for the idle timeout. A call in progress counts as using TDLib, and idle time SHALL be measured from the end of the most recent call. The idle timeout SHALL be read from the environment variable `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` in seconds, SHALL default to 600, and the value `0` SHALL disable idle closing. The server SHALL release the lock only after TDLib reports `authorizationStateClosed`. When its MCP connection ends, the server SHALL close TDLib and release the lock before its process exits, whatever the idle timeout.
 
 #### Scenario: Idle timeout closes TDLib
 
@@ -46,6 +46,21 @@ The server SHALL close TDLib and release the TDLib lock after no tool call has u
 | 400 | `get_chat_history` called | yes | yes |
 | 1000 | idle check: 600 s since last call at 400 | released after `authorizationStateClosed` | no |
 | 1200 | `search_messages` called, lock free | yes | yes |
+
+#### Scenario: A call that outlasts the idle timeout is not cut off
+
+- **WHEN** a tool call is still running when the idle timeout has passed since it began
+- **THEN** the server keeps TDLib open until the call ends, and the idle timeout then counts from the end of that call
+
+##### Example: a long export
+
+| Time (s) | Event | TDLib open |
+| -------- | ----- | ---------- |
+| 0 | `dump_chat_to_markdown` begins (timeout 600) | yes |
+| 700 | idle check, the call still running | yes |
+| 700 | the call ends | yes |
+| 1299 | idle check: 599 s since the call ended | yes |
+| 1300 | idle check: 600 s since the call ended | no |
 
 #### Scenario: Connection end closes TDLib before exit
 
@@ -69,12 +84,17 @@ The server SHALL close TDLib and release the TDLib lock after no tool call has u
 
 ### Requirement: Lock ownership honors the legacy wrapper lock
 
-The server SHALL treat TDLib as held by another process when either an exclusive non-blocking `flock` on `~/.cache/che-telegram-all-mcp.tdlib.lock` fails, or the legacy wrapper lock directory `~/.cache/che-telegram-all-mcp.lock` contains an `owner.pid` naming a live process other than the server. These are the only two conditions: the legacy wrapper's flock-mode file `~/.cache/che-telegram-all-mcp.lock.flock`, which the legacy wrapper used only where a `flock` command is installed, is not one of them. The server SHALL check the legacy lock directory again after taking the flock and SHALL release the flock if a live legacy owner has appeared. The server SHALL NOT open TDLib while TDLib is held by another process.
+The server SHALL treat TDLib as held by another process when either an exclusive non-blocking `flock` on `~/.cache/che-telegram-all-mcp.tdlib.lock` fails, or the legacy wrapper lock directory `~/.cache/che-telegram-all-mcp.lock` contains an `owner.pid` naming a live process, other than the server, whose command-line arguments include `che-telegram-all-mcp-wrapper.sh` (a live process whose arguments cannot be read counts as such). These are the only two conditions: the legacy wrapper's flock-mode file `~/.cache/che-telegram-all-mcp.lock.flock`, which the legacy wrapper used only where a `flock` command is installed, is not one of them. The server SHALL check the legacy lock directory again after taking the flock and SHALL release the flock if a live legacy owner has appeared. The server SHALL NOT open TDLib while TDLib is held by another process. When the lock file cannot be opened, the server SHALL NOT open TDLib and SHALL write one line to stderr naming the file and the reason.
 
 #### Scenario: Legacy wrapper lock with a live owner blocks opening
 
-- **WHEN** `~/.cache/che-telegram-all-mcp.lock/owner.pid` contains the PID of a running process and a tool that needs TDLib is called
+- **WHEN** `~/.cache/che-telegram-all-mcp.lock/owner.pid` contains the PID of a running `che-telegram-all-mcp-wrapper.sh` and a tool that needs TDLib is called
 - **THEN** the server treats TDLib as held by that PID and does not open TDLib
+
+#### Scenario: Legacy lock naming an unrelated process is ignored
+
+- **WHEN** `~/.cache/che-telegram-all-mcp.lock/owner.pid`, left behind by a wrapper that was killed, contains the PID of a running process that is not the legacy wrapper, and the flock is free
+- **THEN** the server acquires the flock and opens TDLib
 
 #### Scenario: Legacy wrapper lock with a dead owner is ignored
 

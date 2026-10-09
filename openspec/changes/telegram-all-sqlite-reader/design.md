@@ -40,6 +40,7 @@ server 啟動時不建立 TDLib client。第一個需要 TDLib 的工具呼叫�
 開啟之後還有三點，都是任務 5.2 兩個 session 的實機驗證找到或確認的：
 
 - 開 TDLib 後先等登入狀態穩定（最多 30 秒）才回應這次呼叫：已登入、已關閉、自動填入失敗，或停在環境變數無法提供的輸入（驗證碼，或沒設 `TELEGRAM_PHONE`／`TELEGRAM_2FA_PASSWORD` 時的電話與密碼）。判斷沿用既有的 `decideAutoFire`：它沒有東西可送時就算穩定。沒有這一步，第一個呼叫會在 TDLib 還在登入時回「Not authenticated」（實測如此；舊版 v0.5.0 在啟動後立刻呼叫也一樣，只是平常被 MCP 初始化的時間差蓋住）
+- 閒置時間從最後一個呼叫**結束**時起算，有呼叫進行中時不關閉（`beginCall`／`endCall` 計數）。原先只在呼叫開始時記時間，逾時設得短、又遇上大量匯出時，TDLib 會在呼叫途中被關掉；關閉後送出的請求，TDLibKit 會丟掉回應，呼叫可能卡住（spectra-review 與 spectra-verify 2026-10-09 指出）
 - 整個 process 只用一個 `TDLibClientManager`：TDLib 只允許一條執行緒呼叫 `td_receive`，而每個 manager 都有自己的接收迴圈、每次最多卡在 `td_receive` 10 秒；閒置關閉後若用新的 manager 重開，新舊兩條迴圈會同時呼叫 `td_receive`，新 client 的回應可能被舊迴圈收走
 - MCP 連線結束時，server 先取消閒置檢查、關閉 TDLib、釋放鎖，再讓 process 結束。原先交給 `TDLibClient` 的 deinit 關閉，而 deinit 會在閒置檢查的背景 task 放手時於另一條執行緒執行，和 process 結束同時進行；實測約每 6 次結束有 1 次在 TDLib 的 `Td::clear` 當機（segmentation fault）。改在主流程關閉後，連續 12 次都正常結束
 
@@ -48,6 +49,8 @@ server 啟動時不建立 TDLib client。第一個需要 TDLib 的工具呼叫�
 ### 鎖改由 server 以 flock 持有並承認舊版鎖目錄
 
 TDLib 的鎖改由 server 在開 TDLib 前取得：對 `~/.cache/che-telegram-all-mcp.tdlib.lock` 做 `flock(LOCK_EX | LOCK_NB)`，成功後把自己的 PID 寫進同目錄的 `che-telegram-all-mcp.tdlib.owner`。process 結束時 kernel 自動釋放 flock，不會留下過期的鎖。判斷「是否被別人持有」時，同時檢查舊版 wrapper 的 `~/.cache/che-telegram-all-mcp.lock/owner.pid`：PID 還活著就視為被持有，避免新舊版本並存時兩個 process 同時開 TDLib。
+
+舊版 owner 必須是執行 `che-telegram-all-mcp-wrapper.sh` 的程序才算持有（以 `sysctl(KERN_PROCARGS2)` 讀其命令列；讀不到時保守地視為持有）：舊版 wrapper 被強制終止或停電時不會清掉鎖目錄，重開機後那個 PID 可能屬於不相干的程序，只看「活著」會讓 TDLib 永遠被擋（spectra-review 2026-10-09 指出）。README 另寫手動清除的方法。鎖檔打不開時（例如 `~/.cache` 屬於 root），server 在 stderr 寫一行檔名與原因，不再看起來只是「被別人持有」。
 
 舊版 wrapper 是在啟動自己的 server 之前才建立鎖目錄，所以 server 取得 flock 之後再檢查一次舊版鎖目錄；這段空窗內若出現存活的舊版 owner，就放掉 flock、視為被持有。
 
@@ -70,7 +73,7 @@ wrapper 只剩兩種情況會在啟動 server 前結束：Keychain 沒有 API �
 `TelegramAllLib` 新增唯讀的本機讀取器，分三層，各自可單獨測試：
 
 1. binlog 解碼：讀 `td.binlog`，以 `cucumber` 經 PBKDF2-SHA256（依加密事件的鹽值與迭代次數）推導 AES-CTR 金鑰，逐一解出事件；只採用長度與 CRC 皆正確的完整事件；從 binlog PMC 事件取出 `sqlite_key`
-2. SQLCipher 唯讀開檔：用 TDLibFramework 內建的 `tdsqlite3_open_v2`（`SQLITE_OPEN_READONLY`）與 `tdsqlite3_key` 打開 `db.sqlite`
+2. SQLCipher 唯讀開檔：用 TDLibFramework 內建的 `tdsqlite3_open_v2`（`SQLITE_OPEN_READONLY`）打開 `db.sqlite`，再以 `PRAGMA key = "x'…'"` 設定金鑰（效果與 `tdsqlite3_key` 相同，不必另外宣告這個 C 函式）
 3. 格式解析：依 `dialog_id` 的數值範圍判斷聊天類型（正數為私人對話、`-1000000000000` 到 `-2000000000000` 之間為頻道／超級群組、其餘負數為一般群組），名稱從 `common` 表的 `us<id>`、`gr<id>`、`ch<id>` 解出；`messages.data` 解成訊息日期、寄件人、是否自己送出、內容類型與文字。不需要解 `dialogs.data`（聊天列表與順序用 `dialogs` 表的 `dialog_id`、`dialog_order` 欄位）
 
 替代方案見 Non-Goals（共用背景程式、離線 TDLib 複本）。
@@ -99,7 +102,7 @@ wrapper 只剩兩種情況會在啟動 server 前結束：Keychain 沒有 API �
 
 ### 讀取器只接受驗證過的 TDLib 版本
 
-讀取器在開檔前檢查 TDLib 版本（讀 TDLibFramework 回報的版本字串，並比對 SQLite 的 `PRAGMA user_version` 與 binlog 的格式特徵）。只接受 `1.8.60`（`cb863c16`）與其 SQLite `user_version`；其他一律回 `local_reader_unavailable`，原因 `unsupported_tdlib_version`。解析途中遇到不認得的欄位旗標或型別時，該筆資料標為無法解析，不猜測內容。
+讀取器在開檔前檢查 TDLib 版本：以 `td_execute` 讀連結的 TDLib 的 `version` 與 `commit_hash`，開檔後再讀 SQLite 的 `PRAGMA user_version`。binlog 不做版本比對；binlog 格式異常時回 `key_not_found` 或 `database_unreadable`，不回 `unsupported_tdlib_version`。只接受 `1.8.60`（`cb863c16`）與其 SQLite `user_version`；其他一律回 `local_reader_unavailable`，原因 `unsupported_tdlib_version`。解析途中遇到不認得的欄位旗標或型別時，該筆資料標為無法解析，不猜測內容。
 
 ### 讀取器模式的回應附加來源標記
 

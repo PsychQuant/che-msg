@@ -76,7 +76,7 @@ The local reader SHALL check the TDLib version and the SQLite `user_version` bef
 
 ### Requirement: Reader answers five tools with the TDLib-mode JSON fields
 
-The local reader SHALL answer `get_chats`, `search_chats`, `get_chat_history`, `search_messages` and `dump_chat_to_markdown`. Chat objects SHALL use the fields `id`, `title`, `type` and, when decodable, `last_message`. Message objects SHALL use the fields `id`, `chat_id`, `date`, `sender`, `is_outgoing`, `type` and `text` or `caption` when present. A field the reader cannot determine SHALL be omitted rather than filled with a placeholder value. `get_chat_history` SHALL accept the same arguments as in TDLib mode, including its date range filters. `dump_chat_to_markdown` SHALL produce the Markdown format defined by the `telegram-history-export` capability. Message text SHALL come from decoding the message `data`, not from the `text` column. `search_messages` SHALL return the messages whose decoded text contains the query as a case-insensitive substring.
+The local reader SHALL answer `get_chats`, `search_chats`, `get_chat_history`, `search_messages` and `dump_chat_to_markdown`. Chat objects SHALL use the fields `id`, `title`, `type` and, when the cache holds a message for the chat, `last_message` (the newest cached message; one that cannot be decoded appears as "Undecodable records are reported, not guessed" describes). Message objects SHALL use the fields `id`, `chat_id`, `date`, `sender`, `is_outgoing`, `type` and `text` or `caption` when present. A field the reader cannot determine SHALL be omitted rather than filled with a placeholder value. `get_chat_history` SHALL accept the same arguments as in TDLib mode, including its date range filters. `dump_chat_to_markdown` SHALL produce the Markdown format defined by the `telegram-history-export` capability. Message text SHALL come from decoding the message `data`, not from the `text` column. `search_messages` SHALL return the messages whose decoded text contains the query as a case-insensitive substring.
 
 #### Scenario: Search matches decoded text
 
@@ -101,7 +101,7 @@ The local reader SHALL answer `get_chats`, `search_chats`, `get_chat_history`, `
 
 ### Requirement: Reader marks its results as coming from the local cache
 
-Every successful reader result SHALL contain a second text content item that states `source: local-cache`, the PID of the process holding TDLib, the number of records whose data could not be decoded, and, for each chat the result covers, the date of the newest message for that chat in the local cache (or that the cache holds no message for it). The note SHALL state that the cache contains only messages TDLib has loaded, so newer messages can exist on Telegram.
+Every successful reader result SHALL contain a second text content item that states `source: local-cache`, the PID of the process holding TDLib, the number of records whose data could not be decoded, and, for each chat the result covers, the date of the newest message for that chat in the local cache as a calendar date in the server's local time zone (or that the cache holds no message for it). The note SHALL state that the cache contains only messages TDLib has loaded, so newer messages can exist on Telegram.
 
 #### Scenario: Source note present
 
@@ -114,6 +114,8 @@ Every successful reader result SHALL contain a second text content item that sta
 - **THEN** the second content item states that the newest cached message for that chat is from 2026-04-30 and that newer messages can exist on Telegram
 
 ##### Example: freshness lines
+
+The server's time zone is UTC+08:00.
 
 | Chat | Newest cached message | Freshness line in the note |
 | ---- | --------------------- | -------------------------- |
