@@ -151,7 +151,10 @@ public final class CheTelegramAllMCPServer {
 
             tool("get_contacts",
                  description: "Get your contact list",
-                 properties: [:], required: []),
+                 properties: [
+                    "limit": prop("integer", "Max contacts to return (default 200, max 10000)"),
+                 ],
+                 required: []),
 
             // Chat Operations
             tool("get_chats",
@@ -424,7 +427,8 @@ public final class CheTelegramAllMCPServer {
                 result = try await tdlib.getUser(userId: userId)
 
             case "get_contacts":
-                result = try await tdlib.getContacts()
+                let limit = try parseLimit(args, default: 200)
+                result = try await tdlib.getContacts(limit: limit)
 
             // Chat Operations
             case "get_chats":

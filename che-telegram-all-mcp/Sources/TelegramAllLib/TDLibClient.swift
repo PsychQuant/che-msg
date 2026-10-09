@@ -541,11 +541,14 @@ public final class TDLibClient {
         return toJSON(userToDict(user))
     }
 
-    public func getContacts() async throws -> String {
+    public func getContacts(limit: Int = 200) async throws -> String {
         guard getAuthState() == .ready else { throw TDError.notAuthenticated }
         let result = try await client.getContacts()
         var users: [[String: Any]] = []
-        for userId in result.userIds {
+        // #34: TDLib's getContacts has no server-side limit (unlike getChats /
+        // searchChats), so it returns ALL contact ids. Bound the expensive
+        // one-getUser-per-id fan-out client-side via `boundedContactIds`.
+        for userId in boundedContactIds(result.userIds, limit: limit) {
             let user = try await client.getUser(userId: userId)
             users.append(userToDict(user))
         }
@@ -751,4 +754,15 @@ public final class TDLibClient {
         }
         return String(data: data, encoding: .utf8) ?? "{}"
     }
+}
+
+/// Bound the contact fan-out for #34. TDLib's `getContacts` has no server-side
+/// limit (unlike `getChats` / `searchChats`), so it returns every contact id;
+/// this caps the expensive one-`getUser`-per-id loop client-side. Pure +
+/// testable seam (the fan-out itself needs a live TDLib connection, so this is
+/// where #34's falsifiable coverage lives — see `TDLibClientContactsTests`).
+/// `limit` is pre-validated by `parseLimit` (`> 0`, `≤ 10_000`) at the handler,
+/// and the wrapper's own default (200) is also `> 0`, so `prefix` never traps.
+internal func boundedContactIds(_ ids: [Int64], limit: Int) -> [Int64] {
+    Array(ids.prefix(limit))
 }
