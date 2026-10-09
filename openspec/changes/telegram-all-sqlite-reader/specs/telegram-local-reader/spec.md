@@ -6,7 +6,7 @@ Defines the read-only local reader in `TelegramAllLib` that answers chat and mes
 
 ### Requirement: Reader obtains the SQLite key from the binlog
 
-The local reader SHALL derive the binlog AES-CTR key from TDLib's default key `cucumber` using PBKDF2-SHA256 with the salt and iteration count recorded in the binlog encryption event, decrypt `td.binlog`, and read the SQLite key from the binlog `sqlite_key` entry. The reader SHALL use only binlog events whose length and CRC are valid and SHALL skip an incomplete event at the end of the file.
+The local reader SHALL derive the binlog AES-CTR key from TDLib's default key `cucumber` using PBKDF2-SHA256 with the salt recorded in the binlog encryption event and the 2 iterations TDLib uses for a raw key such as `cucumber`, decrypt `td.binlog`, and read the SQLite key from the binlog `sqlite_key` entry. The reader SHALL use only binlog events whose length and CRC are valid and SHALL skip an incomplete event at the end of the file.
 
 #### Scenario: Key extracted from a fixture binlog
 
@@ -25,12 +25,36 @@ The local reader SHALL derive the binlog AES-CTR key from TDLib's default key `c
 
 ### Requirement: Reader never writes TDLib files
 
-The local reader SHALL open `db.sqlite` with `SQLITE_OPEN_READONLY` through the SQLCipher functions bundled in TDLibFramework and SHALL open `td.binlog` read-only. It SHALL NOT modify `db.sqlite`, `db.sqlite-wal` or `td.binlog`, and SHALL NOT create or delete any file in the TDLib database directory. Updates that SQLite itself makes to `db.sqlite-shm`, the shared-memory index it maintains for concurrent readers, are the one exception and SHALL NOT count as the reader writing TDLib files.
+The local reader SHALL open `db.sqlite` with `SQLITE_OPEN_READONLY` through the SQLCipher functions bundled in TDLibFramework and SHALL open `td.binlog` read-only. It SHALL NOT modify `db.sqlite`, `db.sqlite-wal` or `td.binlog`, and SHALL NOT create or delete any file in the TDLib database directory. Updates that SQLite itself makes to `db.sqlite-shm`, the shared-memory index it maintains for concurrent readers, are the one exception and SHALL NOT count as the reader writing TDLib files. When `db.sqlite-wal` does not exist, which is the case when no TDLib instance holds the database, the reader SHALL open `db.sqlite` as immutable, so that SQLite creates neither `db.sqlite-wal` nor `db.sqlite-shm`; when `db.sqlite-wal` exists, the reader SHALL read it, so that messages a holder has not yet checkpointed into `db.sqlite` are included.
 
 #### Scenario: Directory unchanged after reading
 
 - **WHEN** the reader answers `get_chat_history` against a copy of a TDLib database directory
 - **THEN** every file in that directory other than `db.sqlite-shm` has the same size and modification time as before the call, and no file was added or removed
+
+#### Scenario: Directory unchanged when no TDLib instance holds the database
+
+- **WHEN** the reader reads a copy of a TDLib database directory that contains `td.binlog` and `db.sqlite` but no `db.sqlite-wal`
+- **THEN** every file in that directory has the same size and modification time as before, and no file was added, `db.sqlite-wal` and `db.sqlite-shm` included
+
+#### Scenario: Data a holder has not checkpointed is read
+
+- **WHEN** a TDLib instance holding the database has committed a row that is still only in `db.sqlite-wal`, and the reader reads the directory
+- **THEN** the reader's result includes that row, and only `db.sqlite-shm` changed
+
+### Requirement: Reader reads only a logged-in TDLib directory
+
+The local reader SHALL read a TDLib database directory only when the binlog key-value store, replayed as TDLib replays it (a rewrite replaces the entry with the same event id, an `Empty` rewrite erases it), holds the entry `auth` with the value `ok`, which TDLib writes on login and replaces with `logout` or `destroy` when the session ends. Otherwise the reader SHALL return `local_reader_unavailable` with reason `not_authenticated`.
+
+#### Scenario: Directory that was never logged in
+
+- **WHEN** the reader is pointed at a TDLib directory whose binlog has no `auth` entry
+- **THEN** it returns `local_reader_unavailable` with reason `not_authenticated` and reads no chat or message
+
+#### Scenario: Directory that was logged out
+
+- **WHEN** the binlog's latest `auth` entry is `logout`
+- **THEN** the reader returns `local_reader_unavailable` with reason `not_authenticated`
 
 ### Requirement: Reader never exposes the database key
 
@@ -98,9 +122,20 @@ Every successful reader result SHALL contain a second text content item that sta
 
 ### Requirement: Undecodable records are reported, not guessed
 
-When the internal data of a chat or message cannot be decoded, the reader SHALL still list the record with the fields it knows from table columns, SHALL set `type` to `unknown`, SHALL count the record in the source note, and SHALL NOT infer the missing values.
+When the internal data of a chat or message cannot be decoded, the reader SHALL still list the record with the fields it knows from table columns, SHALL set `type` to `unknown`, SHALL count the record in the source note, and SHALL NOT infer the missing values. For a message whose fixed prefix (flag words, `message_id`, sender user id, date) decodes and whose decoded `message_id` equals the `message_id` column, the reader SHALL also give the decoded `date` and `is_outgoing`. When the prefix has a flag bit TDLib 1.8.60 does not define, a version newer than TDLib 1.8.60, or a `message_id` different from the column, the message SHALL have only the fields from table columns.
 
 #### Scenario: Message with an unknown content flag
 
 - **WHEN** a message's `data` contains a flag the reader does not recognise
 - **THEN** the message appears with `id`, `chat_id`, `sender` taken from the `sender_user_id` column, `type` set to `unknown` and no `text`, and the source note counts one undecodable record
+
+#### Scenario: Message that stops before its content
+
+- **WHEN** a message's `data` decodes up to its date but then carries forward information, which the reader does not decode
+- **THEN** the message appears with `id`, `chat_id`, `sender` taken from the `sender_user_id` column, the decoded `date` and `is_outgoing`, `type` set to `unknown` and no `text`
+
+##### Example: forwarded message
+
+- **GIVEN** message 5242880 in chat 777 was sent by user 1001 at Unix time 1760000000, is not outgoing, and its `data` carries forward information
+- **WHEN** `get_chat_history` is called with `chat_id` 777
+- **THEN** the array contains `{"chat_id":777,"date":1760000000,"id":5242880,"is_outgoing":false,"sender":{"type":"user","user_id":1001},"type":"unknown"}`

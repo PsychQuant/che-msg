@@ -8,7 +8,7 @@
   - SQLite 為 WAL 模式、無獨占鎖；TDLibFramework 已匯出 `tdsqlite3_key` 等 SQLCipher 函式
   - `messages` 表有 `dialog_id`、`message_id`、`sender_user_id`、`text`、`data`（TDLib 內部序列化）；`dialogs` 表有 `dialog_id`、`dialog_order`、`data`；使用者存在 `common` 表，鍵為 `us<id>`。名稱、日期、訊息文字都在內部序列化資料裡
   - 可行性驗證 1.2（2026-10-09，本機一份實際資料庫的複本）實測：`messages` 2,586 筆，`text`、`search_id` 全部為空，`messages_fts` 0 筆；`data` 2,586 筆皆有值（平均 155 bytes）；`sender_user_id` 2,586 筆皆非 0。所以訊息文字只能從 `data` 解出，寄件人可直接取 `sender_user_id` 欄位
-  - 可行性驗證 1.3（同一份複本）：所有 `us`、`gr`、`ch` 與 `messages.data` 的版本號皆為 57；使用者名字 243/243 解出；一般群組名稱 15 個解出 13 個、頻道名稱 4 個解出 2 個（其餘待查）；訊息 2,586 筆的 `message_id` 與寄件人和資料表欄位一致率 100%、97% 解到內容（2,283 筆文字訊息全部解出），73 筆停在內容前（72 筆頻道留言資訊、1 筆轉寄資訊）
+  - 可行性驗證 1.3（同一份複本）：所有 `us`、`gr`、`ch` 與 `messages.data` 的版本號皆為 57；使用者名字 243/243 解出；一般群組名稱 15 個解出 13 個、頻道名稱 4 個解出 2 個（任務 3.3 查明原因在查詢條件：`LIKE 'gr%'`、`LIKE 'ch%'` 把 TDLib 存完整資訊的 `grf<id>`、`chf<id>` 紀錄也撈進來，「13/15」裡有 5 筆是 `grf` 碰巧解成合法 UTF-8；改用精確 key 後群組 8/8、頻道 2/2 全部解出）；訊息 2,586 筆的 `message_id` 與寄件人和資料表欄位一致率 100%、97% 解到內容（2,283 筆文字訊息全部解出），73 筆停在內容前（72 筆頻道留言資訊、1 筆轉寄資訊）
   - 同一次驗證：以 `SQLITE_OPEN_READONLY` 打開 WAL 模式的資料庫後，`db.sqlite` 與 `db.sqlite-wal` 不變，`db.sqlite-shm` 的修改時間改變（大小不變）。這是 SQLite 讀取者在共享索引檔登記讀取狀態的標準行為
 - 讀取類工具目前回傳 JSON（`chatToDict`、`messageToDict` 的欄位：`id`、`chat_id`、`title`、`type`、`unread_count`、`last_message`、`date`、`sender`、`is_outgoing`、`text`、`caption`）；錯誤回應是 `isError: true` 加 JSON 內容 `{"type":"tdlib_error","code":…,"message":…}`。
 
@@ -37,11 +37,21 @@
 
 server 啟動時不建立 TDLib client。第一個需要 TDLib 的工具呼叫進來時才判斷：鎖空著就取得鎖並開 TDLib；之後每次呼叫重置閒置計時，閒置超過時限就關閉 TDLib（等到 `authorizationStateClosed`）再釋放鎖。時限預設 600 秒，可用環境變數 `CHE_TELEGRAM_ALL_IDLE_TIMEOUT`（秒）調整，`0` 代表不自動關閉（等同現行行為）。
 
+開啟之後還有三點，都是任務 5.2 兩個 session 的實機驗證找到或確認的：
+
+- 開 TDLib 後先等登入狀態穩定（最多 30 秒）才回應這次呼叫：已登入、已關閉、自動填入失敗，或停在環境變數無法提供的輸入（驗證碼，或沒設 `TELEGRAM_PHONE`／`TELEGRAM_2FA_PASSWORD` 時的電話與密碼）。判斷沿用既有的 `decideAutoFire`：它沒有東西可送時就算穩定。沒有這一步，第一個呼叫會在 TDLib 還在登入時回「Not authenticated」（實測如此；舊版 v0.5.0 在啟動後立刻呼叫也一樣，只是平常被 MCP 初始化的時間差蓋住）
+- 整個 process 只用一個 `TDLibClientManager`：TDLib 只允許一條執行緒呼叫 `td_receive`，而每個 manager 都有自己的接收迴圈、每次最多卡在 `td_receive` 10 秒；閒置關閉後若用新的 manager 重開，新舊兩條迴圈會同時呼叫 `td_receive`，新 client 的回應可能被舊迴圈收走
+- MCP 連線結束時，server 先取消閒置檢查、關閉 TDLib、釋放鎖，再讓 process 結束。原先交給 `TDLibClient` 的 deinit 關閉，而 deinit 會在閒置檢查的背景 task 放手時於另一條執行緒執行，和 process 結束同時進行；實測約每 6 次結束有 1 次在 TDLib 的 `Td::clear` 當機（segmentation fault）。改在主流程關閉後，連續 12 次都正常結束
+
 替代方案：維持啟動即開、只在被擋時改走讀取器——但這樣「沒在用的 session 不佔住」的目標達不到，被擋的情況會照常發生。
 
 ### 鎖改由 server 以 flock 持有並承認舊版鎖目錄
 
 TDLib 的鎖改由 server 在開 TDLib 前取得：對 `~/.cache/che-telegram-all-mcp.tdlib.lock` 做 `flock(LOCK_EX | LOCK_NB)`，成功後把自己的 PID 寫進同目錄的 `che-telegram-all-mcp.tdlib.owner`。process 結束時 kernel 自動釋放 flock，不會留下過期的鎖。判斷「是否被別人持有」時，同時檢查舊版 wrapper 的 `~/.cache/che-telegram-all-mcp.lock/owner.pid`：PID 還活著就視為被持有，避免新舊版本並存時兩個 process 同時開 TDLib。
+
+舊版 wrapper 是在啟動自己的 server 之前才建立鎖目錄，所以 server 取得 flock 之後再檢查一次舊版鎖目錄；這段空窗內若出現存活的舊版 owner，就放掉 flock、視為被持有。
+
+不處理舊版 wrapper 的 flock 模式：舊版只有在系統裝了 `flock` 指令時才改用 `~/.cache/che-telegram-all-mcp.lock.flock`（不記 PID），macOS 預設沒有這個指令（使用者機器 2026-10-09 確認沒有）。在裝了 `flock` 的機器上新舊版並存時，兩邊可能同時開 TDLib；只影響這種機器上新舊版並存的過渡期，舊版 session 重啟後就不再發生，所以接受（使用者 2026-10-09 同意寫為範圍外）。
 
 替代方案：沿用 wrapper 的 mkdir 鎖——但 mkdir 鎖要靠 PID 判斷是否過期，而且 wrapper 拿鎖的時機在 server 啟動前，無法做到「用到才拿」。
 
@@ -52,6 +62,8 @@ wrapper 不再取得任何鎖，也不再因為別的 session 而結束；它照
 同時移除 PID 追蹤裡「舊 PID 還活著就殺掉」的分支，並且不再使用共用的 `~/.cache/che-telegram-all-mcp.pid`。現行 wrapper 註解說明這個分支只是「被鎖擋住後就不會執行到」的保險；鎖拿掉之後，第二個 session 的 wrapper 會讀到第一個 session 的 binary PID（還活著、名稱相符）並把它殺掉。清理只需要 wrapper 自己記住的 `BIN_PID`，不需要共用 PID 檔。wrapper 只能對自己啟動的 binary 送訊號。
 
 替代方案：保留共用 PID 檔但改成只記錄、不殺——仍會被多個 session 互相覆寫，對清理沒有用處，所以直接移除。
+
+wrapper 只剩兩種情況會在啟動 server 前結束：Keychain 沒有 API 憑證，或取不到 binary（找不到 release asset、下載失敗）。這兩種情況沿用 #31 的做法，回應等待中的 `initialize` 請求一個 JSON-RPC 2.0 錯誤（`code` -32000、說明原因的 `message`、`data.docsUrl` 指向 plugin README 的「When telegram-all does not start」），讓 Claude Code 顯示原因，而不是籠統的 -32000。這也讓結構測試 check (j) 仍有 wrapper 的 `docsUrl` 可檢查——原本唯一的 `docsUrl` 在被移除的 lock-refused 錯誤裡，check (j) 要求 `bin/` 至少有一個。使用者 2026-10-09 同意。
 
 ### 本機讀取器直接解 binlog 與 SQLCipher
 
@@ -66,6 +78,8 @@ wrapper 不再取得任何鎖，也不再因為別的 session 而結束；它照
 ### 讀取器允許 SQLite 更新共享索引檔
 
 讀取器直接以唯讀方式開 TDLib 資料夾內的 `db.sqlite`，不寫 `db.sqlite`、`db.sqlite-wal`、`td.binlog`，也不新增或刪除檔案；唯一例外是 SQLite 為多程序讀取維護的 `db.sqlite-shm`，讀取者會在上面登記讀取狀態。這是使用者在 2026-10-09 套用（apply）過程中選定的做法。
+
+沒有持有者時另有處理：TDLib 正常關閉後 `db.sqlite-wal`、`db.sqlite-shm` 都不存在，這時唯讀連線會自己建立這兩個檔、而且無法刪除（任務 3.2 的測試實測），違反「不新增檔案」。所以讀取器在 `db.sqlite-wal` 不存在時改以 URI 參數 `immutable=1` 開檔：不加鎖、不建 -wal 與 -shm。`db.sqlite-wal` 存在時照常唯讀開檔，才讀得到持有者還沒寫回主檔的訊息。代價：以 immutable 開檔讀取的期間，若剛好有持有者開啟並把 WAL 寫回主檔，讀到的頁面可能不一致；讀取只有數十毫秒，接受。
 
 替代方案：每次先把 `db.sqlite`、`-wal`、`-shm` 複製到私人暫存目錄、以 immutable 模式讀複本——TDLib 資料夾完全不被碰，但每次要複製約 12 MB（本機實測），且持有者正在寫入時可能複製到不一致的快照，所以不採用。
 
@@ -107,7 +121,8 @@ wrapper 不再取得任何鎖，也不再因為別的 session 而結束；它照
   - `get_chats`、`search_chats`、`get_chat_history`、`search_messages`、`dump_chat_to_markdown` 由讀取器回應
   - `get_me`、`get_user`、`get_contacts`、`get_chat`、`get_chat_members` 回 `local_reader_unsupported`
   - 寫入工具（`send_message`、`edit_message`、`delete_messages`、`forward_messages`、`pin_message`、`unpin_message`、`set_chat_title`、`set_chat_description`、`mark_as_read`、`create_group`、`add_chat_member`）、`auth_*`、`logout` 回 `tdlib_in_use`
-- wrapper 不會因為別的 session 而拒絕啟動
+- 開 TDLib 後先等登入狀態穩定（最多 30 秒）再回應；MCP 連線結束時先關 TDLib、釋放鎖，再結束 process
+- wrapper 不會因為別的 session 而拒絕啟動；只在缺 API 憑證或取不到 binary 時於啟動前結束，並以回應 `initialize` 的 JSON-RPC 錯誤說明原因（`data.docsUrl` 指向 README「When telegram-all does not start」）
 
 **介面與資料格式**
 
@@ -123,7 +138,8 @@ wrapper 不再取得任何鎖，也不再因為別的 session 而結束；它照
 **失敗模式**
 
 - TDLib 版本不符、找不到 `sqlite_key`、資料庫打不開 → `local_reader_unavailable`，不退回任何部分結果
-- 單筆訊息或聊天的 `data` 無法解析 → 該筆照常列出資料表欄位可得的值（訊息：`id`、`chat_id`、`sender`（來自 `sender_user_id`）；聊天：`id`），`type` 為 `unknown`；計入第二個內容項目的略過數
+- 單筆訊息或聊天的 `data` 無法解析 → 該筆照常列出資料表欄位可得的值（訊息：`id`、`chat_id`、`sender`（來自 `sender_user_id`）；聊天：`id`），`type` 為 `unknown`；計入第二個內容項目的略過數。訊息的固定開頭（旗標、`message_id`、寄件人、日期）若解出、且 `message_id` 與欄位相符，另附解出的 `date` 與 `is_outgoing`；開頭含 1.8.60 未定義的旗標位元、版本較新、或 `message_id` 不符時，只列資料表欄位
+- binlog 的 key-value 區沒有 `auth` = `ok`（從未登入或已登出）→ `local_reader_unavailable`，原因 `not_authenticated`
 - binlog 檔尾不完整的事件 → 略過，不視為錯誤
 - 讀取期間持有者關閉 TDLib → 本次照讀到的回應；下一次呼叫重新判斷鎖
 - 關閉 TDLib 逾時（30 秒內沒收到 `authorizationStateClosed`）→ 不釋放鎖、在 stderr 記錄，下次閒置檢查再試
@@ -138,7 +154,7 @@ wrapper 不再取得任何鎖，也不再因為別的 session 而結束；它照
 **範圍**
 
 - 範圍內：TDLib 延後開啟與閒置關閉、server 端的鎖、wrapper 移除鎖、本機讀取器（5 個工具）、錯誤格式、README Multi-session limitation 段、新版 binary release 與 `DESIRED_VERSION`／plugin 版本更新
-- 範圍外：讀取器支援其他工具或其他 TDLib 版本、從非持有者寫入、媒體下載、秘密聊天、PsychQuant/che-msg#59、telegram-bot server
+- 範圍外：讀取器支援其他工具或其他 TDLib 版本、從非持有者寫入、媒體下載、秘密聊天、PsychQuant/che-msg#59、telegram-bot server、舊版 wrapper 的 flock 模式鎖檔（`~/.cache/che-telegram-all-mcp.lock.flock`，見「鎖改由 server 以 flock 持有並承認舊版鎖目錄」）、照片／影片／文件的 `caption`（存在媒體物件之後，需解析檔案描述；讀取器省略此欄位）
 
 ## Risks / Trade-offs
 
@@ -146,7 +162,7 @@ wrapper 不再取得任何鎖，也不再因為別的 session 而結束；它照
 - [升級 TDLib 後讀取器失效] → 版本檢查讓它明確報錯；升級 TDLib 時必須重跑讀取器測試並更新支援的版本
 - [讀 binlog 時 TDLib 正在寫入] → 只採用 CRC 正確的完整事件；`sqlite_key` 在登入後就不再變動
 - [讀取器取得整份快取的金鑰] → 金鑰只受公開常數 `cucumber` 保護，本機能讀這些檔案的程式本來就能取得，不算新增暴露面；讀取器不記錄、不快取、不輸出金鑰，測試檢查輸出不含金鑰
-- [新舊版 telegram-all 並存（另一個 session 還在跑舊版 wrapper）] → 新版判斷鎖時承認舊版鎖目錄的存活 PID
+- [新舊版 telegram-all 並存（另一個 session 還在跑舊版 wrapper）] → 新版判斷鎖時承認舊版鎖目錄的存活 PID；舊版 flock 模式（只在裝了 `flock` 指令的機器上）不在範圍內，該情況下仍可能兩邊同時開 TDLib，直到舊版 session 重啟
 - [閒置關閉後下一次呼叫要重開 TDLib，回應變慢] → 用 `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` 調整，`0` 恢復現行常駐行為
 - [可行性驗證用到真實帳號資料的複本，內含登入金鑰與第三方私訊] → 複本只放在 repo 外的暫存目錄，驗證後刪除，絕不 commit；要 commit 的測試資料依「測試資料拆成三種來源」產生，不含任何個人資料
 - [手工組出的格式測試資料與解析程式出自同一份對 TDLib 原始碼的解讀，讀錯時兩者一起錯] → 以可選的真實資料比對測試，以及 5.2 手動驗證時與 TDLib 模式逐筆比對，作為獨立的對照
@@ -161,4 +177,4 @@ wrapper 不再取得任何鎖，也不再因為別的 session 而結束；它照
 
 ## Open Questions
 
-- `search_chats` 的名稱比對要涵蓋哪些欄位（聊天標題、使用者姓名、username）：待格式解析驗證後決定
+- （已解決，任務 3.5）`search_chats` 的名稱比對：以不分大小寫的子字串比對聊天標題（私人對話的標題就是對方姓名，與 TDLib 的組法相同），範圍是快取知道的所有對話（含封存）；username 不在讀取器解析的欄位內，不比對

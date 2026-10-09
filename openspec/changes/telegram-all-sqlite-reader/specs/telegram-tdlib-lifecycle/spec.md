@@ -6,7 +6,7 @@ Defines when the `che-telegram-all-mcp` server opens and closes its TDLib instan
 
 ### Requirement: TDLib opens on first use, not at startup
 
-The server SHALL NOT create a TDLib client or acquire the TDLib lock during startup. The server SHALL open TDLib only when a tool that needs TDLib is called and the TDLib lock is free.
+The server SHALL NOT create a TDLib client or acquire the TDLib lock during startup. The server SHALL open TDLib only when a tool that needs TDLib is called and the TDLib lock is free. After opening TDLib, the server SHALL wait, for at most 30 seconds, until authorization has gone as far as it can without a caller before it answers the call: TDLib is ready or closed, an automatic step (setting parameters, sending the phone number or the 2FA password from the environment) failed, or TDLib waits for input the environment does not provide.
 
 #### Scenario: Server starts without holding TDLib
 
@@ -18,9 +18,14 @@ The server SHALL NOT create a TDLib client or acquire the TDLib lock during star
 - **WHEN** `get_chats` is called and no other process holds the TDLib lock
 - **THEN** the server acquires the lock, writes its PID to `~/.cache/che-telegram-all-mcp.tdlib.owner`, opens TDLib, and returns the result produced by TDLib
 
+#### Scenario: First call on a logged-in account is answered after login
+
+- **WHEN** `get_chats` is the first call after the server opened TDLib for an account that is logged in, and the API credentials are in the environment
+- **THEN** the result is the chat list produced by TDLib, not a "Not authenticated" error
+
 ### Requirement: TDLib closes after an idle period and releases the lock
 
-The server SHALL close TDLib and release the TDLib lock after no tool call has used TDLib for the idle timeout. The idle timeout SHALL be read from the environment variable `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` in seconds, SHALL default to 600, and the value `0` SHALL disable idle closing. The server SHALL release the lock only after TDLib reports `authorizationStateClosed`.
+The server SHALL close TDLib and release the TDLib lock after no tool call has used TDLib for the idle timeout. The idle timeout SHALL be read from the environment variable `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` in seconds, SHALL default to 600, and the value `0` SHALL disable idle closing. The server SHALL release the lock only after TDLib reports `authorizationStateClosed`. When its MCP connection ends, the server SHALL close TDLib and release the lock before its process exits, whatever the idle timeout.
 
 #### Scenario: Idle timeout closes TDLib
 
@@ -42,6 +47,11 @@ The server SHALL close TDLib and release the TDLib lock after no tool call has u
 | 1000 | idle check: 600 s since last call at 400 | released after `authorizationStateClosed` | no |
 | 1200 | `search_messages` called, lock free | yes | yes |
 
+#### Scenario: Connection end closes TDLib before exit
+
+- **WHEN** the MCP connection of a server that holds TDLib ends
+- **THEN** the server closes TDLib, waits for `authorizationStateClosed`, releases the TDLib lock and removes its owner file, and its process then exits with status 0
+
 #### Scenario: Close that does not finish keeps the lock
 
 - **WHEN** TDLib does not report `authorizationStateClosed` within 30 seconds of an idle close request
@@ -59,7 +69,7 @@ The server SHALL close TDLib and release the TDLib lock after no tool call has u
 
 ### Requirement: Lock ownership honors the legacy wrapper lock
 
-The server SHALL treat TDLib as held by another process when either an exclusive non-blocking `flock` on `~/.cache/che-telegram-all-mcp.tdlib.lock` fails, or the legacy wrapper lock directory `~/.cache/che-telegram-all-mcp.lock` contains an `owner.pid` naming a live process other than the server. The server SHALL NOT open TDLib while TDLib is held by another process.
+The server SHALL treat TDLib as held by another process when either an exclusive non-blocking `flock` on `~/.cache/che-telegram-all-mcp.tdlib.lock` fails, or the legacy wrapper lock directory `~/.cache/che-telegram-all-mcp.lock` contains an `owner.pid` naming a live process other than the server. These are the only two conditions: the legacy wrapper's flock-mode file `~/.cache/che-telegram-all-mcp.lock.flock`, which the legacy wrapper used only where a `flock` command is installed, is not one of them. The server SHALL check the legacy lock directory again after taking the flock and SHALL release the flock if a live legacy owner has appeared. The server SHALL NOT open TDLib while TDLib is held by another process.
 
 #### Scenario: Legacy wrapper lock with a live owner blocks opening
 
@@ -121,3 +131,19 @@ The plugin wrapper `che-telegram-all-mcp-wrapper.sh` SHALL NOT acquire a lock an
 
 - **WHEN** a wrapper exits while two `CheTelegramAllMCP` processes are running, one of them started by that wrapper
 - **THEN** the process started by that wrapper is terminated and the other process keeps running
+
+### Requirement: Wrapper reports why it did not start
+
+The wrapper SHALL exit before starting the server in exactly two cases: the API credentials `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are missing from the Keychain, or the server binary is neither installed nor obtainable (no release asset found, or the download failed). In both cases it SHALL exit with status 1 without starting the server and SHALL write to stdout one JSON-RPC 2.0 error answering the pending `initialize` request: the request's `id`, `error.code` -32000, an `error.message` naming the cause, and `error.data.docsUrl` pointing at the section "When telegram-all does not start" of the plugin README.
+
+#### Scenario: Missing credentials answer the initialize request
+
+- **WHEN** the Keychain holds no `TELEGRAM_API_ID` and Claude Code starts the wrapper and sends an `initialize` request with id 7
+- **THEN** the first line on stdout is a JSON-RPC 2.0 error with `id` 7, `error.code` -32000, a message, and `error.data.docsUrl` ending in `README.md#when-telegram-all-does-not-start`; the wrapper exits with status 1 and no server process is started
+
+##### Example: request ids
+
+| `initialize` id | `id` in the error |
+| --------------- | ----------------- |
+| `7` | `7` |
+| `"abc"` | `"abc"` |
