@@ -1,0 +1,22 @@
+{
+  "logged_in" : false,
+  "sqlite_user_version" : 14,
+  "tables" : [
+    "active_stories",
+    "active_story_lists",
+    "common",
+    "dialogs",
+    "encryption_dummy_table",
+    "files",
+    "messages",
+    "messages_fts",
+    "messages_fts_config",
+    "messages_fts_data",
+    "messages_fts_docsize",
+    "messages_fts_idx",
+    "notification_groups",
+    "scheduled_messages",
+    "stories"
+  ],
+  "tdlib_version" : "1.8.60"
+}
