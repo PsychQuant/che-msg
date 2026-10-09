@@ -125,7 +125,7 @@ wrapper 只剩三種情況會在啟動 server 前結束：Keychain 沒有 API �
   - `get_me`、`get_user`、`get_contacts`、`get_chat`、`get_chat_members` 回 `local_reader_unsupported`
   - 寫入工具（`send_message`、`edit_message`、`delete_messages`、`forward_messages`、`pin_message`、`unpin_message`、`set_chat_title`、`set_chat_description`、`mark_as_read`、`create_group`、`add_chat_member`）、`auth_*`、`logout` 回 `tdlib_in_use`
 - 開 TDLib 後先等登入狀態穩定（最多 30 秒）再回應；MCP 連線結束時先關 TDLib、釋放鎖，再結束 process
-- wrapper 不會因為別的 session 而拒絕啟動；只在缺 API 憑證或取不到 binary 時於啟動前結束，並以回應 `initialize` 的 JSON-RPC 錯誤說明原因（`data.docsUrl` 指向 README「When telegram-all does not start」）
+- wrapper 不會因為別的 session 而拒絕啟動；只在缺 API 憑證、取不到 binary，或找到的 binary 早於 0.6.0（`--version` 沒有回答或版本較舊）時於啟動前結束，並以回應 `initialize` 的 JSON-RPC 錯誤說明原因（`data.docsUrl` 指向 README「When telegram-all does not start」）
 
 **介面與資料格式**
 

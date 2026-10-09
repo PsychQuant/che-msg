@@ -23,15 +23,18 @@ public enum CLIAction: Equatable {
 /// `.runServer`. Keeping the decision pure here is the testable seam.
 public enum CLIBootstrap {
 
-    /// Single source of truth for the binary's version string. Mirrored in:
-    /// - `Server.swift` `Server(version: ...)` — MCP `serverInfo` field
-    /// - `Package.swift` (no — that's `swift-tools-version`, different)
-    /// - `bin/che-telegram-all-mcp-wrapper.sh` `DESIRED_VERSION` (separate repo)
-    ///
-    /// Bumping requires updating all three places. Future cleanup: thread this
-    /// constant through to `Server.swift` so only one literal exists. Out of
-    /// scope for #29.
+    /// Single source of truth for the binary's version string. `Server.swift`
+    /// reads it for the MCP `serverInfo` field. Outside this package, bumping
+    /// it also means bumping `DESIRED_VERSION` in
+    /// `plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh`.
     public static let version = "0.6.0"
+
+    /// The line `--version` prints. The plugin wrapper parses it with
+    /// `^che-telegram-all-mcp X.Y.Z$` and refuses to start a binary whose line
+    /// does not match (#58): a binary that answers in another format is taken
+    /// for one older than 0.6.0, for every user at once. Change the format only
+    /// together with the wrapper, and keep the old format accepted there.
+    public static let versionLine = "che-telegram-all-mcp \(version)"
 
     /// Help text printed by `--help` / `-h`. Plain text, no markdown — this
     /// goes to a terminal.

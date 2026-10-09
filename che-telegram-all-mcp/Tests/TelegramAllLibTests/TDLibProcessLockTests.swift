@@ -109,6 +109,17 @@ final class TDLibProcessLockTests: XCTestCase {
         XCTAssertEqual(makeLock().acquire(), .acquired)
     }
 
+    /// A live legacy owner whose arguments cannot be read is taken for the
+    /// wrapper, so that two processes never open TDLib. launchd (PID 1) plays
+    /// it: a normal user cannot read its arguments.
+    func testLegacyOwnerWhoseArgumentsCannotBeReadHoldsTDLib() throws {
+        try XCTSkipIf(getuid() == 0, "root can read launchd's arguments")
+        XCTAssertNil(TDLibProcessLock.arguments(of: 1), "precondition: PID 1's arguments are unreadable")
+        try writeLegacyOwner(1)
+        XCTAssertEqual(makeLock().acquire(), .heldBy(pid: 1))
+        XCTAssertTrue(flockIsFree())
+    }
+
     /// Scenario "Legacy wrapper lock with a dead owner is ignored".
     func testLegacyOwnerThatExitedIsIgnored() throws {
         try writeLegacyOwner(try exitedProcess())

@@ -27,7 +27,9 @@
 #      same error; nothing is started as a server.
 #   6. A binary that does not answer --version (as binaries before 0.6.0 do)
 #      is refused the same way.
-#   7. No other test reached the network: only cases 4 and 5 called the fake curl.
+#   7. An old binary outside ~/bin (one the wrapper never upgrades) is refused,
+#      and the message says why no download was attempted.
+#   8. No other test reached the network: only cases 4 and 5 called the fake curl.
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-mcp-error.sh
@@ -130,6 +132,16 @@ RC=$?
 if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
 check_error "$H" 11
 if [ -s "$H/curl.calls" ]; then pass "the upgrade was attempted (fake curl)"; else fail "no upgrade attempt"; fi
+# check_message <home> <expected substring>: the reason, as /mcp shows it.
+check_message() {
+    local msg; msg=$(head -1 "$1/out" | jq -r '.error.message' 2>/dev/null)
+    case "$msg" in
+        *"$2"*) pass "the message says: $2" ;;
+        *)      fail "the message lacks '$2': $msg" ;;
+    esac
+}
+check_message "$H" "The binary at ~/bin/CheTelegramAllMCP reports version 0.5.0"
+check_message "$H" "The download of v0.6.0 did not succeed"
 
 # ----------------------------------------------------------------------
 test_case "A binary that does not report its version is not run"
@@ -147,6 +159,23 @@ check_error "$H" 12
 if [ ! -e "$H/stdin.txt" ]; then pass "the binary never received the initialize request"; else fail "the binary received the client's stdin"; fi
 probe=$(head -1 "$H/probe.pids" 2>/dev/null)
 if [ -z "$probe" ] || ! alive "$probe"; then pass "the version probe is not left running"; else fail "the version probe $probe is still running"; fi
+check_message "$H" "does not report a version"
+check_message "$H" "no download was attempted"
+
+# ----------------------------------------------------------------------
+test_case "An old binary outside ~/bin is not run and is not upgraded"
+H="$SCRATCH/elsewhere"; make_home "$H" yes 0.5.0
+mkdir -p "$H/.local/bin"
+mv "$H/bin/CheTelegramAllMCP" "$H/.local/bin/CheTelegramAllMCP"
+rm -f "$H/bin/.CheTelegramAllMCP.version"
+printf '%s\n' '{"jsonrpc":"2.0","id":13,"method":"initialize","params":{}}' > "$H/in"
+HOME="$H" PATH="$H/fakebin:$PATH" bash "$WRAPPER" < "$H/in" > "$H/out" 2> "$H/err"
+RC=$?
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
+mv "$H/started.pids" "$H/probe.pids" 2>/dev/null
+check_error "$H" 13
+check_message "$H" "The binary at ~/.local/bin/CheTelegramAllMCP reports version 0.5.0"
+check_message "$H" "never upgraded automatically"
 
 # ----------------------------------------------------------------------
 test_case "No other test reached the network"

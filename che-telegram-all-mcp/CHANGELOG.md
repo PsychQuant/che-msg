@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- The line `--version` prints is defined once, as `CLIBootstrap.versionLine`, and a test pins it exactly: the plugin wrapper (che-telegram-mcp 1.5.0) parses it and refuses to start a binary whose line does not match ([#58](https://github.com/PsychQuant/che-msg/issues/58)). The MCP `serverInfo` version now reads `CLIBootstrap.version` instead of repeating the literal. Output is unchanged from 0.6.0.
+
 ## [0.6.0] - 2026-10-09
 
 Two parts: several Claude Code sessions can now run telegram-all together ([#58](https://github.com/PsychQuant/che-msg/issues/58)), and the parser-consistency cluster, merged after 0.5.5 but not released until now.

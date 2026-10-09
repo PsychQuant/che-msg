@@ -66,6 +66,8 @@ final class LocalReaderDatabaseTests: XCTestCase {
             XCTAssertEqual(try database.scalarInt("SELECT count(*) FROM common WHERE k = 'test-writer'"), 1,
                            "the reader must see the writer's committed data")
         }
+        // The scenario's operation, through the tool the server calls.
+        _ = try LocalTDLibReader(directory: dir.path).getChatHistory(chatId: 777)
         var after = try snapshot(dir)
         before.removeValue(forKey: "db.sqlite-shm")
         after.removeValue(forKey: "db.sqlite-shm")

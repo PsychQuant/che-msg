@@ -5,7 +5,8 @@ import CheTelegramAllMCPCore
 // sub-second wall-clock without paying the ~10s cold-start cost (#29).
 switch CLIBootstrap.parse(CommandLine.arguments) {
 case .showVersion:
-    print("che-telegram-all-mcp \(CLIBootstrap.version)")
+    // The wrapper parses this line; see CLIBootstrap.versionLine.
+    print(CLIBootstrap.versionLine)
     exit(0)
 case .showHelp:
     print(CLIBootstrap.helpText)

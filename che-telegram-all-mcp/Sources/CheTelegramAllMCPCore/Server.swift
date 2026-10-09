@@ -85,7 +85,7 @@ public final class CheTelegramAllMCPServer {
 
         server = Server(
             name: "che-telegram-all-mcp",
-            version: "0.6.0",
+            version: CLIBootstrap.version,
             capabilities: .init(tools: .init())
         )
 

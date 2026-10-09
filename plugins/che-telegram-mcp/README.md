@@ -106,7 +106,7 @@ If none are found on first invocation, the wrapper **lazy-downloads** the binary
 
 The wrapper pins a **`DESIRED_VERSION`** matching the binary the plugin expects and writes a `~/bin/.${BINARY_NAME}.version` sidecar each time it installs.
 
-When the plugin is updated and the desired version changes, the wrapper detects the sidecar mismatch on the next MCP server spawn and atomically re-downloads (`.tmp` → `mv`) — falling back to the last installed binary if the network fails. Source builds under `~/Developer/...` are never auto-replaced.
+When the plugin is updated and the desired version changes, the wrapper detects the sidecar mismatch on the next MCP server spawn and atomically re-downloads (`.tmp` → `mv`) — falling back to the last installed binary if the network fails. For telegram-all that fallback holds only for a binary of 0.6.0 or later: the wrapper does not run an older one (see [When telegram-all does not start](#when-telegram-all-does-not-start)). Source builds under `~/Developer/...` are never auto-replaced.
 
 A **SessionStart hook** (`hooks/check-mcp.sh`) verifies on every session that:
 
@@ -120,11 +120,15 @@ It prints `⚠️` warnings with copy-pasteable fix commands when something is m
 
 ```bash
 mkdir -p ~/bin
-curl -L https://github.com/PsychQuant/che-msg/releases/latest/download/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
-curl -L https://github.com/PsychQuant/che-msg/releases/latest/download/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.6.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.6.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
 chmod +x ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
 xattr -dr com.apple.quarantine ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
+echo 0.6.0 > ~/bin/.CheTelegramAllMCP.version
+echo 0.6.0 > ~/bin/.CheTelegramBotMCP.version
 ```
+
+The last two lines record the installed version. Without them the wrapper still sees the old version and downloads the binary again on the next start.
 
 > **Universal binary**: prebuilt binaries are Mach-O universal (arm64 + x86_64), so they run on both Apple Silicon and Intel Macs. Building from source: `git clone https://github.com/PsychQuant/che-msg.git && cd che-msg/che-telegram-all-mcp && swift build -c release`.
 
@@ -242,7 +246,7 @@ The wrapper stops before starting the server in three cases only, and `/mcp` the
 
 - **API credentials missing**: store `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in the Keychain as in step 2 of [Track A](#track-a--personal-account-only-most-common), then reconnect with `/mcp`.
 - **Binary not available**: the download failed or found no release asset. Install it by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
-- **Binary too old**: the binary found is older than 0.6.0 — typically the previous version, kept because the download of the new one failed. Binaries before 0.6.0 open TDLib without coordinating with other sessions, so the wrapper does not run them. Install the current one by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
+- **Binary too old**: the binary found is older than 0.6.0 — typically the previous version, kept because the download of the new one failed, or an old copy outside `~/bin` (such as `~/.local/bin`), which the wrapper never upgrades. The message names the binary and why it was not upgraded. Binaries before 0.6.0 open TDLib without coordinating with other sessions, so the wrapper does not run them. Install the current one by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
 
 Another session using `telegram-all` is never a reason: the wrapper takes no lock and stops only the server it started itself.
 
@@ -266,7 +270,7 @@ This plugin requires:
 
 ## Version
 
-Plugin version: 1.4.2 (currently pins `che-telegram-all-mcp` v0.5.0 + `che-telegram-bot-mcp` v0.5.0 binaries; wrapper auto-upgrades on version mismatch)
+Plugin version: 1.5.0 (currently pins `che-telegram-all-mcp` v0.6.0 + `che-telegram-bot-mcp` v0.6.0 binaries; wrapper auto-upgrades on version mismatch)
 
 ### Changelog
 

@@ -21,8 +21,9 @@ DOWNLOAD_TIMEOUT=600  # universal binary ~220MB; allow slow links
 # transport sees no response and shows a generic "-32000 Server error".
 # Answering the pending initialize request with a JSON-RPC 2.0 error lets it
 # show the reason instead. The wrapper stops early only for missing Keychain
-# credentials or a binary it cannot obtain; another session running
-# telegram-all never stops it (the server decides who opens TDLib).
+# credentials, a binary it cannot obtain, or a binary older than 0.6.0;
+# another session running telegram-all never stops it (the server decides
+# who opens TDLib).
 #
 # PR-1b (empirical-driven, 2026-05-22): Claude Code drops a response whose id
 # is null as unmatched transport noise, so the error carries the id of the
@@ -71,7 +72,8 @@ read_initialize_id() {
 
 # Emit a JSON-RPC 2.0 error answering the pending initialize request, then
 # exit 1. $1 is the message and MUST NOT contain double quotes or backslashes
-# (every caller passes a fixed literal), so the JSON needs no escaping.
+# (callers build it only from fixed literals, version numbers and paths with
+# $HOME shown as ~), so the JSON needs no escaping.
 fail_startup() {
     local message="$1"
     local request_id
@@ -89,6 +91,7 @@ done
 
 # Decide whether to download.
 NEED_DOWNLOAD=false
+KEPT_AFTER_FAILED_DOWNLOAD=false
 REASON=""
 INSTALLED_VERSION=""
 [[ -f "$VERSION_FILE" ]] && INSTALLED_VERSION=$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null || true)
@@ -122,6 +125,7 @@ if $NEED_DOWNLOAD; then
         if [[ -x "$INSTALLED_BINARY" ]]; then
             echo "$BINARY_NAME: WARNING — no download URL found, keeping existing binary" >&2
             BINARY="$INSTALLED_BINARY"
+            KEPT_AFTER_FAILED_DOWNLOAD=true
         else
             echo "$BINARY_NAME: ERROR — no release asset found at $GITHUB_REPO." >&2
             echo "  Install manually: https://github.com/$GITHUB_REPO/releases" >&2
@@ -143,6 +147,7 @@ if $NEED_DOWNLOAD; then
             if [[ -x "$INSTALLED_BINARY" ]]; then
                 echo "$BINARY_NAME: WARNING — download failed, keeping existing binary" >&2
                 BINARY="$INSTALLED_BINARY"
+                KEPT_AFTER_FAILED_DOWNLOAD=true
             else
                 echo "$BINARY_NAME: ERROR — download failed" >&2
                 fail_startup "Downloading CheTelegramAllMCP failed. Check the network, or install it by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
@@ -176,7 +181,27 @@ rm -f "$VERSION_OUT"
 if [[ -z "$BINARY_VERSION" ]] || \
    [[ "$(printf '%s\n%s\n' "$MIN_BINARY_VERSION" "$BINARY_VERSION" | sort -V | head -1)" != "$MIN_BINARY_VERSION" ]]; then
     echo "$BINARY_NAME: $BINARY reports version ${BINARY_VERSION:-unknown}; this wrapper needs $MIN_BINARY_VERSION or later" >&2
-    fail_startup "CheTelegramAllMCP $MIN_BINARY_VERSION or later is required, and the binary found is older (it would open TDLib without coordinating with other sessions). The download of the new version did not succeed; install it by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
+    # Every candidate path is $HOME/... or /usr/local/bin/..., so showing
+    # $HOME as ~ leaves only fixed literals in the message.
+    case "$BINARY" in
+        "$HOME"/*) SHOWN_BINARY="~/${BINARY#"$HOME"/}" ;;
+        *)         SHOWN_BINARY="$BINARY" ;;
+    esac
+    if [[ -n "$BINARY_VERSION" ]]; then
+        FOUND="reports version $BINARY_VERSION"
+    else
+        FOUND="does not report a version (binaries before 0.6.0 do not)"
+    fi
+    if $KEPT_AFTER_FAILED_DOWNLOAD; then
+        WHY="The download of v$DESIRED_VERSION did not succeed, so the previous binary was kept."
+    elif $NEED_DOWNLOAD; then
+        WHY="The release that was downloaded is older than $MIN_BINARY_VERSION."
+    elif [[ "$BINARY" != "$INSTALLED_BINARY" ]]; then
+        WHY="It is not the copy the plugin installs in ~/bin, so it is never upgraded automatically."
+    else
+        WHY="Its version record already says v$DESIRED_VERSION, so no download was attempted."
+    fi
+    fail_startup "CheTelegramAllMCP $MIN_BINARY_VERSION or later is required. The binary at $SHOWN_BINARY $FOUND, and it would open TDLib without coordinating with other sessions. $WHY Install the current version by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
 fi
 
 # Read credentials from macOS Keychain

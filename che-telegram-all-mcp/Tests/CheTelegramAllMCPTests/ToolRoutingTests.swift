@@ -180,14 +180,27 @@ final class ToolRoutingTests: XCTestCase {
 
     // MARK: - Source note
 
-    /// Example "freshness lines".
+    private let utcPlus8 = TimeZone(secondsFromGMT: 8 * 3600)!
+
+    /// Example "freshness lines" (the server's time zone is UTC+08:00).
     func testSourceNoteStatesTheHolderSkippedRecordsAndFreshness() {
-        let note = localCacheNote(holderPid: 4242, result: reader.result, timeZone: TimeZone(identifier: "UTC")!)
+        let note = localCacheNote(holderPid: 4242, result: reader.result, timeZone: utcPlus8)
         XCTAssertTrue(note.contains("source: local-cache"), note)
         XCTAssertTrue(note.contains("4242"), note)
         XCTAssertTrue(note.contains("undecodable records: 1"), note)
         XCTAssertTrue(note.contains("chat 777: newest cached message 2026-04-30"), note)
         XCTAssertTrue(note.contains("chat 888: no cached messages"), note)
         XCTAssertTrue(note.contains("newer messages can exist on Telegram"), note)
+    }
+
+    /// The date is the server's local date: Unix 1777480000 is 2026-04-29
+    /// 16:26 UTC, already 2026-04-30 in UTC+08:00.
+    func testFreshnessDateIsTheServersLocalDate() {
+        let result = LocalTDLibReader.Result(json: "[]", undecodableCount: 0,
+                                             freshness: [.init(chatId: 999, newest: .date(1_777_480_000))])
+        let local = localCacheNote(holderPid: nil, result: result, timeZone: utcPlus8)
+        let utc = localCacheNote(holderPid: nil, result: result, timeZone: TimeZone(identifier: "UTC")!)
+        XCTAssertTrue(local.contains("chat 999: newest cached message 2026-04-30"), local)
+        XCTAssertTrue(utc.contains("chat 999: newest cached message 2026-04-29"), utc)
     }
 }

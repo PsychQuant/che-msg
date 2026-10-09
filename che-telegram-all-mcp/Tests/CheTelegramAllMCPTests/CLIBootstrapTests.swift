@@ -200,14 +200,22 @@ final class CLIBootstrapTests: XCTestCase {
             throw XCTSkip("CheTelegramAllMCP binary not built — skip subprocess test")
         }
         XCTAssertEqual(result.exitCode, 0, "exit 0 expected")
-        XCTAssertTrue(
-            result.stdout.contains(CLIBootstrap.version),
-            "stdout must contain version constant; got: \(result.stdout)"
-        )
+        // Exact, not `contains`: the plugin wrapper parses this line (#58).
+        XCTAssertEqual(result.stdout, CLIBootstrap.versionLine + "\n")
         XCTAssertFalse(
             result.stderr.contains("[startup]"),
             "stderr must NOT contain [startup] lines (TDLib init must NOT have been entered); got: \(result.stderr)"
         )
+    }
+
+    /// The plugin wrapper accepts only `che-telegram-all-mcp X.Y.Z` (its sed
+    /// pattern) and refuses any binary whose `--version` line does not match
+    /// (#58). This pins the line to that pattern.
+    func testVersionLineMatchesWhatTheWrapperParses() throws {
+        let pattern = try NSRegularExpression(pattern: "^che-telegram-all-mcp [0-9]+\\.[0-9]+\\.[0-9]+$")
+        let line = CLIBootstrap.versionLine
+        XCTAssertEqual(pattern.numberOfMatches(in: line, range: NSRange(line.startIndex..., in: line)), 1, line)
+        XCTAssertEqual(line, "che-telegram-all-mcp \(CLIBootstrap.version)")
     }
 
     func testBinaryShortVersionFlagExits0() throws {
