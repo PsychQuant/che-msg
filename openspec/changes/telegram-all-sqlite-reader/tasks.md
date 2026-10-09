@@ -29,7 +29,7 @@
 
 - [x] 5.1 修改 wrapper，滿足「Wrapper starts the server regardless of other sessions」（design：wrapper 拿不到鎖時不再拒絕）：移除鎖與 lock-refused 錯誤路徑、移除「舊 PID 還活著就殺掉」的分支與共用 PID 檔，只清理自己啟動的 binary；同時改寫 plugins/che-telegram-mcp/README.md 的 Multi-session limitation 段說明新行為與 `CHE_TELEGRAM_ALL_IDLE_TIMEOUT`。驗證方式：更新 `tests/che-telegram-mcp/test-wrapper-mcp-error.sh` 與 `test-wrapper-pid.sh`——第二個 wrapper 啟動時第一個 binary 仍存活、wrapper 結束只終止自己的 binary；`test-plugin-layout.sh` 與其 mutation 測試仍全過（README 的 docsUrl anchor 若改名，wrapper 的 `docsUrl` 一併更新）[after: 4.2]
 - [x] 5.2 手動驗證兩個 session 的情境（design 的驗收方式）：session A 呼叫 `get_chats` 後持有 TDLib；session B 呼叫 `get_chat_history` 得到 `source: local-cache`、呼叫 `send_message` 得到 `tdlib_in_use`；A 閒置超過時限後 B 改由 TDLib 回應；再對同一個對話比對讀取器與 TDLib 模式的 `get_chat_history` 輸出，快取涵蓋範圍內的訊息逐筆一致（`id`、`date`、`sender`、`type`、`text`）。驗證方式：把每一步的結果與比對的一致筆數（不含訊息內容）記到 #58 [after: 4.3, 5.1]
-- [ ] 5.3 經使用者同意後發布：新版 binary release、wrapper 的 `DESIRED_VERSION`、plugin 版本與 CHANGELOG、`.claude-plugin/marketplace.json` 同步。驗證方式：`claude plugin validate .` 與兩個 plugin 的 validate 通過；`tests/che-telegram-mcp/*.sh` 全過；新版 wrapper 能從 release 下載到新 binary [after: 5.2]
+- [x] 5.3 經使用者同意後發布：新版 binary release、wrapper 的 `DESIRED_VERSION`、plugin 版本與 CHANGELOG、`.claude-plugin/marketplace.json` 同步。驗證方式：`claude plugin validate .` 與兩個 plugin 的 validate 通過；`tests/che-telegram-mcp/*.sh` 全過；新版 wrapper 能從 release 下載到新 binary [after: 5.2]
 
 ## 6. 實作中補記的需求（2026-10-09 ingest）
 
