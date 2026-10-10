@@ -115,10 +115,10 @@ public func getChatHistory(
 
 ```jsonc
 {
-  "path": "/tmp/pei-chun-chat.md",
+  "path": "/tmp/example-chat.md",
   "message_count": 327,
   "date_range": { "since": "2026-03-01", "until": "2026-04-15" },
-  "senders": [{ "user_id": 12345, "display_name": "培鈞" }, ...],
+  "senders": [{ "user_id": 12345, "display_name": "小明" }, ...],
   "truncated": false
 }
 ```

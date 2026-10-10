@@ -34,13 +34,13 @@ final class MarkdownFormatTests: XCTestCase {
             messages: [],
             senderNames: [:],
             selfLabel: "我",
-            chatTitle: "培鈞 徐",
-            chatId: 489601378,
+            chatTitle: "小明 王",
+            chatId: 123456789,
             sinceDate: nil,
             untilDate: nil,
             exportedAt: anchor
         )
-        XCTAssertTrue(md.hasPrefix("# 對話：培鈞 徐 (chat_id=489601378)\n"),
+        XCTAssertTrue(md.hasPrefix("# 對話：小明 王 (chat_id=123456789)\n"),
                       "Level 1 heading MUST include chat title and numeric chat_id")
     }
 
@@ -109,7 +109,7 @@ final class MarkdownFormatTests: XCTestCase {
         let calendar = Calendar(identifier: .gregorian)
         let at = calendar.date(from: DateComponents(year: 2026, month: 4, day: 14, hour: 14, minute: 32))!
         let md = formatMarkdown(
-            messages: [msg(id: 1, date: at, senderId: 99, isOutgoing: true, text: "到了嗎")],
+            messages: [msg(id: 1, date: at, senderId: 99, isOutgoing: true, text: "會議幾點開始？")],
             senderNames: [:],
             selfLabel: "我",
             chatTitle: "T",
@@ -118,7 +118,7 @@ final class MarkdownFormatTests: XCTestCase {
             untilDate: nil,
             exportedAt: anchor
         )
-        XCTAssertTrue(md.contains("**14:32 我**：\n到了嗎"),
+        XCTAssertTrue(md.contains("**14:32 我**：\n會議幾點開始？"),
                       "Outgoing message MUST format as **HH:mm <self_label>**：\\n<text>")
     }
 
@@ -126,8 +126,8 @@ final class MarkdownFormatTests: XCTestCase {
         let calendar = Calendar(identifier: .gregorian)
         let at = calendar.date(from: DateComponents(year: 2026, month: 4, day: 14, hour: 14, minute: 33))!
         let md = formatMarkdown(
-            messages: [msg(id: 2, date: at, senderId: 42, isOutgoing: false, text: "我隨時出發")],
-            senderNames: [42: "培鈞"],
+            messages: [msg(id: 2, date: at, senderId: 42, isOutgoing: false, text: "下午兩點")],
+            senderNames: [42: "小明"],
             selfLabel: "我",
             chatTitle: "T",
             chatId: 1,
@@ -135,7 +135,7 @@ final class MarkdownFormatTests: XCTestCase {
             untilDate: nil,
             exportedAt: anchor
         )
-        XCTAssertTrue(md.contains("**14:33 培鈞**：\n我隨時出發"),
+        XCTAssertTrue(md.contains("**14:33 小明**：\n下午兩點"),
                       "Incoming message MUST use resolved sender name")
     }
 
@@ -178,10 +178,10 @@ final class MarkdownFormatTests: XCTestCase {
         let t2 = calendar.date(from: DateComponents(year: 2026, month: 4, day: 14, hour: 14, minute: 35))!
         let md = formatMarkdown(
             messages: [
-                msg(id: 2, date: t2, senderId: 42, isOutgoing: false, text: "我隨時出發"),
+                msg(id: 2, date: t2, senderId: 42, isOutgoing: false, text: "下午兩點"),
                 msg(id: 1, date: t1, senderId: 42, isOutgoing: false, type: "photo"),
             ],
-            senderNames: [42: "培鈞"],
+            senderNames: [42: "小明"],
             selfLabel: "我",
             chatTitle: "T",
             chatId: 1,
@@ -190,9 +190,9 @@ final class MarkdownFormatTests: XCTestCase {
             exportedAt: anchor
         )
         // Two distinct 14:3X timestamps MUST both appear.
-        XCTAssertTrue(md.contains("**14:33 培鈞**"),
+        XCTAssertTrue(md.contains("**14:33 小明**"),
                       "First message timestamp MUST be preserved")
-        XCTAssertTrue(md.contains("**14:35 培鈞**"),
+        XCTAssertTrue(md.contains("**14:35 小明**"),
                       "Second message timestamp MUST be preserved (no merging)")
     }
 }
