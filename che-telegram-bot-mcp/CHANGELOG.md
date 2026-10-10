@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- The mcpb manifest and the version the MCP server reports said `0.1.0`, although the bot ships in the repo's shared releases (latest `v0.6.0`). Both now say `0.6.0`.
+
 ## [0.1.0] - 2026-02-07
 
 ### Added

@@ -18,7 +18,7 @@ public final class CheTelegramBotMCPServer {
 
         server = Server(
             name: "che-telegram-bot-mcp",
-            version: "0.1.0",
+            version: "0.6.0",
             capabilities: .init(tools: .init())
         )
 
