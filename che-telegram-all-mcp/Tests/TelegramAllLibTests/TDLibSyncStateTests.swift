@@ -107,7 +107,7 @@ final class TDLibSyncStateTests: XCTestCase {
         clock.now = 20
         apply(.updateAuthorizationState(UpdateAuthorizationState(authorizationState: .authorizationStateClosed)))
         clock.now = 500
-        XCTAssertEqual(state.snapshot, .init(connectionState: nil, isSynced: false, unsyncedSeconds: 20))
+        XCTAssertEqual(state.snapshot, .init(connectionState: nil, isSynced: false, unsyncedSeconds: 20, updatingSeconds: 20))
     }
 
     func testOtherUpdatesLeaveTheStateAlone() {
@@ -126,5 +126,50 @@ final class TDLibSyncStateTests: XCTestCase {
         state.tdlibClosed(); state.reset()
         clock.now = 400
         XCTAssertEqual(state.snapshot.unsyncedSeconds, 0)
+    }
+
+    // MARK: - Verify round 1 (task 8.1): only updating time makes a stall
+
+    // Scenario: Offline time does not count toward the updating duration.
+    func testOfflineTimeDoesNotCountTowardUpdating() {
+        state.tdlibOpened(); state.record("connectionStateWaitingForNetwork")
+        clock.now = 200; state.record("connectionStateUpdating")
+        clock.now = 230
+        XCTAssertEqual(state.snapshot, .init(connectionState: "connectionStateUpdating", isSynced: false,
+                                             unsyncedSeconds: 230, updatingSeconds: 30))
+        XCTAssertFalse(state.isStalled())
+        clock.now = 350
+        XCTAssertTrue(state.isStalled(), "150 s of updating")
+    }
+
+    func testOfflineAloneNeverStalls() {
+        state.tdlibOpened(); state.record("connectionStateWaitingForNetwork")
+        clock.now = 10_000
+        XCTAssertEqual(state.snapshot.updatingSeconds, 0)
+        XCTAssertFalse(state.isStalled())
+    }
+
+    func testUpdatingTimeAccumulatesAcrossAnIdleClose() {
+        state.tdlibOpened(); state.record("connectionStateUpdating")
+        clock.now = 80; state.tdlibClosed()
+        clock.now = 1_000; state.tdlibOpened(); state.record("connectionStateUpdating")
+        clock.now = 1_050
+        XCTAssertEqual(state.snapshot.updatingSeconds, 130)
+        XCTAssertTrue(state.isStalled())
+    }
+
+    func testResetWhileOpenAndReadyDoesNotCount() {
+        state.tdlibOpened(); state.record("connectionStateReady")
+        clock.now = 10; state.reset()
+        clock.now = 500
+        XCTAssertEqual(state.snapshot, .init(connectionState: "connectionStateReady", isSynced: true,
+                                             unsyncedSeconds: 0, updatingSeconds: 0))
+    }
+
+    func testClockGoingBackwardNeverGivesNegativeSeconds() {
+        clock.now = 100; state.tdlibOpened(); state.record("connectionStateUpdating")
+        clock.now = 50
+        XCTAssertEqual(state.snapshot.unsyncedSeconds, 0)
+        XCTAssertEqual(state.snapshot.updatingSeconds, 0)
     }
 }

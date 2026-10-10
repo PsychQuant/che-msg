@@ -148,17 +148,17 @@ The `telegram-all` CLI does not take this lock yet ([#61](https://github.com/Psy
 
 ## When telegram-all stops syncing
 
-TDLib can stay logged in while it no longer receives anything from Telegram ([#63](https://github.com/PsychQuant/che-msg/issues/63)). The usual cause: Telegram has invalidated the session because the same TDLib session was used in two places at once (two processes, or a copy of the database directory on another machine). TDLib then keeps `authorizationStateReady` and retries in the background forever; without a check, every read returns old data.
+TDLib can stay logged in while it no longer receives anything from Telegram ([#63](https://github.com/PsychQuant/che-msg/issues/63)). The usual cause: Telegram has invalidated the session because the same TDLib session was used in two places at once (two processes, or a copy of the database directory on another machine). TDLib then keeps `authorizationStateReady` and stays in `connectionStateUpdating`, retrying in the background forever; without a check, every read returns old data.
 
 How to tell:
 
-- An answer from TDLib carries a second text item starting `sync: not-synced`, naming TDLib's connection state and how many seconds TDLib has been open without syncing. The call that opens TDLib first waits up to 10 seconds for it to sync.
-- `auth_status` returns `connection_state`, `unsynced_seconds` and `sync_stalled`. `sync_stalled` is `true` once TDLib has been logged in but not synced for 120 seconds (counted across idle closes); `next_step` then points to `logout`.
+- An answer from a read tool carries a second text item starting `sync: not-synced`, naming TDLib's connection state and how many seconds TDLib has been open without syncing. Without a network (`connectionStateWaitingForNetwork`, `connectionStateConnectingToProxy`) it says to check the network. The call that opens TDLib first waits up to 10 seconds for it to sync.
+- `auth_status` returns `connection_state`, `unsynced_seconds` and `sync_stalled`. `sync_stalled` is `true` once TDLib has been logged in and **updating** for 120 seconds without finishing (counted across idle closes; time offline never counts). `next_step` then points to `logout`, with a hint to ask the user first.
 
-To recover (this sends a login code to your account, so it is always your action):
+To recover (a new login sends a code to your account, so it is always your action):
 
-1. Check Telegram → Settings → Devices on your phone and end any session you do not recognise, so the new login is not invalidated the same way.
-2. Call `logout`. TDLib gets 30 seconds to finish; if it does not, the server closes TDLib and renames the database directory to `tdlib.invalidated-<UTC timestamp>` next to it. Nothing is deleted: that directory is a backup of the local messages and can be removed by hand once the new session works.
+1. Check Telegram → Settings → Devices on your phone and end any session you do not recognise, including the stalled one, so the new login is not invalidated the same way.
+2. Call `logout`. It does **not** contact Telegram: it closes TDLib (up to 30 seconds, works offline) and renames the database directory to `tdlib.invalidated-<UTC timestamp>` next to it. Nothing is deleted — that directory is a backup of the local messages. It still holds a working auth key: do not move it back or copy it elsewhere while a new session is in use, or the duplicate happens again. Remove it by hand once the new session works.
 3. Log in again with `auth_run` (or `telegram-all auth-phone` / `auth-code`).
 
 ## Tools (27)

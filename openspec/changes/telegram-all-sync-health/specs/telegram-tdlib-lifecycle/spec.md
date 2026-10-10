@@ -2,12 +2,17 @@
 
 ### Requirement: Server tracks whether TDLib is synced with Telegram
 
-The server SHALL record every `updateConnectionState` that TDLib reports while it is open, and SHALL treat TDLib as **synced** only while the latest reported state is `connectionStateReady`. The server SHALL keep an **unsynced duration**: the total number of seconds TDLib has been open in this server process since TDLib last reported `connectionStateReady`. Time during which TDLib is closed SHALL NOT be counted. The unsynced duration SHALL reset to 0 whenever TDLib reports `connectionStateReady`. The server SHALL NOT read or interpret the message of any error with code 406 to decide whether TDLib is synced.
+The server SHALL record every `updateConnectionState` that TDLib reports while it is open, and SHALL treat TDLib as **synced** only while the latest reported state is `connectionStateReady`. The server SHALL keep an **unsynced duration**: the total number of seconds TDLib has been open in this server process since TDLib last reported `connectionStateReady`. Time during which TDLib is closed SHALL NOT be counted. The unsynced duration SHALL reset to 0 whenever TDLib reports `connectionStateReady`. The server SHALL also keep an **updating duration**: the total number of seconds TDLib has reported `connectionStateUpdating` since it last reported `connectionStateReady`, counted the same way (only while open, kept across idle closes, reset to 0 on `connectionStateReady`); time in any other state (for example `connectionStateWaitingForNetwork`) SHALL NOT count toward it. Durations SHALL be measured with a monotonic clock, so a change of the system time cannot make them negative or jump. The server SHALL NOT read or interpret the message of any error with code 406 to decide whether TDLib is synced.
 
 #### Scenario: Ready resets the unsynced duration
 
 - **WHEN** TDLib reports `connectionStateUpdating`, stays in it for 30 seconds, then reports `connectionStateReady`
 - **THEN** TDLib is synced and the unsynced duration is 0
+
+#### Scenario: Offline time does not count toward the updating duration
+
+- **WHEN** TDLib reports `connectionStateWaitingForNetwork` for 200 seconds, then `connectionStateUpdating` for 30 seconds
+- **THEN** the unsynced duration is 230 seconds and the updating duration is 30 seconds
 
 #### Scenario: Unsynced time accumulates across an idle close
 
@@ -41,7 +46,7 @@ When the server opens TDLib to answer a tool call and authorization has settled 
 
 ### Requirement: Answers from TDLib state when TDLib is not synced
 
-When a tool call is answered by the TDLib client, authorization is `ready`, the call succeeds, and TDLib is not synced at the time of answering, the result SHALL contain a second text item after the tool's own content. The item SHALL begin with the line `sync: not-synced` and SHALL state the latest connection state, the unsynced duration in whole seconds, and that messages and changes newer than what TDLib last received can be absent from the result. When the unsynced duration has reached 120 seconds, the item SHALL also state that a session invalidated by Telegram is the likely cause and that logging out and logging in again (`logout`, then `auth_run`) is the remedy. When TDLib is synced, or the call fails, the result SHALL NOT contain this item. Results from the local cache (TDLib held by another process) keep their own source note and SHALL NOT carry this item.
+When one of the read tools — `get_chats`, `search_chats`, `get_chat_history`, `search_messages`, `dump_chat_to_markdown`, `get_me`, `get_user`, `get_contacts`, `get_chat`, `get_chat_members` — is answered by the TDLib client, authorization is `ready`, the call succeeds, and TDLib is not synced at the time of answering, the result SHALL contain a second text item after the tool's own content. The item SHALL begin with the line `sync: not-synced` and SHALL state the latest connection state, the unsynced duration in whole seconds, and that messages and changes newer than what TDLib last received can be absent from the result. When the latest connection state is `connectionStateWaitingForNetwork` or `connectionStateConnectingToProxy`, the item SHALL also state that TDLib reports no connection to Telegram and to check the network or proxy. When the session is stalled (the latest connection state is `connectionStateUpdating` and the updating duration has reached 120 seconds), the item SHALL also state that a session invalidated by Telegram is the likely cause and that the remedy, after asking the user, is `logout` followed by `auth_run`. Other tools (authentication tools, `logout`, and tools that change data) SHALL NOT carry this item. When TDLib is synced, or the call fails, the result SHALL NOT contain this item. Results from the local cache (TDLib held by another process) keep their own source note and SHALL NOT carry this item.
 
 #### Scenario: Read while TDLib is updating
 
@@ -53,30 +58,50 @@ When a tool call is answered by the TDLib client, authorization is `ready`, the 
 - **WHEN** `get_chats` is answered by the TDLib client while TDLib is in `connectionStateReady`
 - **THEN** the result contains only the tool's own content
 
-#### Scenario: Long stall names the remedy
+#### Scenario: Long stall names the remedy and asks for the user
 
-- **WHEN** `get_chat_history` is answered by the TDLib client with an unsynced duration of 125 seconds
-- **THEN** the second text item states that a session invalidated by Telegram is the likely cause and names `logout` followed by `auth_run`
+- **WHEN** `get_chat_history` is answered by the TDLib client while TDLib is in `connectionStateUpdating` with an updating duration of 125 seconds
+- **THEN** the second text item states that a session invalidated by Telegram is the likely cause, says to ask the user first, and names `logout` followed by `auth_run`
+
+#### Scenario: Offline is not a stall
+
+- **WHEN** `get_chats` is answered while TDLib is in `connectionStateWaitingForNetwork` with an unsynced duration of 300 seconds
+- **THEN** the second text item says to check the network and does not name `logout`
+
+#### Scenario: Non-read tools carry no note
+
+- **WHEN** `auth_status` or `send_message` succeeds through the TDLib client while TDLib is not synced
+- **THEN** the result contains only the tool's own content
 
 ##### Example: sync note lines
 
-| Connection state | Unsynced duration | Note contains |
+| Connection state | Unsynced / updating duration | Note contains |
 | --- | --- | --- |
-| connectionStateReady | 0 | (no note) |
-| connectionStateUpdating | 40 | `sync: not-synced`, `connectionStateUpdating`, `40 s`, newer messages can be absent |
-| connectionStateUpdating | 125 | the above with `125 s`, plus likely cause: session invalidated by Telegram, `logout` then `auth_run` |
-| connectionStateWaitingForNetwork | 15 | `sync: not-synced`, `connectionStateWaitingForNetwork`, `15 s`, newer messages can be absent |
+| connectionStateReady | 0 / 0 | (no note) |
+| connectionStateUpdating | 40 / 40 | `sync: not-synced`, `connectionStateUpdating`, `40 s`, newer messages can be absent |
+| connectionStateUpdating | 125 / 125 | the above with `125 s`, plus likely cause: session invalidated by Telegram, ask the user, `logout` then `auth_run` |
+| connectionStateWaitingForNetwork | 300 / 0 | `sync: not-synced`, `connectionStateWaitingForNetwork`, `300 s`, newer messages can be absent, check the network; no `logout` |
 
-### Requirement: Logout resets a session that no longer syncs
+### Requirement: Logout resets the local session without contacting Telegram
 
-The `logout` tool SHALL ask TDLib to log out and SHALL report success once TDLib reports `authorizationStateClosed` or `authorizationStateWaitTdlibParameters` / `authorizationStateWaitPhoneNumber` after the request. When TDLib has not reported one of these states within 30 seconds, the server SHALL close TDLib, rename the TDLib database directory to `tdlib.invalidated-<UTC timestamp yyyyMMdd-HHmmss>` in the same parent directory, and report success with a note naming the renamed directory. The server SHALL NOT delete the directory. After a successful logout the next authentication SHALL start from a new, empty database directory.
+The `logout` tool SHALL NOT send a log-out request to Telegram. It SHALL close TDLib, waiting at most 30 seconds for TDLib to report `authorizationStateClosed`, then rename the TDLib database directory to `tdlib.invalidated-<UTC timestamp yyyyMMdd-HHmmss>` in the same parent directory, then release TDLib so that the next call opens a new client on a new, empty database directory. The server SHALL NOT delete the directory or any file in it. The response SHALL name the renamed directory and state that the old session stays in the account's device list until it is ended in a Telegram app, and that the renamed directory must not be moved back while a new session is in use. When TDLib does not close within 30 seconds, the tool SHALL fail, leave the directory unchanged, and keep TDLib held. When the directory cannot be renamed, the tool SHALL fail with the reason, leave the directory unchanged, and SHALL NOT release TDLib, so that no client reopens the old directory.
 
-#### Scenario: TDLib completes the logout
+#### Scenario: Local reset succeeds
 
-- **WHEN** `logout` is called and TDLib reports `authorizationStateClosed` within 30 seconds
-- **THEN** the tool succeeds and no directory is renamed
+- **WHEN** `logout` is called and TDLib closes within 30 seconds
+- **THEN** the database directory is renamed to `tdlib.invalidated-<timestamp>` with every file unchanged, TDLib is released, the response names that directory, and no request is sent to Telegram
 
-#### Scenario: TDLib does not complete the logout
+#### Scenario: Offline logout does not hang
 
-- **WHEN** `logout` is called on a session Telegram has invalidated and TDLib reports no closing state within 30 seconds
-- **THEN** TDLib is closed, the database directory is renamed to `tdlib.invalidated-<timestamp>`, the tool succeeds with a note naming that directory, and no file is deleted
+- **WHEN** `logout` is called while TDLib reports `connectionStateWaitingForNetwork`
+- **THEN** the tool completes within the 30-second close bound, as no network round trip is involved
+
+#### Scenario: TDLib does not close
+
+- **WHEN** `logout` is called and TDLib reports no `authorizationStateClosed` within 30 seconds
+- **THEN** the tool fails, the directory is unchanged, and TDLib remains held
+
+#### Scenario: The directory cannot be renamed
+
+- **WHEN** TDLib closes but `tdlib.invalidated-<timestamp>` already exists
+- **THEN** the tool fails naming the reason, the directory and the existing target are unchanged, and TDLib is not released

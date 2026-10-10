@@ -23,8 +23,9 @@ internal func authStatusResult(
     lastError: TDLibClient.TDError?,
     sync: TDLibSyncState.Snapshot = .init(connectionState: nil, isSynced: false, unsyncedSeconds: 0)
 ) -> CallTool.Result {
-    let stalled = state == .ready && sync.unsyncedSeconds >= TDLibSyncState.stallThreshold
-    let nextStep = stalled ? stalledNextStep(unsyncedSeconds: sync.unsyncedSeconds) : authStatusNextStep(state: state)
+    // Only time spent updating makes a session stalled; offline never does.
+    let stalled = state == .ready && sync.isStalled()
+    let nextStep = stalled ? stalledNextStep(updatingSeconds: sync.updatingSeconds) : authStatusNextStep(state: state)
     let payload: [String: Any] = [
         "state": state.rawValue,
         "next_step": nextStep ?? NSNull(),
@@ -34,7 +35,7 @@ internal func authStatusResult(
         "sync_stalled": stalled,
     ]
     let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
-        ?? Data(#"{"state":"unknown","next_step":null,"last_error":null}"#.utf8)
+        ?? Data(#"{"state":"unknown","next_step":null,"last_error":null,"connection_state":null,"unsynced_seconds":0,"sync_stalled":false}"#.utf8)
     let json = String(data: data, encoding: .utf8) ?? ""
     return CallTool.Result(
         content: [.text(text: json, annotations: nil, _meta: nil)],
@@ -42,15 +43,17 @@ internal func authStatusResult(
     )
 }
 
-/// `next_step` when TDLib is authorized but has not synced for the stall
-/// threshold (#63).
-private func stalledNextStep(unsyncedSeconds: Int) -> [String: Any] {
+/// `next_step` when TDLib is authorized but has been updating without
+/// finishing for the stall threshold (#63). `logout` resets the local session
+/// and a new login needs a code, so the hint asks for the user first.
+private func stalledNextStep(updatingSeconds: Int) -> [String: Any] {
     [
         "tool": "logout",
         "required_args": [String](),
-        "hint": "TDLib has not synced with Telegram for \(unsyncedSeconds) s although it is logged in. "
-            + "Telegram has likely invalidated this session (for example, the same session used in two places at once). "
-            + "Call logout, then log in again with auth_run.",
+        "hint": "TDLib has been updating for \(updatingSeconds) s without finishing although it is logged in. "
+            + "A session invalidated by Telegram (for example, the same session used in two places at once) is the likely cause. "
+            + "First ask the user: logout resets the local session (its data is moved aside, not deleted) and logging in "
+            + "again needs a code sent to the account. With their agreement, call logout, then log in again with auth_run.",
     ]
 }
 

@@ -29,9 +29,10 @@ Tool names: `mcp__plugin_che-telegram-mcp_telegram-all__<tool>`
 
 Auth state persists in `~/Library/Application Support/che-telegram-all-mcp/tdlib/`.
 
-**Always check `auth_status` before doing real work.** It returns `{state, next_step, last_error}`.
+**Always check `auth_status` before doing real work.** It returns `{state, next_step, last_error, connection_state, unsynced_seconds, sync_stalled}`.
 
-- If `state == "ready"`, skip auth.
+- If `state == "ready"` and `sync_stalled` is `false`, skip auth. If `connection_state` is not `connectionStateReady`, TDLib is still catching up with Telegram (or has no network): reads may miss recent messages — say so to the user.
+- If `state == "ready"` and `sync_stalled` is `true`, TDLib has been updating for 2+ minutes without finishing — most likely Telegram invalidated the session, and every read returns old data. Tell the user; do not treat the data as current.
 - Otherwise, prefer `auth_run` (v0.5.0+) which drives the state machine in one tool:
   ```
   auth_run                         → fires auto-set params (if env present)
@@ -42,7 +43,9 @@ Auth state persists in `~/Library/Application Support/che-telegram-all-mcp/tdlib
   ```
 - Legacy per-step tools (`auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password`) are still available as escape hatches.
 
-`auth_status.next_step` tells you exactly which arg the next call needs (e.g., `{tool: "auth_run", required_args: ["code"], hint: "..."}`); follow it.
+`auth_status.next_step` tells you exactly which arg the next call needs (e.g., `{tool: "auth_run", required_args: ["code"], hint: "..."}`); follow it — **except `logout`**. When `next_step.tool` is `logout` (a stalled session), never call it on your own: explain to the user that it resets the local session (the database is moved aside, not deleted), that logging in again needs a code sent to their account, and that the old session should be ended in Telegram → Settings → Devices; call `logout` only after they agree.
+
+Answers from read tools may carry a second text item starting `sync: not-synced` (TDLib not synced) or `source: local-cache` (another session holds TDLib). Both mean the data can be older than what Telegram shows; pass that on.
 
 ### Tool categories
 

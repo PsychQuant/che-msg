@@ -1,15 +1,15 @@
 import XCTest
 @testable import TelegramAllLib
 
-/// Covers "Logout resets a session that no longer syncs"
-/// (telegram-tdlib-lifecycle; PsychQuant/che-msg#63, task 6.1).
+/// Covers "Logout resets the local session without contacting Telegram"
+/// (telegram-tdlib-lifecycle; PsychQuant/che-msg#63, tasks 6.1 and 8.4).
 final class LogoutResetTests: XCTestCase {
-    private final class FakeClient: TDLibLoggingOut, @unchecked Sendable {
-        var logOutCompletes = true
+    /// A client that can only be closed: the reset has no way to send a
+    /// log-out request to Telegram.
+    private final class FakeClient: TDLibClosable, @unchecked Sendable {
         var closeSucceeds = true
-        var calls: [String] = []
-        func logOut(timeout: TimeInterval) async -> Bool { calls.append("logOut(\(Int(timeout)))"); return logOutCompletes }
-        func close(timeout: TimeInterval) async -> Bool { calls.append("close"); return closeSucceeds }
+        var closeTimeouts: [TimeInterval] = []
+        func close(timeout: TimeInterval) async -> Bool { closeTimeouts.append(timeout); return closeSucceeds }
     }
 
     private var parent: URL!
@@ -41,33 +41,24 @@ final class LogoutResetTests: XCTestCase {
         XCTAssertEqual(TDLibSessionReset.renamedName(at: now), "tdlib.invalidated-20261010-030405")
     }
 
-    // Scenario: TDLib completes the logout.
-    func testCompletedLogoutRenamesNothing() async throws {
+    // Scenario: Local reset succeeds.
+    func testResetClosesTDLibAndRenamesTheDirectory() async throws {
         let client = FakeClient()
         let before = try contents(database)
-        let renamed = try await TDLibSessionReset.reset(client: client, directory: database, timeout: 30, now: now)
-        XCTAssertNil(renamed)
-        XCTAssertEqual(client.calls, ["logOut(30)"])
-        XCTAssertEqual(try contents(database), before)
-    }
-
-    // Scenario: TDLib does not complete the logout.
-    func testIncompleteLogoutClosesTDLibAndRenamesTheDirectory() async throws {
-        let client = FakeClient(); client.logOutCompletes = false
-        let before = try contents(database)
-        let renamed = try await TDLibSessionReset.reset(client: client, directory: database, timeout: 30, now: now)
-        XCTAssertEqual(client.calls, ["logOut(30)", "close"])
-        XCTAssertEqual(renamed?.lastPathComponent, "tdlib.invalidated-20261010-030405")
-        XCTAssertEqual(renamed?.deletingLastPathComponent().standardizedFileURL, parent.standardizedFileURL)
+        let renamed = try await TDLibSessionReset.reset(client: client, directory: database, now: now)
+        XCTAssertEqual(client.closeTimeouts, [30])
+        XCTAssertEqual(renamed.lastPathComponent, "tdlib.invalidated-20261010-030405")
+        XCTAssertEqual(renamed.deletingLastPathComponent().standardizedFileURL, parent.standardizedFileURL)
         XCTAssertFalse(FileManager.default.fileExists(atPath: database.path), "the next login starts from a new directory")
-        XCTAssertEqual(try contents(try XCTUnwrap(renamed)), before, "nothing is deleted")
+        XCTAssertEqual(try contents(renamed), before, "nothing is deleted")
     }
 
+    // Scenario: TDLib does not close.
     func testDirectoryIsLeftAloneWhenTDLibCannotBeClosed() async throws {
-        let client = FakeClient(); client.logOutCompletes = false; client.closeSucceeds = false
+        let client = FakeClient(); client.closeSucceeds = false
         let before = try contents(database)
         do {
-            _ = try await TDLibSessionReset.reset(client: client, directory: database, timeout: 30, now: now)
+            _ = try await TDLibSessionReset.reset(client: client, directory: database, now: now)
             XCTFail("expected couldNotClose")
         } catch let error as TDLibSessionReset.ResetError {
             XCTAssertEqual(error, .couldNotClose)
@@ -75,14 +66,14 @@ final class LogoutResetTests: XCTestCase {
         XCTAssertEqual(try contents(database), before)
     }
 
+    // Scenario: The directory cannot be renamed.
     func testExistingTargetIsNotOverwritten() async throws {
         let target = parent.appendingPathComponent("tdlib.invalidated-20261010-030405")
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
         try Data("earlier".utf8).write(to: target.appendingPathComponent("marker"))
-        let client = FakeClient(); client.logOutCompletes = false
         let before = try contents(database)
         do {
-            _ = try await TDLibSessionReset.reset(client: client, directory: database, timeout: 30, now: now)
+            _ = try await TDLibSessionReset.reset(client: FakeClient(), directory: database, now: now)
             XCTFail("expected renameFailed")
         } catch let error as TDLibSessionReset.ResetError {
             guard case .renameFailed = error else { return XCTFail("\(error)") }

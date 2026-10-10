@@ -11,36 +11,64 @@ import Foundation
 ///
 /// The unsynced duration counts only time TDLib is open, and it survives an
 /// idle close: a session that never syncs must not look healthy for another
-/// 120 seconds every time TDLib is reopened.
+/// 120 seconds every time TDLib is reopened. Only time spent updating can make
+/// the session stalled; time without a network never does.
 public final class TDLibSyncState: @unchecked Sendable {
     public struct Snapshot: Equatable, Sendable {
         /// The latest connection state TDLib reported since it was opened,
         /// e.g. `connectionStateUpdating`; nil when none, or TDLib is closed.
         public let connectionState: String?
         public let isSynced: Bool
+        /// Seconds TDLib has been open since it was last synced.
         public let unsyncedSeconds: Int
+        /// Of those, seconds TDLib spent in `connectionStateUpdating` — only
+        /// these can make a session stalled; time offline never does.
+        public let updatingSeconds: Int
 
-        public init(connectionState: String?, isSynced: Bool, unsyncedSeconds: Int) {
+        public init(connectionState: String?, isSynced: Bool, unsyncedSeconds: Int, updatingSeconds: Int = 0) {
             self.connectionState = connectionState
             self.isSynced = isSynced
             self.unsyncedSeconds = unsyncedSeconds
+            self.updatingSeconds = updatingSeconds
+        }
+
+        /// Stalled: still catching up with Telegram after `threshold` seconds of
+        /// updating. A session Telegram has invalidated stays here forever.
+        public func isStalled(threshold: Int = TDLibSyncState.stallThreshold) -> Bool {
+            connectionState == TDLibSyncState.updatingState && updatingSeconds >= threshold
         }
     }
 
     public static let readyState = "connectionStateReady"
-    /// Unsynced seconds after which the session is reported as stalled.
+    public static let updatingState = "connectionStateUpdating"
+    /// Updating seconds after which the session is reported as stalled.
     public static let stallThreshold = 120
 
+    /// A span of open time, accumulated across idle closes.
+    private struct Counter {
+        var accumulated: TimeInterval = 0
+        var start: TimeInterval?
+        mutating func begin(_ now: TimeInterval) { if start == nil { start = now } }
+        mutating func end(_ now: TimeInterval) {
+            if let start { accumulated += max(0, now - start) }
+            start = nil
+        }
+        mutating func clear() { accumulated = 0; start = nil }
+        func seconds(_ now: TimeInterval) -> Int {
+            Int((accumulated + (start.map { max(0, now - $0) } ?? 0)).rounded(.down))
+        }
+    }
+
     private let lock = NSLock()
+    /// Monotonic by default, so a change of the system time cannot make a
+    /// duration negative or jump.
     private let clock: @Sendable () -> TimeInterval
     private var connectionState: String?
     private var isOpen = false
-    /// Unsynced time from earlier open periods, since TDLib was last synced.
-    private var accumulated: TimeInterval = 0
-    /// Start of the current open, unsynced period; nil when synced or closed.
-    private var segmentStart: TimeInterval?
+    private var unsynced = Counter()
+    private var updating = Counter()
 
-    public init(clock: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 }) {
+    public init(clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.clock = clock
     }
 
@@ -49,15 +77,16 @@ public final class TDLibSyncState: @unchecked Sendable {
         lock.withLock {
             isOpen = true
             connectionState = nil
-            if segmentStart == nil { segmentStart = clock() }
+            unsynced.begin(clock())
         }
     }
 
-    /// TDLib was closed; its unsynced time so far is kept.
+    /// TDLib was closed; its unsynced and updating time so far is kept.
     public func tdlibClosed() {
         lock.withLock {
-            if let start = segmentStart { accumulated += clock() - start }
-            segmentStart = nil
+            let now = clock()
+            unsynced.end(now)
+            updating.end(now)
             isOpen = false
             connectionState = nil
         }
@@ -68,35 +97,42 @@ public final class TDLibSyncState: @unchecked Sendable {
     public func record(_ state: String) {
         lock.withLock {
             guard isOpen else { return }
+            let now = clock()
             connectionState = state
             if state == Self.readyState {
-                accumulated = 0
-                segmentStart = nil
-            } else if segmentStart == nil {
-                segmentStart = clock()
+                unsynced.clear()
+                updating.clear()
+                return
             }
+            unsynced.begin(now)
+            if state == Self.updatingState { updating.begin(now) } else { updating.end(now) }
         }
     }
 
-    /// Forgets the unsynced time after a logout: a new session starts at 0.
+    /// Forgets the unsynced and updating time after a logout: a new session
+    /// starts at 0. Counting resumes only if TDLib is open and not synced.
     public func reset() {
         lock.withLock {
-            accumulated = 0
-            segmentStart = isOpen ? clock() : nil
+            let now = clock()
+            unsynced.clear()
+            updating.clear()
+            guard isOpen, connectionState != Self.readyState else { return }
+            unsynced.begin(now)
+            if connectionState == Self.updatingState { updating.begin(now) }
         }
     }
 
     public var snapshot: Snapshot {
         lock.withLock {
-            var unsynced = accumulated
-            if let start = segmentStart { unsynced += clock() - start }
+            let now = clock()
             return Snapshot(connectionState: connectionState,
                             isSynced: isOpen && connectionState == Self.readyState,
-                            unsyncedSeconds: Int(unsynced.rounded(.down)))
+                            unsyncedSeconds: unsynced.seconds(now),
+                            updatingSeconds: updating.seconds(now))
         }
     }
 
     public func isStalled(threshold: Int = TDLibSyncState.stallThreshold) -> Bool {
-        snapshot.unsyncedSeconds >= threshold
+        snapshot.isStalled(threshold: threshold)
     }
 }
