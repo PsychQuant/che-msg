@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-10
+
+TDLib can stay logged in while Telegram has invalidated its session; reads then returned old data with no warning. telegram-all now says when TDLib is not synced, and `logout` becomes a local reset that never deletes the local database ([#63](https://github.com/PsychQuant/che-msg/issues/63)). Use with plugin `che-telegram-mcp` 1.6.0.
+
 ### Added
 - telegram-all says when TDLib is not synced with Telegram ([#63](https://github.com/PsychQuant/che-msg/issues/63)). A session Telegram has invalidated keeps TDLib logged in and updating forever, so reads returned old data with no warning. The server now follows TDLib's connection state (error 406 messages stay unread): the call that opens TDLib waits up to 10 s for it to sync; answers from the read tools carry a `sync: not-synced` note while it is not synced (with a network hint when offline); `auth_status` and `auth_run` return `connection_state`, `unsynced_seconds` and `sync_stalled`. A session is stalled only after 120 s of updating without finishing (time offline never counts); its `next_step` points to `logout` with a hint to ask the user first. Durations use a monotonic clock.
 

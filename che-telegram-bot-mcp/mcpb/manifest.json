@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "che-telegram-bot-mcp",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Telegram Bot API MCP Server - send/read messages, manage groups, pin messages, set bot commands, and more",
   "author": {
     "name": "Che Cheng"
