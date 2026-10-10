@@ -175,7 +175,7 @@ The tool SHALL NOT return the Markdown content in the response body. The respons
 
 #### Scenario: Successful dump
 
-- **WHEN** an MCP client invokes `dump_chat_to_markdown(chat_id: 489601378, output_path: "/tmp/chat.md", max_messages: 1000, since_date: "2026-04-01")`
+- **WHEN** an MCP client invokes `dump_chat_to_markdown(chat_id: 123456789, output_path: "/tmp/chat.md", max_messages: 1000, since_date: "2026-04-01")`
 - **THEN** the server writes a Markdown file to `/tmp/chat.md`
 - **AND** returns a JSON object with `path: "/tmp/chat.md"`, numeric `message_count`, a `date_range` object, and a `senders` array
 
@@ -342,9 +342,9 @@ The Markdown file produced by `dump_chat_to_markdown` SHALL conform to the follo
 
 #### Scenario: Text message formatting
 
-- **WHEN** an outgoing text message "到了嗎" is sent at 2026-04-14 14:32 local time
+- **WHEN** an outgoing text message "會議幾點開始？" is sent at 2026-04-14 14:32 local time
 - **AND** `self_label` is `"我"`
-- **THEN** the Markdown output contains `**14:32 我**：\n到了嗎` under the `## 2026-04-14` heading
+- **THEN** the Markdown output contains `**14:32 我**：\n會議幾點開始？` under the `## 2026-04-14` heading
 
 #### Scenario: Photo placeholder
 

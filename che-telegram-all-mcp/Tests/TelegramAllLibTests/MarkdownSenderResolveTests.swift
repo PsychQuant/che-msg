@@ -101,9 +101,9 @@ final class MarkdownSenderResolveTests: XCTestCase {
             "type": "text", "text": "hi",
         ]]
         let names = await resolveSenderNames(in: messages) { uid in
-            self.userJSON(id: uid, first: "培鈞", last: "徐")
+            self.userJSON(id: uid, first: "小明", last: "王")
         }
-        XCTAssertEqual(names[42], "培鈞 徐",
+        XCTAssertEqual(names[42], "小明 王",
                        "first_name + last_name MUST be combined with single space")
     }
 

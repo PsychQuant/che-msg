@@ -215,7 +215,7 @@ Once authenticated, you can ask Claude things like:
 - "Send 'I'll be late' to the family group"
 - "Forward the last message from Alice to my Saved Messages"
 - "Get my contact list"
-- "Dump my chat with 培鈞 from 2026-04-01 to 2026-04-15 to `/tmp/pei-chun-chat.md`" → triggers `dump_chat_to_markdown`
+- "Dump my chat with 小明 from 2026-04-01 to 2026-04-15 to `/tmp/example-chat.md`" → triggers `dump_chat_to_markdown`
 
 ### Dump chat to Markdown
 
@@ -223,8 +223,8 @@ The `dump_chat_to_markdown` tool writes a single Markdown file per invocation an
 
 ```jsonc
 dump_chat_to_markdown({
-  "chat_id": 489601378,
-  "output_path": "/tmp/pei-chun-chat.md",
+  "chat_id": 123456789,
+  "output_path": "/tmp/example-chat.md",
   "max_messages": 5000,             // optional, default 5000
   "since_date": "2026-03-01",        // optional
   "until_date": "2026-04-15",        // optional
@@ -236,17 +236,17 @@ Response (summary metadata only — no Markdown body):
 
 ```jsonc
 {
-  "path": "/tmp/pei-chun-chat.md",
+  "path": "/tmp/example-chat.md",
   "message_count": 327,
   "date_range": { "since": "2026-03-01", "until": "2026-04-15" },
-  "senders": [{ "user_id": 12345, "display_name": "培鈞 徐" }, ...]
+  "senders": [{ "user_id": 12345, "display_name": "小明 王" }, ...]
 }
 ```
 
 Output Markdown format (excerpt):
 
 ```markdown
-# 對話：培鈞 徐 (chat_id=489601378)
+# 對話：小明 王 (chat_id=123456789)
 匯出時間：2026-04-15 23:40:00　訊息數：327　since 2026-03-01　until 2026-04-15
 
 ---
@@ -254,12 +254,12 @@ Output Markdown format (excerpt):
 ## 2026-04-14
 
 **14:32 我**：
-到了嗎
+會議幾點開始？
 
-**14:33 培鈞 徐**：
-我隨時出發
+**14:33 小明 王**：
+下午兩點
 
-**14:35 培鈞 徐**：
+**14:35 小明 王**：
 [photo]
 ```
 
@@ -269,18 +269,18 @@ The same capability is exposed through `telegram-all history` flags — useful f
 
 ```bash
 # Single page (original behavior, unchanged)
-telegram-all history 489601378 --limit 50
+telegram-all history 123456789 --limit 50
 
 # Auto-paginate and filter, print JSON
-telegram-all history 489601378 --max-messages 5000 --since 2026-03-01 --until 2026-04-15
+telegram-all history 123456789 --max-messages 5000 --since 2026-03-01 --until 2026-04-15
 
 # Auto-paginate and dump to Markdown
-telegram-all history 489601378 \
+telegram-all history 123456789 \
   --max-messages 5000 \
   --since 2026-03-01 \
   --until 2026-04-15 \
   --self-label "che" \
-  --dump-markdown /tmp/pei-chun-chat.md
+  --dump-markdown /tmp/example-chat.md
 ```
 
 ## Architecture

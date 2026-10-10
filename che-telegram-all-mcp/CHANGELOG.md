@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- README and test fixtures for `dump_chat_to_markdown` use a placeholder contact, chat id and messages instead of a real conversation.
 - The line `--version` prints is defined once, as `CLIBootstrap.versionLine`, and a test pins it exactly: the plugin wrapper (che-telegram-mcp 1.5.0) parses it and refuses to start a binary whose line does not match ([#58](https://github.com/PsychQuant/che-msg/issues/58)). The MCP `serverInfo` version now reads `CLIBootstrap.version` instead of repeating the literal. Output is unchanged from 0.6.0.
 
 ## [0.6.0] - 2026-10-09
