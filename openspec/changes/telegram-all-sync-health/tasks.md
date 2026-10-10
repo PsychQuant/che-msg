@@ -21,6 +21,6 @@
 
 ## 7. 文件與發布前驗收
 
-- [ ] 7.1 `che-telegram-all-mcp/README.md` 與 `plugins/che-telegram-mcp/README.md` 新增「telegram-all 不再同步」一節：怎麼從 `sync: not-synced` 與 `auth_status.sync_stalled` 辨識、可能原因（同一 session 同時在兩處使用）、補救（`logout` → `auth_run`、改名的資料夾是備份）；`che-telegram-all-mcp/CHANGELOG.md` 的 `[Unreleased]` 記錄行為變更。驗證方式：`tests/che-telegram-mcp/test-plugin-layout.sh` 與 `claude plugin validate plugins/che-telegram-mcp` 通過；內容審閱 [after: 4.1, 5.1, 6.1]
+- [x] 7.1 `che-telegram-all-mcp/README.md` 與 `plugins/che-telegram-mcp/README.md` 新增「telegram-all 不再同步」一節：怎麼從 `sync: not-synced` 與 `auth_status.sync_stalled` 辨識、可能原因（同一 session 同時在兩處使用）、補救（`logout` → `auth_run`、改名的資料夾是備份）；`che-telegram-all-mcp/CHANGELOG.md` 的 `[Unreleased]` 記錄行為變更。驗證方式：`tests/che-telegram-mcp/test-plugin-layout.sh` 與 `claude plugin validate plugins/che-telegram-mcp` 通過；內容審閱 [after: 4.1, 5.1, 6.1]
 - [ ] 7.2 量測門檻：以正常（重新登入後）session 開啟 TDLib，記錄由開啟到 `connectionStateReady` 的秒數三次，與 10 秒 / 120 秒比較，量測值與結論寫進 design.md 對應兩段；若接近門檻則調整常數並更新 spec 與測試。驗證方式：design.md 含三次量測值與日期 [after: 3.1, 4.1, 5.1]
 - [ ] 7.3 維護者驗收（需維護者重新登入）：重新登入前 `auth_status` 顯示 `sync_stalled: true`、讀取回答有 `sync: not-synced`；維護者執行 `logout` 時記錄 TDLib 是否在 30 秒內完成、資料夾是否被改名（寫回 design.md「`logout` 以 30 秒為界，失敗時改名留存」一段）；重新登入後 `sync_stalled: false`、`get_chats` 出現 2026-04-30 之後的訊息（只記錄日期與數量）。驗證方式：結果貼到 #63（不含訊息內容） [after: 7.1, 7.2]

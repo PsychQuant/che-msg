@@ -250,6 +250,10 @@ The wrapper stops before starting the server in three cases only, and `/mcp` the
 
 Another session using `telegram-all` is never a reason: the wrapper takes no lock and stops only the server it started itself.
 
+### When telegram-all stops syncing
+
+If answers carry a second text item starting `sync: not-synced`, or `auth_status` reports `"sync_stalled": true`, TDLib is logged in but is not receiving anything from Telegram — most often because Telegram invalidated the session after it was used in two places at once ([#63](https://github.com/PsychQuant/che-msg/issues/63)). Reads then return old data. Recover by ending unknown sessions in Telegram → Settings → Devices, calling `logout`, then logging in again with `auth_run`. If TDLib cannot finish the logout within 30 seconds, its database directory is renamed to `tdlib.invalidated-<UTC timestamp>` (never deleted). Details: the che-telegram-all-mcp README, section "When telegram-all stops syncing".
+
 ### Sessions still running plugin v1.4.x or earlier
 
 Up to v1.4.x the wrapper took a lock before starting the server, and a second session's wrapper refused to start ("Another instance of CheTelegramAllMCP is already running"). A session started with such a wrapper keeps its lock directory `~/.cache/che-telegram-all-mcp.lock` while it runs; newer servers treat TDLib as held by it until that wrapper exits, so the two never open TDLib at once. Restart that session to move it to the new behaviour.

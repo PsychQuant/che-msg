@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- telegram-all says when TDLib is not synced with Telegram ([#63](https://github.com/PsychQuant/che-msg/issues/63)). A session Telegram has invalidated keeps TDLib logged in while every update request fails, so reads returned old data with no warning. The server now follows TDLib's connection state (error 406 messages stay unread): the call that opens TDLib waits up to 10 s for it to sync; answers from TDLib carry a `sync: not-synced` note while it is not synced, naming the likely cause and `logout` → `auth_run` after 120 s; `auth_status` and `auth_run` return `connection_state`, `unsynced_seconds` and `sync_stalled`, and a stalled session's `next_step` points to `logout`.
+- `logout` waits up to 30 s for TDLib to finish. If it does not, TDLib is closed and its database directory is renamed to `tdlib.invalidated-<UTC timestamp>` (never deleted), so the next login starts fresh; the server then opens a new TDLib client on the next call.
+
 ### Changed
 - README and test fixtures for `dump_chat_to_markdown` use a placeholder contact, chat id and messages instead of a real conversation.
 - The line `--version` prints is defined once, as `CLIBootstrap.versionLine`, and a test pins it exactly: the plugin wrapper (che-telegram-mcp 1.5.0) parses it and refuses to start a binary whose line does not match ([#58](https://github.com/PsychQuant/che-msg/issues/58)). The MCP `serverInfo` version now reads `CLIBootstrap.version` instead of repeating the literal. Output is unchanged from 0.6.0.
