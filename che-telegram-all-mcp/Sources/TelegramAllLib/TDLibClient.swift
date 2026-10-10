@@ -108,7 +108,12 @@ public final class TDLibClient {
         }
     }
 
-    public init(logVerbosity: Int = 0) async throws {
+    /// Where connection states are recorded (#63). Owned by the server, so
+    /// the unsynced time survives this client being closed and replaced.
+    private let syncState: TDLibSyncState?
+
+    public init(logVerbosity: Int = 0, syncState: TDLibSyncState? = nil) async throws {
+        self.syncState = syncState
         // Silence TDLib's stdout spam BEFORE creating any client.
         // td_execute is synchronous, thread-safe, and doesn't need a client.
         let logRequest = #"{"@type":"setLogVerbosityLevel","new_verbosity_level":\#(logVerbosity)}"#
@@ -129,6 +134,7 @@ public final class TDLibClient {
             }
         }
         weakRef.value = self
+        syncState?.tdlibOpened()
     }
 
     /// The TDLib database directory (`td.binlog`, `db.sqlite`).
@@ -166,6 +172,33 @@ public final class TDLibClient {
         }
     }
 
+    /// Only an authorized TDLib can sync with Telegram, so only then is it
+    /// worth waiting for (#63).
+    static func shouldWaitForSync(authState: AuthState) -> Bool { authState == .ready }
+
+    /// Waits until `isReady` returns true or `timeout` seconds pass; returns
+    /// whether it became ready. Clock and sleep are injected for tests.
+    static func wait(timeout: TimeInterval, now: () -> TimeInterval,
+                     sleep: (TimeInterval) async -> Void, until isReady: () -> Bool) async -> Bool {
+        let deadline = now() + timeout
+        while !isReady() {
+            if now() >= deadline { return false }
+            await sleep(0.05)
+        }
+        return true
+    }
+
+    /// After TDLib opens, waits up to `timeout` seconds for it to sync with
+    /// Telegram, so the call that opened it does not answer from data TDLib
+    /// has not brought up to date yet (#63). Does not wait while
+    /// authorization is not ready.
+    public func waitForConnectionReady(timeout: TimeInterval, isReady: () -> Bool) async -> Bool {
+        guard Self.shouldWaitForSync(authState: getAuthState()) else { return false }
+        return await Self.wait(timeout: timeout, now: { Date().timeIntervalSince1970 },
+                               sleep: { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
+                               until: isReady)
+    }
+
     /// Asks TDLib to close and waits for `authorizationStateClosed`. Returns
     /// false if TDLib has not reported it within `timeout` seconds.
     public func close(timeout: TimeInterval) async -> Bool {
@@ -182,11 +215,37 @@ public final class TDLibClient {
     // MARK: - Update Handler
 
     private func handleUpdate(_ update: Update) {
+        if let syncState { Self.applySyncUpdate(update, to: syncState) }
         switch update {
         case .updateAuthorizationState(let state):
             handleAuthStateUpdate(state.authorizationState)
         default:
             break
+        }
+    }
+
+    /// Feeds the updates that tell whether TDLib is synced with Telegram into
+    /// `state` (#63): connection states, and the authorization state closing.
+    /// Reads no error messages.
+    static func applySyncUpdate(_ update: Update, to state: TDLibSyncState) {
+        switch update {
+        case .updateConnectionState(let change):
+            state.record(connectionStateName(change.state))
+        case .updateAuthorizationState(let change):
+            if case .authorizationStateClosed = change.authorizationState { state.tdlibClosed() }
+        default:
+            break
+        }
+    }
+
+    /// The TDLib API name of a connection state, as `auth_status` reports it.
+    static func connectionStateName(_ state: ConnectionState) -> String {
+        switch state {
+        case .connectionStateWaitingForNetwork: return "connectionStateWaitingForNetwork"
+        case .connectionStateConnectingToProxy: return "connectionStateConnectingToProxy"
+        case .connectionStateConnecting: return "connectionStateConnecting"
+        case .connectionStateUpdating: return "connectionStateUpdating"
+        case .connectionStateReady: return TDLibSyncState.readyState
         }
     }
 
@@ -686,9 +745,20 @@ public final class TDLibClient {
 
     // MARK: - Logout
 
-    public func logout() async throws -> String {
-        _ = try await client.logOut()
-        return "{\"ok\": true}"
+    /// Asks TDLib to log out and waits up to `timeout` seconds for it to
+    /// finish (#63): TDLib reports closed, or asks for parameters or a phone
+    /// number again. A session Telegram has invalidated may never finish.
+    public func logOut(timeout: TimeInterval) async -> Bool {
+        _ = try? await client.logOut()
+        return await Self.wait(timeout: timeout, now: { Date().timeIntervalSince1970 },
+                               sleep: { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
+                               until: { [self] in
+                                   let state: AuthState = getAuthState()
+                                   switch state {
+                                   case .closed, .waitingForParameters, .waitingForPhoneNumber: return true
+                                   case .ready, .waitingForCode, .waitingForPassword: return false
+                                   }
+                               })
     }
 
     // MARK: - Serialization Helpers
@@ -799,5 +869,7 @@ public final class TDLibClient {
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 }
+
+extension TDLibClient: TDLibLoggingOut {}
 
 extension TDLibClient: TDLibClosable {}

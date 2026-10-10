@@ -144,4 +144,60 @@ final class AuthStatusNextStepTests: XCTestCase {
         let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         return try XCTUnwrap(parsed, "Response payload MUST be a JSON object")
     }
+
+    // MARK: - Sync fields (PsychQuant/che-msg#63, task 5.1)
+
+    private func sync(_ state: String?, _ seconds: Int) -> TDLibSyncState.Snapshot {
+        .init(connectionState: state, isSynced: state == "connectionStateReady", unsyncedSeconds: seconds)
+    }
+
+    /// Scenario "next_step is null at ready while synced": the whole response.
+    func testReadyAndSyncedResponseIsExact() throws {
+        let result = authStatusResult(state: .ready, lastError: nil, sync: sync("connectionStateReady", 0))
+        guard case .text(let json, _, _) = result.content.first else { return XCTFail("no text") }
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? NSDictionary)
+        let expected: NSDictionary = ["state": "ready", "next_step": NSNull(), "last_error": NSNull(),
+                                      "connection_state": "connectionStateReady", "unsynced_seconds": 0,
+                                      "sync_stalled": false]
+        XCTAssertEqual(payload, expected)
+    }
+
+    /// Example "response shape": ready rows.
+    func testReadyRowsOfTheResponseShapeExample() throws {
+        let short = try parsePayload(authStatusResult(state: .ready, lastError: nil, sync: sync("connectionStateUpdating", 60)))
+        XCTAssertTrue(short["next_step"] is NSNull)
+        XCTAssertEqual(short["sync_stalled"] as? Bool, false)
+        XCTAssertEqual(short["unsynced_seconds"] as? Int, 60)
+
+        let stalled = try parsePayload(authStatusResult(state: .ready, lastError: nil, sync: sync("connectionStateUpdating", 130)))
+        XCTAssertEqual(stalled["sync_stalled"] as? Bool, true)
+        XCTAssertEqual(stalled["unsynced_seconds"] as? Int, 130)
+        XCTAssertEqual(stalled["connection_state"] as? String, "connectionStateUpdating")
+        let next = try XCTUnwrap(stalled["next_step"] as? [String: Any])
+        XCTAssertEqual(next["tool"] as? String, "logout")
+        XCTAssertEqual(next["required_args"] as? [String], [])
+        let hint = try XCTUnwrap(next["hint"] as? String)
+        XCTAssertTrue(hint.contains("130"), hint)
+        let logout = try XCTUnwrap(hint.range(of: "logout")), authRun = try XCTUnwrap(hint.range(of: "auth_run"))
+        XCTAssertLessThan(logout.lowerBound, authRun.lowerBound, hint)
+    }
+
+    func testStallStartsExactlyAtTheThreshold() throws {
+        XCTAssertEqual(try parsePayload(authStatusResult(state: .ready, lastError: nil, sync: sync("connectionStateUpdating", 119)))["sync_stalled"] as? Bool, false)
+        XCTAssertEqual(try parsePayload(authStatusResult(state: .ready, lastError: nil, sync: sync("connectionStateUpdating", 120)))["sync_stalled"] as? Bool, true)
+    }
+
+    /// Scenario "next_step describes auth_run as the next tool": never stalled before ready.
+    func testNotReadyIsNeverStalled() throws {
+        let payload = try parsePayload(authStatusResult(state: .waitingForCode, lastError: nil, sync: sync("connectionStateUpdating", 500)))
+        XCTAssertEqual(payload["sync_stalled"] as? Bool, false)
+        let next = try XCTUnwrap(payload["next_step"] as? [String: Any])
+        XCTAssertEqual(next["tool"] as? String, "auth_run")
+        XCTAssertEqual(next["required_args"] as? [String], ["code"])
+    }
+
+    func testNoReportedConnectionStateIsNull() throws {
+        let payload = try parsePayload(authStatusResult(state: .ready, lastError: nil, sync: sync(nil, 4)))
+        XCTAssertTrue(payload["connection_state"] is NSNull)
+    }
 }

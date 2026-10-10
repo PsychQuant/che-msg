@@ -99,6 +99,7 @@ final class ToolRoutingTests: XCTestCase {
             XCTAssertEqual(items.first, #"[{"id":777}]"#, tool)
             XCTAssertTrue(items.last?.contains("source: local-cache") == true, tool)
             XCTAssertTrue(items.last?.contains("4242") == true, tool)
+            XCTAssertFalse(items.contains { $0.hasPrefix("sync:") }, "local-cache answers carry no sync note (#63): \(tool)")
         }
         XCTAssertEqual(reader.calls, Self.readerTools)
         let isOpen = await server.isTDLibOpen
