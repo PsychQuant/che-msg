@@ -14,7 +14,7 @@ Telegram 已作廢這個 session 的登入金鑰：每一次 `updates.getDiffere
 2. 開 TDLib 後，在既有的「等授權穩定」之後，再最多等一段時間讓連線到達 `connectionStateReady`，避免剛開時就回答舊資料。
 3. 由 TDLib 回答的讀取工具，若當下連線不是 Ready，在回答後附一段說明：尚未與 Telegram 同步、已持續多久、可能缺少新訊息。
 4. `auth_status` 增加連線狀態欄位；不是 Ready 超過一段時間時，標為同步停滯並給下一步：session 可能已被 Telegram 作廢，需要重新登入。
-5. `logout` 等 TDLib 真正完成登出；30 秒內沒完成就由 server 關閉 TDLib，把資料夾改名留存（不刪除），讓下一次登入從新的資料夾開始。登出後 lifecycle 丟棄已關閉的 client，下一次呼叫重新開啟。實測 `logOut` 對已作廢 session 的行為，結果寫進 design 與 README。
+5. `logout` 只做本機重置（2026-10-10 驗證第一輪後維護者選定）：不向 Telegram 登出，關閉 TDLib（最多 30 秒）→ 把資料夾改名留存（不刪除）→ 釋放 TDLib，下一次登入從新的資料夾開始。舊 session 留在帳號的裝置清單，要在 Telegram app 裡結束。停滯只算 `connectionStateUpdating` 的時間，離線不算；`next_step` 指向 `logout` 時提示先問使用者。
 6. README 寫「telegram-all 不再同步」的辨識方式與恢復步驟。
 
 **假設（unattended 下的決定，待 apply 實測）**：第一次使用最多等 10 秒、120 秒判定停滯。依據：正常補一天的資料只要幾秒；作廢的 session 在 90 秒的實測中毫無進展。兩個值都會在實作時以正常帳號量測後定案。

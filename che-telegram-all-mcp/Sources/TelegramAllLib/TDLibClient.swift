@@ -121,6 +121,8 @@ public final class TDLibClient {
 
         dbPath = Self.databaseDirectory
         try FileManager.default.createDirectory(atPath: dbPath, withIntermediateDirectories: true)
+        // Before the client exists, so no connection state it reports is lost.
+        syncState?.tdlibOpened()
 
         let decoder = makeUpdateDecoder()
         let weakRef = Weak()
@@ -134,7 +136,6 @@ public final class TDLibClient {
             }
         }
         weakRef.value = self
-        syncState?.tdlibOpened()
     }
 
     /// The TDLib database directory (`td.binlog`, `db.sqlite`).
@@ -162,7 +163,7 @@ public final class TDLibClient {
     public func waitForAuthorizationToSettle(timeout: TimeInterval) async {
         let env = ProcessInfo.processInfo.environment
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        while Date() < deadline, !Task.isCancelled {
             let settled = authorizationIsSettled(
                 state: getAuthState(), hasAutoFireError: getLastAutoFireError() != nil,
                 envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init), envApiHash: env["TELEGRAM_API_HASH"],
@@ -182,7 +183,9 @@ public final class TDLibClient {
                      sleep: (TimeInterval) async -> Void, until isReady: () -> Bool) async -> Bool {
         let deadline = now() + timeout
         while !isReady() {
-            if now() >= deadline { return false }
+            // A cancelled call stops at once: a cancelled Task.sleep returns
+            // immediately, which would otherwise spin to the deadline.
+            if Task.isCancelled || now() >= deadline { return false }
             await sleep(0.05)
         }
         return true
@@ -745,22 +748,6 @@ public final class TDLibClient {
 
     // MARK: - Logout
 
-    /// Asks TDLib to log out and waits up to `timeout` seconds for it to
-    /// finish (#63): TDLib reports closed, or asks for parameters or a phone
-    /// number again. A session Telegram has invalidated may never finish.
-    public func logOut(timeout: TimeInterval) async -> Bool {
-        _ = try? await client.logOut()
-        return await Self.wait(timeout: timeout, now: { Date().timeIntervalSince1970 },
-                               sleep: { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
-                               until: { [self] in
-                                   let state: AuthState = getAuthState()
-                                   switch state {
-                                   case .closed, .waitingForParameters, .waitingForPhoneNumber: return true
-                                   case .ready, .waitingForCode, .waitingForPassword: return false
-                                   }
-                               })
-    }
-
     // MARK: - Serialization Helpers
 
     private func chatToDict(_ chat: Chat) -> [String: Any] {
@@ -869,7 +856,5 @@ public final class TDLibClient {
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 }
-
-extension TDLibClient: TDLibLoggingOut {}
 
 extension TDLibClient: TDLibClosable {}

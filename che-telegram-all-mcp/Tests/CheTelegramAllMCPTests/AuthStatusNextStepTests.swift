@@ -147,8 +147,10 @@ final class AuthStatusNextStepTests: XCTestCase {
 
     // MARK: - Sync fields (PsychQuant/che-msg#63, task 5.1)
 
+    /// Updating time equals the unsynced time while the state is Updating.
     private func sync(_ state: String?, _ seconds: Int) -> TDLibSyncState.Snapshot {
-        .init(connectionState: state, isSynced: state == "connectionStateReady", unsyncedSeconds: seconds)
+        .init(connectionState: state, isSynced: state == "connectionStateReady", unsyncedSeconds: seconds,
+              updatingSeconds: state == "connectionStateUpdating" ? seconds : 0)
     }
 
     /// Scenario "next_step is null at ready while synced": the whole response.
@@ -199,5 +201,30 @@ final class AuthStatusNextStepTests: XCTestCase {
     func testNoReportedConnectionStateIsNull() throws {
         let payload = try parsePayload(authStatusResult(state: .ready, lastError: nil, sync: sync(nil, 4)))
         XCTAssertTrue(payload["connection_state"] is NSNull)
+    }
+
+    // MARK: - Verify round 1 (task 8.3)
+
+    // Scenario: offline at ready is not stalled.
+    func testOfflineAtReadyIsNotStalled() throws {
+        let payload = try parsePayload(authStatusResult(state: .ready, lastError: nil, sync: sync("connectionStateWaitingForNetwork", 300)))
+        XCTAssertEqual(payload["sync_stalled"] as? Bool, false)
+        XCTAssertEqual(payload["unsynced_seconds"] as? Int, 300)
+        XCTAssertTrue(payload["next_step"] is NSNull)
+    }
+
+    func testStalledHintAsksTheUserFirst() throws {
+        let payload = try parsePayload(authStatusResult(state: .ready, lastError: nil, sync: sync("connectionStateUpdating", 130)))
+        let hint = try XCTUnwrap((payload["next_step"] as? [String: Any])?["hint"] as? String)
+        XCTAssertTrue(hint.contains("ask the user"), hint)
+    }
+
+    /// Example "response shape": the not-ready rows are never stalled.
+    func testNotReadyRowsAreNeverStalled() throws {
+        for state: TDLibClient.AuthState in [.waitingForParameters, .waitingForPhoneNumber, .waitingForPassword] {
+            let payload = try parsePayload(authStatusResult(state: state, lastError: nil, sync: sync("connectionStateUpdating", 500)))
+            XCTAssertEqual(payload["sync_stalled"] as? Bool, false, "\(state)")
+            XCTAssertEqual((payload["next_step"] as? [String: Any])?["tool"] as? String, "auth_run", "\(state)")
+        }
     }
 }

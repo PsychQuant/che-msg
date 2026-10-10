@@ -47,4 +47,23 @@ final class TDLibSyncWaitTests: XCTestCase {
             XCTAssertFalse(TDLibClient.shouldWaitForSync(authState: state), "\(state)")
         }
     }
+
+    // Task 8.5: a cancelled call stops waiting at once instead of spinning to the deadline.
+    func testCancellationStopsTheWait() async {
+        final class Counter: @unchecked Sendable { var checks = 0; var now: TimeInterval = 0 }
+        let counter = Counter()
+        let task = Task {
+            await TDLibClient.wait(
+                timeout: 10,
+                now: { counter.now },
+                sleep: { step in
+                    withUnsafeCurrentTask { $0?.cancel() }
+                    counter.now += step
+                },
+                until: { counter.checks += 1; return false })
+        }
+        let ready = await task.value
+        XCTAssertFalse(ready)
+        XCTAssertLessThanOrEqual(counter.checks, 2, "stopped after the cancellation, not at the deadline")
+    }
 }

@@ -43,7 +43,21 @@
 
 ### `logout` 以 30 秒為界，失敗時改名留存
 
-TDLib 在 session 已作廢時能否完成 `logOut`（伺服器端呼叫會失敗）未經驗證。不以資料庫複本預先實測：那會用維護者的真實金鑰對 Telegram 送出登出，屬於帳號操作，留給維護者在驗收（任務 7.3）時執行並記錄。不論結果，契約一致：等 TDLib 報告 closed（或回到等待參數 / 等待電話號碼）最多 30 秒；逾時則 server 關閉 TDLib，把資料夾改名為 `tdlib.invalidated-<UTC yyyyMMdd-HHmmss>`。改名而不刪除，是因為資料夾裡有維護者唯一的本機訊息副本。登出後 `TDLibLifecycle.discardClosedClient()` 丟棄 client 並釋放鎖，下一次呼叫重新開啟。
+（已由下一項取代，保留作為紀錄。）原做法：先送 TDLib `logOut`，30 秒內沒完成才關閉並改名。驗證第一輪（2026-10-10）指出：TDLibKit 的 `logOut()` 要等伺服器回覆、沒有逾時，離線時永遠不返回；有網路時已作廢的 key 很快拿到 406，TDLib 會完成登出並自己清掉本機資料庫。改名保存在兩個主要情境都碰不到。
+
+### `logout` 只做本機重置，不向 Telegram 登出
+
+**Supersedes**: telegram-all-sync-health / `logout` 以 30 秒為界，失敗時改名留存
+
+維護者 2026-10-10 選定。`logout` 不送 `logOut`：關閉 TDLib（最多 30 秒，沒有網路往返，所以離線也不會卡住）→ 把資料夾改名為 `tdlib.invalidated-<UTC yyyyMMdd-HHmmss>` → 釋放 TDLib，下一次呼叫從新的空資料夾開始。本機資料永遠不刪。代價：舊 session 會留在帳號的裝置清單，要在 Telegram app 裡結束；回應與 README 都寫明這點，並警告改名後的資料夾裡的 key 仍有效，新 session 使用中時不可搬回。關不掉時失敗、資料夾不動；改名失敗時失敗、不釋放 TDLib，避免下一次呼叫在舊資料夾上重開。
+
+### 只有補資料卡住才算停滯；登出要先問使用者
+
+維護者 2026-10-10 選定。驗證第一輪指出：任何非 Ready 都累計會把離線、proxy 也判成停滯，而停滯的 `next_step` 指向會重置 session 的 `logout`，skill 又要模型照 `next_step` 做，違反「重新登入是維護者的操作」。改為：另記「更新中時間」（只累計 `connectionStateUpdating`，同樣跨 idle close、Ready 歸零），停滯 = 授權 ready 且目前在 Updating 且更新中時間 ≥ 120 秒；離線與 proxy 只在說明中提示檢查網路。`next_step` 的提示寫明先問使用者，skill 文件也這樣要求。計時改用單調時鐘（`ProcessInfo.systemUptime`），系統校時不影響、不出現負值。
+
+### 同步說明只附在讀取工具
+
+驗證第一輪指出原先附在所有 TDLib 路徑的成功回答，`auth_status` / `auth_run` 會多一段非 JSON 文字，寫入工具的「可能缺少新訊息」也不對。改為只附在十個讀取工具（`get_chats`、`search_chats`、`get_chat_history`、`search_messages`、`dump_chat_to_markdown`、`get_me`、`get_user`、`get_contacts`、`get_chat`、`get_chat_members`）。
 
 ## Implementation Contract
 
@@ -52,12 +66,12 @@ TDLib 在 session 已作廢時能否完成 `logOut`（伺服器端呼叫會失�
 - TDLib 路徑的成功回答，在未同步時多一段以 `sync: not-synced` 開頭的文字；同步時不變。
 - `auth_status` 多 `connection_state`、`unsynced_seconds`、`sync_stalled` 三欄；`ready` 且停滯時 `next_step` 為 `{"tool":"logout","required_args":[],"hint":...}`；其他情形與現在相同。
 - 開啟 TDLib 的那一次呼叫，授權 ready 時最多多等 10 秒。
-- `logout` 最多 30 秒；TDLib 沒完成時資料夾被改名（不刪除），回應附上新名稱。
+- `logout` 不聯絡 Telegram：關閉 TDLib（最多 30 秒）→ 資料夾改名（不刪除）→ 釋放 TDLib；回應附上新名稱與「舊 session 要在 app 裡結束」。
 
 **Interface / data shape**
 
 - `TDLibSyncState`（`TelegramAllLib`，可注入 `clock`）：`func record(_ connectionState: String)`、`func tdlibOpened()`、`func tdlibClosed()`、`var connectionState: String?`、`var isSynced: Bool`、`var unsyncedSeconds: Int`、`func isStalled(threshold: Int = 120) -> Bool`。
-- `TDLibClient`：`handleUpdate` 對 `.updateConnectionState` 呼叫注入的回呼（不在 client 內保存跨開關的狀態）；`func waitForConnectionReady(timeout: TimeInterval, isReady: () -> Bool) async`；`logout` 改為等待 closed、回傳是否完成。
+- `TDLibClient`：`handleUpdate` 把 `.updateConnectionState` 與授權關閉交給 `TDLibSyncState`（狀態放在 server 層，不隨 client 丟棄）；`func waitForConnectionReady(timeout:isReady:) async -> Bool`；舊的 `logout() -> String` 移除。
 - `TDLibLifecycle`：`func discardClosedClient() async`（狀態回 closed、釋放鎖）。
 - `SyncNote.swift`（`CheTelegramAllMCPCore`）：`func syncNote(state: TDLibSyncState snapshot) -> String?`；`AuthResponses.authStatusResult` 增加三個參數。
 - `auth_status` JSON 範例（停滯）：`{"state":"ready","next_step":{"tool":"logout","required_args":[],"hint":"..."},"last_error":null,"connection_state":"connectionStateUpdating","unsynced_seconds":130,"sync_stalled":true}`。

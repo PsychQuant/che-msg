@@ -189,7 +189,7 @@ public final class CheTelegramAllMCPServer {
                  required: []),
 
             tool("logout",
-                 description: "Log out from Telegram. Waits up to 30 s for TDLib to finish; if it does not (for example, a session Telegram has invalidated), TDLib is closed and its database directory is renamed to tdlib.invalidated-<UTC timestamp> (never deleted), so the next auth_run starts a fresh login.",
+                 description: "Reset the local Telegram session without contacting Telegram: closes TDLib (up to 30 s) and renames its database directory to tdlib.invalidated-<UTC timestamp> (never deleted), so the next auth_run starts a fresh login. The old session stays in the account's device list until it is ended in a Telegram app. Ask the user before calling this.",
                  properties: [:], required: []),
 
             // User Info
@@ -408,7 +408,7 @@ public final class CheTelegramAllMCPServer {
         let result = await handleWithTDLib(name: name, arguments: args, tdlib: tdlib)
         await lifecycle.endCall()
         // An authorized TDLib that has not synced answers from old data (#63).
-        return withSyncNote(result, authReady: tdlib.getAuthState() == .ready, snapshot: syncState.snapshot)
+        return withSyncNote(result, tool: name, authReady: tdlib.getAuthState() == .ready, snapshot: syncState.snapshot)
     }
 
     /// Runs `name` against an open TDLib client.
@@ -492,34 +492,10 @@ public final class CheTelegramAllMCPServer {
                 )
 
             case "logout":
-                // A session Telegram has invalidated may never finish logging
-                // out; then its database directory is renamed aside, never
-                // deleted (#63). Either way the client is closed afterwards.
-                let renamed: URL?
-                do {
-                    renamed = try await TDLibSessionReset.reset(
-                        client: tdlib, directory: URL(fileURLWithPath: TDLibClient.databaseDirectory), now: Date())
-                } catch TDLibSessionReset.ResetError.couldNotClose {
-                    return errorResult("Logout did not finish and TDLib could not be closed within "
-                                       + "\(Int(TDLibSessionReset.timeout)) s; nothing was changed. Try again.")
-                } catch TDLibSessionReset.ResetError.renameFailed(let reason) {
-                    await lifecycle.discardClosedClient()
-                    syncState.reset()
-                    return errorResult("Logout did not finish; TDLib is closed, but its database directory could "
-                                       + "not be renamed (\(reason)). Move \(TDLibClient.databaseDirectory) aside by hand "
-                                       + "before logging in again.")
-                }
-                await lifecycle.discardClosedClient()
-                syncState.reset()
-                if let renamed {
-                    let payload: [String: Any] = ["ok": true, "renamed_directory": renamed.path,
-                                                  "note": "TDLib did not finish logging out; its database was moved aside "
-                                                    + "(not deleted). Log in again with auth_run."]
-                    let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-                    result = String(data: data, encoding: .utf8) ?? "{\"ok\": true}"
-                } else {
-                    result = "{\"ok\": true}"
-                }
+                // A local reset: no request to Telegram, nothing deleted (#63).
+                return await performLocalReset(
+                    client: tdlib, directory: URL(fileURLWithPath: TDLibClient.databaseDirectory), now: Date(),
+                    discard: { await self.lifecycle.discardClosedClient() }, resetSync: { self.syncState.reset() })
 
             // User Info
             case "get_me":

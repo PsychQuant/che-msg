@@ -1,23 +1,18 @@
 import Foundation
 
-/// A TDLib client that can be asked to log out (PsychQuant/che-msg#63).
-public protocol TDLibLoggingOut: AnyObject {
-    /// Asks TDLib to log out; true when it finished within `timeout` seconds.
-    func logOut(timeout: TimeInterval) async -> Bool
-    /// Closes TDLib; true when it reported closing within `timeout` seconds.
-    func close(timeout: TimeInterval) async -> Bool
-}
-
-/// `logout` for a session that may no longer sync (#63).
+/// `logout` as a local reset (PsychQuant/che-msg#63).
 ///
-/// TDLib normally clears its database itself when it logs out. A session
-/// Telegram has invalidated may never finish: then TDLib is closed and its
-/// database directory is renamed aside, so the next login starts from a new,
-/// empty directory. Nothing is ever deleted — the directory holds the only
-/// local copy of the account's messages.
+/// No log-out request goes to Telegram: TDLib's `logOut` waits for the server
+/// with no timeout (forever when offline), and when it completes TDLib clears
+/// its local database — the only local copy of the account's messages. So the
+/// reset closes TDLib and renames its database directory aside; the next login
+/// starts from a new, empty directory. Nothing is ever deleted. The old
+/// session stays in the account's device list until it is ended in a Telegram
+/// app, and the renamed directory still holds a working auth key: it must not
+/// be moved back while a new session is in use.
 public enum TDLibSessionReset {
     public enum ResetError: Error, Equatable {
-        /// TDLib neither finished the logout nor closed; nothing was changed.
+        /// TDLib did not close; nothing was changed.
         case couldNotClose
         /// TDLib is closed but the directory could not be renamed; it is unchanged.
         case renameFailed(String)
@@ -34,11 +29,9 @@ public enum TDLibSessionReset {
         return "tdlib.invalidated-" + format.string(from: date)
     }
 
-    /// Logs `client` out. Returns the directory `directory` was renamed to, or
-    /// nil when TDLib finished the logout itself.
-    public static func reset(client: TDLibLoggingOut, directory: URL,
-                             timeout: TimeInterval = TDLibSessionReset.timeout, now: Date) async throws -> URL? {
-        if await client.logOut(timeout: timeout) { return nil }
+    /// Closes `client` and renames `directory` aside; returns the new location.
+    public static func reset(client: TDLibClosable, directory: URL,
+                             timeout: TimeInterval = TDLibSessionReset.timeout, now: Date) async throws -> URL {
         guard await client.close(timeout: timeout) else { throw ResetError.couldNotClose }
         let target = directory.deletingLastPathComponent().appendingPathComponent(renamedName(at: now))
         guard !FileManager.default.fileExists(atPath: target.path) else {
