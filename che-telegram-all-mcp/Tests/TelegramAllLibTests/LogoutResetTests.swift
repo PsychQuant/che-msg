@@ -1,7 +1,7 @@
 import XCTest
 @testable import TelegramAllLib
 
-/// Covers "Logout resets the local session without contacting Telegram"
+/// Covers "Logout resets the local session without a log-out request"
 /// (telegram-tdlib-lifecycle; PsychQuant/che-msg#63, tasks 6.1 and 8.4).
 final class LogoutResetTests: XCTestCase {
     /// A client that can only be closed: the reset has no way to send a

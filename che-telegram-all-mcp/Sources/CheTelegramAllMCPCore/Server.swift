@@ -189,7 +189,7 @@ public final class CheTelegramAllMCPServer {
                  required: []),
 
             tool("logout",
-                 description: "Reset the local Telegram session without contacting Telegram: closes TDLib (up to 30 s) and renames its database directory to tdlib.invalidated-<UTC timestamp> (never deleted), so the next auth_run starts a fresh login. If TDLib is not open it is opened first, like any call. The old session stays valid in the account's device list; end it in a Telegram app after this call, not before. Ask the user before calling this.",
+                 description: "Reset the local Telegram session without sending a log-out request to Telegram: closes TDLib (up to 30 s) and renames its database directory to tdlib.invalidated-<UTC timestamp> (never deleted), so the next auth_run starts a fresh login. If TDLib is not open it is opened first, like any call. The old session stays valid in the account's device list; end it in a Telegram app after this call, not before. Ask the user before calling this.",
                  properties: [:], required: []),
 
             // User Info
