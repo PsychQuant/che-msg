@@ -120,12 +120,12 @@ It prints `⚠️` warnings with copy-pasteable fix commands when something is m
 
 ```bash
 mkdir -p ~/bin
-curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.6.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
-curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.6.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.7.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.7.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
 chmod +x ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
 xattr -dr com.apple.quarantine ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
-echo 0.6.0 > ~/bin/.CheTelegramAllMCP.version
-echo 0.6.0 > ~/bin/.CheTelegramBotMCP.version
+echo 0.7.0 > ~/bin/.CheTelegramAllMCP.version
+echo 0.7.0 > ~/bin/.CheTelegramBotMCP.version
 ```
 
 The last two lines record the installed version. Without them the wrapper still sees the old version and downloads the binary again on the next start.
@@ -246,7 +246,7 @@ The wrapper stops before starting the server in three cases only, and `/mcp` the
 
 - **API credentials missing**: store `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in the Keychain as in step 2 of [Track A](#track-a--personal-account-only-most-common), then reconnect with `/mcp`.
 - **Binary not available**: the download failed or found no release asset. Install it by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
-- **Binary too old**: the binary found is older than 0.6.0 — typically the previous version, kept because the download of the new one failed, or an old copy outside `~/bin` (such as `~/.local/bin`), which the wrapper never upgrades. The message names the binary and why it was not upgraded. Binaries before 0.6.0 open TDLib without coordinating with other sessions, so the wrapper does not run them. Install the current one by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
+- **Binary too old**: the binary found is older than 0.7.0 — typically the previous version, kept because the download of the new one failed, or an old copy outside `~/bin` (such as `~/.local/bin`), which the wrapper never upgrades. The message names the binary and why it was not upgraded. Binaries before 0.6.0 open TDLib without coordinating with other sessions, and 0.6.x binaries send Telegram's log-out from `logout`, which deletes the local database, so the wrapper runs neither. Install the current one by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
 
 Another session using `telegram-all` is never a reason: the wrapper takes no lock and stops only the server it started itself.
 
@@ -274,9 +274,15 @@ This plugin requires:
 
 ## Version
 
-Plugin version: 1.5.0 (currently pins `che-telegram-all-mcp` v0.6.0 + `che-telegram-bot-mcp` v0.6.0 binaries; wrapper auto-upgrades on version mismatch)
+Plugin version: 1.6.0 (currently pins `che-telegram-all-mcp` v0.7.0 + `che-telegram-bot-mcp` v0.7.0 binaries; wrapper auto-upgrades on version mismatch)
 
 ### Changelog
+
+**1.6.0** (2026-10-10)
+
+- **telegram-all says when it is not synced** ([#63](https://github.com/PsychQuant/che-msg/issues/63)): read answers carry a `sync: not-synced` note, `auth_status` reports `sync_stalled`, and the skill reports a stalled session to you. See [When telegram-all stops syncing](#when-telegram-all-stops-syncing).
+- **`logout` is a local reset**: no log-out request to Telegram, nothing deleted; Claude asks you first. Recovery order: `logout`, then end the old session in Telegram → Settings → Devices, then `auth_run`.
+- The telegram-all wrapper runs only binary 0.7.0 or later. Binaries 0.7.0 (`DESIRED_VERSION`).
 
 **1.5.0** (2026-10-09)
 

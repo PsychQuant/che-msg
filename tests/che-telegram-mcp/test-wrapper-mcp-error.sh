@@ -5,7 +5,7 @@
 # Runs the real wrapper against a private HOME (tests/lib/wrapper_harness.sh).
 # Another session never stops the wrapper. It stops before starting the
 # server only for missing Keychain credentials, a missing binary, or a binary
-# older than 0.6.0, and then answers the pending initialize request with a
+# older than 0.7.0, and then answers the pending initialize request with a
 # JSON-RPC 2.0 error, because Claude Code otherwise shows only a generic -32000.
 #
 # Tests:
@@ -29,7 +29,11 @@
 #      is refused the same way.
 #   7. An old binary outside ~/bin (one the wrapper never upgrades) is refused,
 #      and the message says why no download was attempted.
-#   8. No other test reached the network: only cases 4 and 5 called the fake curl.
+#   8. A 0.6.x binary (its logout sends Telegram's log-out, which deletes the
+#      local database; PsychQuant/che-msg#63): when the download fails and
+#      only 0.6.0 is installed, the wrapper refuses it and says why.
+#   9. No other test reached the network: only cases 4, 5 and 8 called the
+#      fake curl.
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-mcp-error.sh
@@ -141,7 +145,21 @@ check_message() {
     esac
 }
 check_message "$H" "The binary at ~/bin/CheTelegramAllMCP reports version 0.5.0"
-check_message "$H" "The download of v0.6.0 did not succeed"
+check_message "$H" "The download of v$DESIRED_VERSION did not succeed"
+check_message "$H" "without coordinating with other sessions"
+
+# ----------------------------------------------------------------------
+test_case "An installed 0.6.x binary is not run when the upgrade fails (#63)"
+H="$SCRATCH/binary060"; make_home "$H" yes 0.6.0
+printf '%s\n' '{"jsonrpc":"2.0","id":14,"method":"initialize","params":{}}' > "$H/in"
+HOME="$H" PATH="$H/fakebin:$PATH" bash "$WRAPPER" < "$H/in" > "$H/out" 2> "$H/err"
+RC=$?
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
+check_error "$H" 14
+if [ -s "$H/curl.calls" ]; then pass "the upgrade was attempted (fake curl)"; else fail "no upgrade attempt"; fi
+check_message "$H" "reports version 0.6.0"
+check_message "$H" "deletes the local TDLib database"
+check_message "$H" "The download of v$DESIRED_VERSION did not succeed"
 
 # ----------------------------------------------------------------------
 test_case "A binary that does not report its version is not run"
@@ -179,7 +197,7 @@ check_message "$H" "never upgraded automatically"
 
 # ----------------------------------------------------------------------
 test_case "No other test reached the network"
-others=$(ls "$SCRATCH"/*/curl.calls 2>/dev/null | grep -v -e '/nobinary/' -e '/oldbinary/' || true)
+others=$(ls "$SCRATCH"/*/curl.calls 2>/dev/null | grep -v -e '/nobinary/' -e '/oldbinary/' -e '/binary060/' || true)
 if [ -z "$others" ]; then pass "curl called only by the download cases"; else fail "curl was called: $others"; fi
 
 echo ""
