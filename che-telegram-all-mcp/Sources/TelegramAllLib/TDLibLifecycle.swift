@@ -147,6 +147,16 @@ public actor TDLibLifecycle<Client: TDLibClosable> {
         }
     }
 
+    /// Forgets a client that has closed itself — after `logout` (#63) — and
+    /// releases the lock, so the next call opens a new client. Does nothing
+    /// unless a client is open.
+    public func discardClosedClient() {
+        guard case .open = state else { return }
+        state = .closed
+        closePending = false
+        lock.release()
+    }
+
     /// Applies a finished close; whichever of `checkIdle` and `client` sees it
     /// first does so, the other finds the state already settled.
     private func settleClose(_ closed: Bool, client: Client) {

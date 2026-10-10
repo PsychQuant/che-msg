@@ -11,18 +11,27 @@ import TelegramAllLib
 ///   - `state`: matching `TDLibClient.AuthState` raw value
 ///   - `next_step`: null when ready/closed, otherwise `{tool, required_args, hint}`
 ///   - `last_error`: null when no auto-fire failure, otherwise structured payload
+///   - `connection_state`, `unsynced_seconds`, `sync_stalled`: whether TDLib is
+///     synced with Telegram (#63). A session Telegram has invalidated stays
+///     `ready` and never syncs; once stalled, `next_step` points to `logout`.
 ///
 /// All three fields are deterministic given (state, lastError) — no env var
 /// inspection. The caller is told what arguments to provide; auto-fire (if env
 /// vars present) handles the same advancement concurrently via coalescing.
 internal func authStatusResult(
     state: TDLibClient.AuthState,
-    lastError: TDLibClient.TDError?
+    lastError: TDLibClient.TDError?,
+    sync: TDLibSyncState.Snapshot = .init(connectionState: nil, isSynced: false, unsyncedSeconds: 0)
 ) -> CallTool.Result {
+    let stalled = state == .ready && sync.unsyncedSeconds >= TDLibSyncState.stallThreshold
+    let nextStep = stalled ? stalledNextStep(unsyncedSeconds: sync.unsyncedSeconds) : authStatusNextStep(state: state)
     let payload: [String: Any] = [
         "state": state.rawValue,
-        "next_step": authStatusNextStep(state: state) ?? NSNull(),
+        "next_step": nextStep ?? NSNull(),
         "last_error": authStatusLastError(lastError) ?? NSNull(),
+        "connection_state": sync.connectionState ?? NSNull(),
+        "unsynced_seconds": sync.unsyncedSeconds,
+        "sync_stalled": stalled,
     ]
     let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
         ?? Data(#"{"state":"unknown","next_step":null,"last_error":null}"#.utf8)
@@ -31,6 +40,18 @@ internal func authStatusResult(
         content: [.text(text: json, annotations: nil, _meta: nil)],
         isError: false
     )
+}
+
+/// `next_step` when TDLib is authorized but has not synced for the stall
+/// threshold (#63).
+private func stalledNextStep(unsyncedSeconds: Int) -> [String: Any] {
+    [
+        "tool": "logout",
+        "required_args": [String](),
+        "hint": "TDLib has not synced with Telegram for \(unsyncedSeconds) s although it is logged in. "
+            + "Telegram has likely invalidated this session (for example, the same session used in two places at once). "
+            + "Call logout, then log in again with auth_run.",
+    ]
 }
 
 private func authStatusNextStep(state: TDLibClient.AuthState) -> [String: Any]? {

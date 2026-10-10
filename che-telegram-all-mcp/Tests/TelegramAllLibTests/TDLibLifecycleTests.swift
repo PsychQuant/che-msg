@@ -296,4 +296,27 @@ final class TDLibLifecycleTests: XCTestCase {
             XCTAssertEqual(lines.count, warnings, "value \(value ?? "unset")")
         }
     }
+
+    // MARK: - Discarding a client closed by logout (PsychQuant/che-msg#63, task 6.1)
+
+    func testDiscardClosedClientReleasesTheLockAndTheNextCallReopens() async throws {
+        let lifecycle = makeLifecycle()
+        let first = try await lifecycle.client()
+        XCTAssertFalse(lockIsFree())
+        await lifecycle.discardClosedClient()
+        let isOpen = await lifecycle.isOpen
+        XCTAssertFalse(isOpen)
+        XCTAssertTrue(lockIsFree(), "the lock is released")
+        XCTAssertTrue(first.closeTimeouts.isEmpty, "a client logout already closed is not closed again")
+        let second = try await lifecycle.client()
+        XCTAssertEqual(second.serial, 2, "the next call opens a new client")
+    }
+
+    func testDiscardWithNothingOpenDoesNothing() async {
+        let lifecycle = makeLifecycle()
+        await lifecycle.discardClosedClient()
+        let isOpen = await lifecycle.isOpen
+        XCTAssertFalse(isOpen)
+        XCTAssertTrue(opener.opened.isEmpty)
+    }
 }
