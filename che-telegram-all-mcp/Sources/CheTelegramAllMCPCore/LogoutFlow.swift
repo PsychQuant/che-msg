@@ -2,8 +2,8 @@ import Foundation
 import MCP
 import TelegramAllLib
 
-/// The `logout` tool (PsychQuant/che-msg#63): a local reset that never
-/// contacts Telegram. On success TDLib is released (`discard`) and the sync
+/// The `logout` tool (PsychQuant/che-msg#63): a local reset that sends no
+/// log-out request to Telegram. On success TDLib is released (`discard`) and the sync
 /// state starts again (`resetSync`). On failure neither happens: when TDLib
 /// would not close nothing changed, and when the directory could not be
 /// renamed TDLib stays held so that no client reopens the old directory.
@@ -28,10 +28,10 @@ internal func performLocalReset(client: TDLibClosable, directory: URL, now: Date
     let payload: [String: Any] = [
         "ok": true,
         "renamed_directory": renamed.path,
-        "note": "The local session was reset without contacting Telegram; its database was moved aside, not deleted. "
-            + "Log in again with auth_run. The old session stays in the account's device list until you end it in a "
-            + "Telegram app (Settings > Devices). The moved directory still holds a working auth key: do not move it "
-            + "back while a new session is in use.",
+        "note": "The local session was reset without sending a log-out request to Telegram; its database was moved aside, "
+            + "not deleted. Now end the old session, which stays valid in the account's device list, in a Telegram app "
+            + "(Settings > Devices), then log in again with auth_run. The moved directory still holds a working auth key: "
+            + "do not move it back while a new session is in use.",
     ]
     let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data(#"{"ok":true}"#.utf8)
     return CallTool.Result(content: [.text(text: String(data: data, encoding: .utf8) ?? #"{"ok":true}"#,

@@ -49,7 +49,7 @@
 
 **Supersedes**: telegram-all-sync-health / `logout` 以 30 秒為界，失敗時改名留存
 
-維護者 2026-10-10 選定。`logout` 不送 `logOut`：關閉 TDLib（最多 30 秒，沒有網路往返，所以離線也不會卡住）→ 把資料夾改名為 `tdlib.invalidated-<UTC yyyyMMdd-HHmmss>` → 釋放 TDLib，下一次呼叫從新的空資料夾開始。本機資料永遠不刪。代價：舊 session 會留在帳號的裝置清單，要在 Telegram app 裡結束；回應與 README 都寫明這點，並警告改名後的資料夾裡的 key 仍有效，新 session 使用中時不可搬回。關不掉時失敗、資料夾不動；改名失敗時失敗、不釋放 TDLib，避免下一次呼叫在舊資料夾上重開。
+維護者 2026-10-10 選定。`logout` 不送 `logOut`：關閉 TDLib（最多 30 秒；TDLib 已開啟時關閉不需網路往返，離線也不會卡住；TDLib 未開時先照常開啟，見「復原順序」一節）→ 把資料夾改名為 `tdlib.invalidated-<UTC yyyyMMdd-HHmmss>` → 釋放 TDLib，下一次呼叫從新的空資料夾開始。本機資料永遠不刪。代價：舊 session 會留在帳號的裝置清單，要在 Telegram app 裡結束；回應與 README 都寫明這點，並警告改名後的資料夾裡的 key 仍有效，新 session 使用中時不可搬回。關不掉時失敗、資料夾不動；改名失敗時失敗、不釋放 TDLib，避免下一次呼叫在舊資料夾上重開。
 
 ### 只有補資料卡住才算停滯；登出要先問使用者
 
@@ -70,7 +70,7 @@
 - 十個讀取工具在 TDLib 路徑的成功回答，在未同步時多一段以 `sync: not-synced` 開頭的文字；同步時不變。
 - `auth_status` 多 `connection_state`、`unsynced_seconds`、`sync_stalled` 三欄；`ready` 且停滯時 `next_step` 為 `{"tool":"logout","required_args":[],"hint":...}`；其他情形與現在相同。
 - 開啟 TDLib 的那一次呼叫，授權 ready 時最多多等 10 秒。
-- `logout` 不聯絡 Telegram：關閉 TDLib（最多 30 秒）→ 資料夾改名（不刪除）→ 釋放 TDLib；回應附上新名稱與「舊 session 要在 app 裡結束」。
+- `logout` 不送登出請求（TDLib 未開時先照常開啟）：關閉 TDLib（最多 30 秒）→ 資料夾改名（不刪除）→ 釋放 TDLib；回應附上新名稱與「舊 session 要在 app 裡結束」。
 
 **Interface / data shape**
 

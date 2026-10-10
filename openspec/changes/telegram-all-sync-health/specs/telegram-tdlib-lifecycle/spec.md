@@ -82,14 +82,14 @@ When one of the read tools — `get_chats`, `search_chats`, `get_chat_history`, 
 | connectionStateUpdating | 125 / 125 | the above with `125 s`, plus likely cause: session invalidated by Telegram, ask the user, `logout` then `auth_run` |
 | connectionStateWaitingForNetwork | 300 / 0 | `sync: not-synced`, `connectionStateWaitingForNetwork`, `300 s`, newer messages can be absent, check the network; no `logout` |
 
-### Requirement: Logout resets the local session without contacting Telegram
+### Requirement: Logout resets the local session without a log-out request
 
 The `logout` tool SHALL NOT send a log-out request to Telegram. It SHALL close TDLib, waiting at most 30 seconds for TDLib to report `authorizationStateClosed`, then rename the TDLib database directory to `tdlib.invalidated-<UTC timestamp yyyyMMdd-HHmmss>` in the same parent directory, then release TDLib so that the next call opens a new client on a new, empty database directory. The server SHALL NOT delete the directory or any file in it. The response SHALL name the renamed directory and state that the old session stays in the account's device list until it is ended in a Telegram app, and that the renamed directory must not be moved back while a new session is in use. When TDLib does not close within 30 seconds, the tool SHALL fail, leave the directory unchanged, and keep TDLib held. When the directory cannot be renamed, the tool SHALL fail with the reason, leave the directory unchanged, and SHALL NOT release TDLib in that call, so that the next call does not reopen the old directory (the idle close can still release it later; PsychQuant/che-msg#64). When TDLib is not open, `logout` opens it first like any other call; the 30-second bound applies to closing. Documentation SHALL tell the user to end the old session in a Telegram app only after `logout` has renamed the directory.
 
 #### Scenario: Local reset succeeds
 
 - **WHEN** `logout` is called and TDLib closes within 30 seconds
-- **THEN** the database directory is renamed to `tdlib.invalidated-<timestamp>` with every file unchanged, TDLib is released, the response names that directory, and no request is sent to Telegram
+- **THEN** the database directory is renamed to `tdlib.invalidated-<timestamp>` with every file unchanged, TDLib is released, the response names that directory, and no log-out request is sent to Telegram
 
 #### Scenario: Offline logout does not hang
 

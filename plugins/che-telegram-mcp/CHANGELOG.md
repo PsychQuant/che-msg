@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Ship together with the che-telegram-all-mcp binary that has these changes ([#63](https://github.com/PsychQuant/che-msg/issues/63)); the binary pinned now (0.6.0) still sends a log-out request to Telegram on `logout`.
+Ship together with the che-telegram-all-mcp binary that has these changes ([#63](https://github.com/PsychQuant/che-msg/issues/63)); the binary pinned now (0.6.0) still sends a log-out request to Telegram on `logout`, which hangs while offline and, when it completes, makes TDLib delete its local database — the opposite of what this skill tells the user.
 
 ### Changed
 - `telegram-messaging` skill: `auth_status` returns `connection_state`, `unsynced_seconds` and `sync_stalled`; a stalled session is reported to the user, and `logout` (now a local reset) is never called without the user's agreement. After `logout`, the old session is ended in Telegram → Settings → Devices — in that order. Read answers carrying `sync: not-synced` are passed on as possibly stale.
