@@ -27,7 +27,7 @@ public enum CLIBootstrap {
     /// reads it for the MCP `serverInfo` field. Outside this package, bumping
     /// it also means bumping `DESIRED_VERSION` in
     /// `plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh`.
-    public static let version = "0.6.0"
+    public static let version = "0.7.0"
 
     /// The line `--version` prints. The plugin wrapper parses it with
     /// `^che-telegram-all-mcp X.Y.Z$` and refuses to start a binary whose line
