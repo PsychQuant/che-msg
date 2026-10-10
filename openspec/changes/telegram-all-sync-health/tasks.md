@@ -18,6 +18,7 @@
 ## 6. logout 重置
 
 - [x] 6.1 `TDLibLifecycle` 新增 `discardClosedClient()`（狀態回 closed、釋放鎖）；`logout` 等待 TDLib 報告 closed（或回到等待參數 / 電話號碼）最多 30 秒，逾時則關閉 TDLib 並把資料夾改名為 `tdlib.invalidated-<UTC yyyyMMdd-HHmmss>`，回應附新名稱，任何情況都不刪除檔案，滿足「Logout resets a session that no longer syncs」。驗證方式：`LogoutResetTests` 以 stub client 與暫存目錄證明逾時時目錄被改名、檔案數與內容不變、`discardClosedClient` 被呼叫，完成時不改名；`TDLibLifecycleTests` 既有測試通過 [after: 2.2]
+  - 註：6.1 描述的等待 `logOut` 流程已由 8.4 取代（本機重置）；驗證改由 `LogoutResetTests` 與 `LogoutFlowTests`。
 
 ## 7. 文件與發布前驗收
 
@@ -34,3 +35,6 @@
 - [x] 8.5 等待迴圈在 task 取消時立即返回；`TDLibClient` 在建立 TDLib client 前就通知同步狀態已開啟；`authStatusResult` 的序列化備援字串含三個新欄位。驗證方式：`TDLibSyncWaitTests` 新增取消後立即返回的測試；全套 `swift test --skip E2ETests` 通過
 - [x] 8.6 文件：兩份 README 與 `plugins/che-telegram-mcp/skills/telegram-messaging/SKILL.md` 說明停滯只算補資料卡住、離線只提示網路、`logout` 是本機重置（不聯絡 Telegram、不刪資料、舊 session 要在 app 裡結束、改名資料夾的 key 仍有效不可搬回）且必須先經使用者確認；`che-telegram-all-mcp/CHANGELOG.md` 記錄 `TDLibClient.logout()` 移除與 `logout` 行為改變。驗證方式：`tests/che-telegram-mcp/*.sh` 與 `claude plugin validate plugins/che-telegram-mcp` 通過；內容審閱 [after: 8.2, 8.3, 8.4]
 
+## 9. 驗證第二輪修正（2026-10-10，文件與說明文字）
+
+- [x] 9.1 依 design「復原順序：先 `logout`，再到裝置清單結束舊 session」，兩份 README、`plugins/che-telegram-mcp/skills/telegram-messaging/SKILL.md` 與 `logout` 工具描述改成先 `logout` → 再到 Telegram → Settings → Devices 結束舊 session → `auth_run`，並說明 TDLib 已關閉時 `logout` 會先重開；README 工具表與 Security Notes 改寫為本機重置（伺服器端不撤銷、改名資料夾的 key 仍有效、要手動刪除）；`auth_status` 工具描述改為更新中時間的判準；`plugins/che-telegram-mcp/CHANGELOG.md` 記錄 skill 變更並註明要與新 binary 一起發布；proposal、design 過時段落標註或更正。驗證方式：`grep` 兩份 README、SKILL.md 不再出現先 Devices 後 `logout` 的順序與 "clear your session"；plugin 測試與 `claude plugin validate` 通過；`swift test --skip E2ETests` 通過。

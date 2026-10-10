@@ -43,7 +43,7 @@ Auth state persists in `~/Library/Application Support/che-telegram-all-mcp/tdlib
   ```
 - Legacy per-step tools (`auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password`) are still available as escape hatches.
 
-`auth_status.next_step` tells you exactly which arg the next call needs (e.g., `{tool: "auth_run", required_args: ["code"], hint: "..."}`); follow it — **except `logout`**. When `next_step.tool` is `logout` (a stalled session), never call it on your own: explain to the user that it resets the local session (the database is moved aside, not deleted), that logging in again needs a code sent to their account, and that the old session should be ended in Telegram → Settings → Devices; call `logout` only after they agree.
+`auth_status.next_step` tells you exactly which arg the next call needs (e.g., `{tool: "auth_run", required_args: ["code"], hint: "..."}`); follow it — **except `logout`**. When `next_step.tool` is `logout` (a stalled session), never call it on your own: explain to the user that it resets the local session (the database is moved aside, not deleted; nothing is revoked on Telegram's side) and that logging in again needs a code sent to their account; call `logout` only after they agree. **After** `logout` succeeds — not before — tell them to end the old session in Telegram → Settings → Devices (ending it while TDLib still runs on the old directory can make TDLib clear that directory), then continue with `auth_run`.
 
 Answers from read tools may carry a second text item starting `sync: not-synced` (TDLib not synced) or `source: local-cache` (another session holds TDLib). Both mean the data can be older than what Telegram shows; pass that on.
 

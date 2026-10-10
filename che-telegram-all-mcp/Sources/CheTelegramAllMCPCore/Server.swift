@@ -176,7 +176,7 @@ public final class CheTelegramAllMCPServer {
                  required: ["password"]),
 
             tool("auth_status",
-                 description: "Check current authentication status. Returns {state, next_step, last_error, connection_state, unsynced_seconds, sync_stalled} where next_step describes what to call next (null when ready and synced), last_error reports any auto-fire failure, and sync_stalled is true when TDLib is logged in but has not synced with Telegram for 120 s (the session was likely invalidated; next_step then points to logout).",
+                 description: "Check current authentication status. Returns {state, next_step, last_error, connection_state, unsynced_seconds, sync_stalled} where next_step describes what to call next (null when ready and not stalled), last_error reports any auto-fire failure, connection_state is TDLib's last connection state, unsynced_seconds counts time open without syncing, and sync_stalled is true when TDLib is logged in and has been updating for 120 s without finishing (time offline does not count; the session was likely invalidated). When stalled, next_step points to logout: ask the user before calling it.",
                  properties: [:], required: []),
 
             tool("auth_run",
@@ -189,7 +189,7 @@ public final class CheTelegramAllMCPServer {
                  required: []),
 
             tool("logout",
-                 description: "Reset the local Telegram session without contacting Telegram: closes TDLib (up to 30 s) and renames its database directory to tdlib.invalidated-<UTC timestamp> (never deleted), so the next auth_run starts a fresh login. The old session stays in the account's device list until it is ended in a Telegram app. Ask the user before calling this.",
+                 description: "Reset the local Telegram session without contacting Telegram: closes TDLib (up to 30 s) and renames its database directory to tdlib.invalidated-<UTC timestamp> (never deleted), so the next auth_run starts a fresh login. If TDLib is not open it is opened first, like any call. The old session stays valid in the account's device list; end it in a Telegram app after this call, not before. Ask the user before calling this.",
                  properties: [:], required: []),
 
             // User Info

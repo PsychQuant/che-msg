@@ -13,7 +13,7 @@ Telegram 已作廢這個 session 的登入金鑰：每一次 `updates.getDiffere
 1. `TDLibClient` 記錄 `updateConnectionState`：目前狀態，以及「自何時起不是 Ready」。
 2. 開 TDLib 後，在既有的「等授權穩定」之後，再最多等一段時間讓連線到達 `connectionStateReady`，避免剛開時就回答舊資料。
 3. 由 TDLib 回答的讀取工具，若當下連線不是 Ready，在回答後附一段說明：尚未與 Telegram 同步、已持續多久、可能缺少新訊息。
-4. `auth_status` 增加連線狀態欄位；不是 Ready 超過一段時間時，標為同步停滯並給下一步：session 可能已被 Telegram 作廢，需要重新登入。
+4. `auth_status` 增加連線狀態欄位；補資料（`connectionStateUpdating`）累計 120 秒仍未完成時，標為同步停滯並給下一步：session 可能已被 Telegram 作廢，先問使用者再重置與重新登入。
 5. `logout` 只做本機重置（2026-10-10 驗證第一輪後維護者選定）：不向 Telegram 登出，關閉 TDLib（最多 30 秒）→ 把資料夾改名留存（不刪除）→ 釋放 TDLib，下一次登入從新的資料夾開始。舊 session 留在帳號的裝置清單，要在 Telegram app 裡結束。停滯只算 `connectionStateUpdating` 的時間，離線不算；`next_step` 指向 `logout` 時提示先問使用者。
 6. README 寫「telegram-all 不再同步」的辨識方式與恢復步驟。
 
@@ -22,13 +22,13 @@ Telegram 已作廢這個 session 的登入金鑰：每一次 `updates.getDiffere
 ## Non-Goals
 
 - 不解讀 406 的錯誤訊息；`telegram-auth-error-reporting` 的「406 silent-ignore」規則不變。
-- 不自動重新登入、不自動刪除或搬移 TDLib 資料夾：重新登入會寄驗證碼並建立新 session，必須由維護者操作。資料夾只在維護者呼叫 `logout` 且 TDLib 無法自行完成時改名，且永不刪除。
+- 不自動重新登入、不自動刪除或搬移 TDLib 資料夾：重新登入會寄驗證碼並建立新 session，必須由維護者操作。資料夾只在維護者同意後呼叫 `logout` 時改名，且永不刪除。
 - 不查明這次金鑰為何被判定重複（需要維護者其他裝置的資訊，記為 #63 的 residue）。
 - 不改 `telegram-all` CLI（#61 另案）。
 
 ## Success Criteria
 
-- `logout` 在 TDLib 30 秒內沒完成時改名資料夾、不刪除任何檔案，下一次登入從空資料夾開始（單元測試，暫存目錄）。
+- `logout` 不送登出請求：關閉 TDLib 後改名資料夾、不刪除任何檔案，下一次登入從空資料夾開始；關不掉或改名失敗時資料夾不變（單元測試 `LogoutResetTests`、`LogoutFlowTests`，暫存目錄）。
 - 以 stub 模擬連線狀態一直停在 Updating：讀取工具的回答多一段說明，`auth_status` 在門檻後回報停滯與重新登入的下一步（單元測試）。
 - 連線為 Ready 時，回答與 `auth_status` 的既有欄位不變（回歸測試）。
 - 不是 Ready 時，第一次讀取最多等到門檻就回答，不會無限等待（單元測試，注入時鐘）。
