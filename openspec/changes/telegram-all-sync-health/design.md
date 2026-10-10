@@ -35,7 +35,7 @@
 
 ### 停滯門檻 120 秒
 
-`auth_status` 的 `sync_stalled` 與回答中的「可能已被作廢」文字都以 `unsynced_seconds >= 120` 為準。依據：作廢的 session 90 秒毫無進展；正常 session 補資料不應超過一分鐘。估計值，apply 時與 10 秒一起量測；若正常 session 開啟後的 Updating 時間接近 120 秒，提高門檻並記錄。
+（判準已由「只有補資料卡住才算停滯；登出要先問使用者」取代：改看更新中時間；120 秒門檻保留。）原寫法：`auth_status` 的 `sync_stalled` 與回答中的「可能已被作廢」文字都以 `unsynced_seconds >= 120` 為準。依據：作廢的 session 90 秒毫無進展；正常 session 補資料不應超過一分鐘。估計值，apply 時與 10 秒一起量測；若正常 session 開啟後的 Updating 時間接近 120 秒，提高門檻並記錄。
 
 ### 同步說明沿用 `localCacheNote` 的形式
 
@@ -59,11 +59,15 @@
 
 驗證第一輪指出原先附在所有 TDLib 路徑的成功回答，`auth_status` / `auth_run` 會多一段非 JSON 文字，寫入工具的「可能缺少新訊息」也不對。改為只附在十個讀取工具（`get_chats`、`search_chats`、`get_chat_history`、`search_messages`、`dump_chat_to_markdown`、`get_me`、`get_user`、`get_contacts`、`get_chat`、`get_chat_members`）。
 
+### 復原順序：先 `logout`，再到裝置清單結束舊 session
+
+驗證第二輪（2026-10-10）指出：README 原本叫使用者先在手機的裝置清單結束舊 session、再呼叫 `logout`。但 `auth_status` 之後 TDLib 通常還開著；session 一被結束，TDLib 可能失去授權並自行清掉資料夾，`logout` 改名的就是空的備份。所以文件、SKILL.md 與工具描述一律寫「先 `logout`，再到 Telegram → Settings → Devices 結束舊 session，最後 `auth_run`」。另外 `logout` 經過一般的開啟流程：TDLib 已 idle close 時會先重開（會連線、最多約多一分鐘），文件不再宣稱「不連線、離線也最多 30 秒」。改名失敗後的持有只維持到 idle close，以及其他 lifecycle 缺口，另開 #64 處理。
+
 ## Implementation Contract
 
 **Behavior**
 
-- TDLib 路徑的成功回答，在未同步時多一段以 `sync: not-synced` 開頭的文字；同步時不變。
+- 十個讀取工具在 TDLib 路徑的成功回答，在未同步時多一段以 `sync: not-synced` 開頭的文字；同步時不變。
 - `auth_status` 多 `connection_state`、`unsynced_seconds`、`sync_stalled` 三欄；`ready` 且停滯時 `next_step` 為 `{"tool":"logout","required_args":[],"hint":...}`；其他情形與現在相同。
 - 開啟 TDLib 的那一次呼叫，授權 ready 時最多多等 10 秒。
 - `logout` 不聯絡 Telegram：關閉 TDLib（最多 30 秒）→ 資料夾改名（不刪除）→ 釋放 TDLib；回應附上新名稱與「舊 session 要在 app 裡結束」。
@@ -86,7 +90,7 @@
 - `TDLibSyncStateTests`：Ready 歸零、跨 idle close 累計（spec 的範例表逐列）、門檻判定。
 - `SyncNoteTests`：spec「sync note lines」範例逐列；同步時無說明；錯誤與本機快取路徑無說明。
 - `AuthStatusNextStepTests`（既有檔案擴充）：spec「response shape」範例逐列，含 ready+130 秒。
-- `LogoutResetTests`：stub client 不報 closed → 暫存目錄被改名、內容原封不動、`discardClosedClient` 被呼叫。
+- `LogoutResetTests`：只能 close 的 stub client；關閉成功 → 暫存目錄被改名、內容原封不動；關不掉或目標已存在 → 目錄不變。`LogoutFlowTests`：成功時丟棄 client 與歸零同步狀態各一次，失敗時都不做。
 - 手動：維護者機器上重新登入前後的 `auth_status` 與 `get_chats`（proposal 的 Success Criteria）。
 
 **Scope boundaries**
@@ -99,4 +103,4 @@
 - [正常 session 剛開時被標未同步] → 第一次呼叫最多等 10 秒；之後的說明文字說「可能缺少新訊息」而非「資料錯誤」。
 - [server 重啟後停滯判定要再等 120 秒] → 接受；`auth_status` 仍顯示 `connection_state` 與 `unsynced_seconds`，README 說明如何辨識。
 - [門檻是估計值] → apply 時量測正常 session 的 Updating 時間，若接近門檻就調整並記錄於本文件。
-- [`logout` 改名後維護者以為訊息不見] → 回應寫出新資料夾名稱；README 說明它是備份、可手動刪除或還原。
+- [`logout` 改名後維護者以為訊息不見] → 回應寫出新資料夾名稱；README 說明它是備份、新 session 可用後可手動刪除；裡面的 key 仍有效，不可搬回。

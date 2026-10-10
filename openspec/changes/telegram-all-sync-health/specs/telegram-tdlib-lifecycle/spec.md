@@ -84,7 +84,7 @@ When one of the read tools — `get_chats`, `search_chats`, `get_chat_history`, 
 
 ### Requirement: Logout resets the local session without contacting Telegram
 
-The `logout` tool SHALL NOT send a log-out request to Telegram. It SHALL close TDLib, waiting at most 30 seconds for TDLib to report `authorizationStateClosed`, then rename the TDLib database directory to `tdlib.invalidated-<UTC timestamp yyyyMMdd-HHmmss>` in the same parent directory, then release TDLib so that the next call opens a new client on a new, empty database directory. The server SHALL NOT delete the directory or any file in it. The response SHALL name the renamed directory and state that the old session stays in the account's device list until it is ended in a Telegram app, and that the renamed directory must not be moved back while a new session is in use. When TDLib does not close within 30 seconds, the tool SHALL fail, leave the directory unchanged, and keep TDLib held. When the directory cannot be renamed, the tool SHALL fail with the reason, leave the directory unchanged, and SHALL NOT release TDLib, so that no client reopens the old directory.
+The `logout` tool SHALL NOT send a log-out request to Telegram. It SHALL close TDLib, waiting at most 30 seconds for TDLib to report `authorizationStateClosed`, then rename the TDLib database directory to `tdlib.invalidated-<UTC timestamp yyyyMMdd-HHmmss>` in the same parent directory, then release TDLib so that the next call opens a new client on a new, empty database directory. The server SHALL NOT delete the directory or any file in it. The response SHALL name the renamed directory and state that the old session stays in the account's device list until it is ended in a Telegram app, and that the renamed directory must not be moved back while a new session is in use. When TDLib does not close within 30 seconds, the tool SHALL fail, leave the directory unchanged, and keep TDLib held. When the directory cannot be renamed, the tool SHALL fail with the reason, leave the directory unchanged, and SHALL NOT release TDLib in that call, so that the next call does not reopen the old directory (the idle close can still release it later; PsychQuant/che-msg#64). When TDLib is not open, `logout` opens it first like any other call; the 30-second bound applies to closing. Documentation SHALL tell the user to end the old session in a Telegram app only after `logout` has renamed the directory.
 
 #### Scenario: Local reset succeeds
 
@@ -93,8 +93,8 @@ The `logout` tool SHALL NOT send a log-out request to Telegram. It SHALL close T
 
 #### Scenario: Offline logout does not hang
 
-- **WHEN** `logout` is called while TDLib reports `connectionStateWaitingForNetwork`
-- **THEN** the tool completes within the 30-second close bound, as no network round trip is involved
+- **WHEN** `logout` is called while TDLib is open and reports `connectionStateWaitingForNetwork`
+- **THEN** the tool completes within the 30-second close bound, as closing involves no network round trip
 
 #### Scenario: TDLib does not close
 
