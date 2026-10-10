@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-10
+
+telegram-all says when TDLib is not synced with Telegram, and `logout` is a local reset ([#63](https://github.com/PsychQuant/che-msg/issues/63)). The wrappers pin binary `DESIRED_VERSION` 0.7.0.
+
+### Changed
+- `telegram-messaging` skill: `auth_status` returns `connection_state`, `unsynced_seconds` and `sync_stalled`; a stalled session is reported to the user, and `logout` (now a local reset) is never called without the user's agreement. After `logout`, the old session is ended in Telegram → Settings → Devices — in that order. Read answers carrying `sync: not-synced` are passed on as possibly stale.
+- README: new section "When telegram-all stops syncing".
+- **Behavior change:** the telegram-all wrapper does not run a binary older than 0.7.0. A 0.6.x binary's `logout` sends Telegram's log-out, which makes TDLib delete its local database while the skill tells the user nothing is deleted; when the download of 0.7.0 fails and only 0.6.x is installed, the wrapper answers `initialize` with an error that says so.
+- `test-wrapper-mcp-error.sh` covers the 0.6.x refusal.
+
 ## [1.5.0] - 2026-10-09
 
 Several Claude Code sessions can enable telegram-all together ([che-msg#58](https://github.com/PsychQuant/che-msg/issues/58)). The wrappers pin binary `DESIRED_VERSION` 0.6.0.

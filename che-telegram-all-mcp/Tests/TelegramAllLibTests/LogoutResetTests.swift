@@ -1,0 +1,84 @@
+import XCTest
+@testable import TelegramAllLib
+
+/// Covers "Logout resets the local session without a log-out request"
+/// (telegram-tdlib-lifecycle; PsychQuant/che-msg#63, tasks 6.1 and 8.4).
+final class LogoutResetTests: XCTestCase {
+    /// A client that can only be closed: the reset has no way to send a
+    /// log-out request to Telegram.
+    private final class FakeClient: TDLibClosable, @unchecked Sendable {
+        var closeSucceeds = true
+        var closeTimeouts: [TimeInterval] = []
+        func close(timeout: TimeInterval) async -> Bool { closeTimeouts.append(timeout); return closeSucceeds }
+    }
+
+    private var parent: URL!
+    private var database: URL!
+    /// 2026-10-10 03:04:05 UTC.
+    private let now = Date(timeIntervalSince1970: 1_791_601_445)
+
+    override func setUpWithError() throws {
+        parent = FileManager.default.temporaryDirectory.appendingPathComponent("reset-\(UUID().uuidString)")
+        database = parent.appendingPathComponent("tdlib")
+        try FileManager.default.createDirectory(at: database.appendingPathComponent("files"), withIntermediateDirectories: true)
+        try Data("binlog".utf8).write(to: database.appendingPathComponent("td.binlog"))
+        try Data("sqlite".utf8).write(to: database.appendingPathComponent("db.sqlite"))
+        addTeardownBlock { [parent] in try? FileManager.default.removeItem(at: parent!) }
+    }
+
+    private func contents(_ dir: URL) throws -> [String: Data] {
+        var out: [String: Data] = [:]
+        for name in try FileManager.default.contentsOfDirectory(atPath: dir.path) {
+            let url = dir.appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            out[name] = isDir.boolValue ? Data() : try Data(contentsOf: url)
+        }
+        return out
+    }
+
+    func testRenamedNameIsUTCTimestamped() {
+        XCTAssertEqual(TDLibSessionReset.renamedName(at: now), "tdlib.invalidated-20261010-030405")
+    }
+
+    // Scenario: Local reset succeeds.
+    func testResetClosesTDLibAndRenamesTheDirectory() async throws {
+        let client = FakeClient()
+        let before = try contents(database)
+        let renamed = try await TDLibSessionReset.reset(client: client, directory: database, now: now)
+        XCTAssertEqual(client.closeTimeouts, [30])
+        XCTAssertEqual(renamed.lastPathComponent, "tdlib.invalidated-20261010-030405")
+        XCTAssertEqual(renamed.deletingLastPathComponent().standardizedFileURL, parent.standardizedFileURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: database.path), "the next login starts from a new directory")
+        XCTAssertEqual(try contents(renamed), before, "nothing is deleted")
+    }
+
+    // Scenario: TDLib does not close.
+    func testDirectoryIsLeftAloneWhenTDLibCannotBeClosed() async throws {
+        let client = FakeClient(); client.closeSucceeds = false
+        let before = try contents(database)
+        do {
+            _ = try await TDLibSessionReset.reset(client: client, directory: database, now: now)
+            XCTFail("expected couldNotClose")
+        } catch let error as TDLibSessionReset.ResetError {
+            XCTAssertEqual(error, .couldNotClose)
+        }
+        XCTAssertEqual(try contents(database), before)
+    }
+
+    // Scenario: The directory cannot be renamed.
+    func testExistingTargetIsNotOverwritten() async throws {
+        let target = parent.appendingPathComponent("tdlib.invalidated-20261010-030405")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try Data("earlier".utf8).write(to: target.appendingPathComponent("marker"))
+        let before = try contents(database)
+        do {
+            _ = try await TDLibSessionReset.reset(client: FakeClient(), directory: database, now: now)
+            XCTFail("expected renameFailed")
+        } catch let error as TDLibSessionReset.ResetError {
+            guard case .renameFailed = error else { return XCTFail("\(error)") }
+        }
+        XCTAssertEqual(try contents(database), before)
+        XCTAssertEqual(try contents(target), ["marker": Data("earlier".utf8)])
+    }
+}

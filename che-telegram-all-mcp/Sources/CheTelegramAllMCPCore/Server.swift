@@ -38,14 +38,22 @@ public final class CheTelegramAllMCPServer {
     private let idleTimeout: TimeInterval?
 
     private let reader: LocalCacheReading
+    /// Whether TDLib is synced with Telegram (#63). Lives as long as the
+    /// server, so unsynced time survives TDLib being closed and reopened.
+    let syncState: TDLibSyncState
+    /// How long the call that opens TDLib waits for it to sync (#63; an
+    /// estimate, see the telegram-all-sync-health design).
+    static let syncWaitTimeout: TimeInterval = 10
 
     public convenience init() async throws {
         try await self.init(lock: TDLibProcessLock(), idleTimeout: IdleTimeout.fromEnvironment())
     }
 
     init(lock: TDLibProcessLock, idleTimeout: TimeInterval?,
-         reader: LocalCacheReading = LocalTDLibReader(directory: TDLibClient.databaseDirectory)) async throws {
+         reader: LocalCacheReading = LocalTDLibReader(directory: TDLibClient.databaseDirectory),
+         syncState: TDLibSyncState = TDLibSyncState()) async throws {
         self.reader = reader
+        self.syncState = syncState
         // Diagnostic hook (#29): when CHE_TELEGRAM_LOG_STARTUP=1, print
         // per-phase wall-clock to stderr so we can attribute the ~10s cold
         // start (TDLib framework load? tools registration? handler wiring?).
@@ -65,10 +73,15 @@ public final class CheTelegramAllMCPServer {
         lifecycle = TDLibLifecycle(lock: lock, idleTimeout: idleTimeout) {
             let tdlibStart = DispatchTime.now()
             do {
-                let client = try await TDLibClient()
+                let client = try await TDLibClient(syncState: syncState)
                 // Opened on demand, TDLib is still logging in; answering now
                 // would report "Not authenticated" for a logged-in account.
                 await client.waitForAuthorizationToSettle(timeout: 30)
+                // Only the call that opens TDLib waits; an authorized TDLib is
+                // usually still catching up with Telegram at this point (#63).
+                _ = await client.waitForConnectionReady(timeout: Self.syncWaitTimeout) {
+                    syncState.snapshot.isSynced
+                }
                 if logStartup { logStartupDuration("tdlib_init", since: tdlibStart) }
                 return client
             } catch {
@@ -163,7 +176,7 @@ public final class CheTelegramAllMCPServer {
                  required: ["password"]),
 
             tool("auth_status",
-                 description: "Check current authentication status. Returns {state, next_step, last_error} where next_step describes what to call next (or null when ready) and last_error reports any auto-fire failure.",
+                 description: "Check current authentication status. Returns {state, next_step, last_error, connection_state, unsynced_seconds, sync_stalled} where next_step describes what to call next (null when ready and not stalled), last_error reports any auto-fire failure, connection_state is TDLib's last connection state, unsynced_seconds counts time open without syncing, and sync_stalled is true when TDLib is logged in and has been updating for 120 s without finishing (time offline does not count; the session was likely invalidated). When stalled, next_step points to logout: ask the user before calling it.",
                  properties: [:], required: []),
 
             tool("auth_run",
@@ -176,7 +189,7 @@ public final class CheTelegramAllMCPServer {
                  required: []),
 
             tool("logout",
-                 description: "Log out from Telegram",
+                 description: "Reset the local Telegram session without sending a log-out request to Telegram: closes TDLib (up to 30 s) and renames its database directory to tdlib.invalidated-<UTC timestamp> (never deleted), so the next auth_run starts a fresh login. If TDLib is not open it is opened first, like any call. The old session stays valid in the account's device list; end it in a Telegram app after this call, not before. Ask the user before calling this.",
                  properties: [:], required: []),
 
             // User Info
@@ -394,7 +407,8 @@ public final class CheTelegramAllMCPServer {
         // the end of the last one, so a long export is never cut off.
         let result = await handleWithTDLib(name: name, arguments: args, tdlib: tdlib)
         await lifecycle.endCall()
-        return result
+        // An authorized TDLib that has not synced answers from old data (#63).
+        return withSyncNote(result, tool: name, authReady: tdlib.getAuthState() == .ready, snapshot: syncState.snapshot)
     }
 
     /// Runs `name` against an open TDLib client.
@@ -441,7 +455,8 @@ public final class CheTelegramAllMCPServer {
             case "auth_status":
                 return authStatusResult(
                     state: tdlib.getAuthState(),
-                    lastError: tdlib.getLastAutoFireError()
+                    lastError: tdlib.getLastAutoFireError(),
+                    sync: syncState.snapshot
                 )
 
             case "auth_run":
@@ -472,11 +487,15 @@ public final class CheTelegramAllMCPServer {
                 }
                 return authStatusResult(
                     state: tdlib.getAuthState(),
-                    lastError: tdlib.getLastAutoFireError()
+                    lastError: tdlib.getLastAutoFireError(),
+                    sync: syncState.snapshot
                 )
 
             case "logout":
-                result = try await tdlib.logout()
+                // A local reset: no request to Telegram, nothing deleted (#63).
+                return await performLocalReset(
+                    client: tdlib, directory: URL(fileURLWithPath: TDLibClient.databaseDirectory), now: Date(),
+                    discard: { await self.lifecycle.discardClosedClient() }, resetSync: { self.syncState.reset() })
 
             // User Info
             case "get_me":

@@ -120,7 +120,7 @@ auth_run                 →  fires auto-send 2FA password (if env present)
 auth_run                 →  state == "ready"
 ```
 
-Each call returns `{state, next_step, last_error}`. `next_step.required_args` tells you exactly which arg the next call needs. `last_error` surfaces auto-fire failures (e.g., `FLOOD_WAIT_30`).
+Each call returns `{state, next_step, last_error, connection_state, unsynced_seconds, sync_stalled}` (the last three: see [When telegram-all stops syncing](#when-telegram-all-stops-syncing)). `next_step.required_args` tells you exactly which arg the next call needs. `last_error` surfaces auto-fire failures (e.g., `FLOOD_WAIT_30`).
 
 ### Legacy: per-step manual flow
 
@@ -146,6 +146,21 @@ Several Claude Code sessions can run this server at the same time ([#58](https:/
 
 The `telegram-all` CLI does not take this lock yet ([#61](https://github.com/PsychQuant/che-msg/issues/61)); do not run it while a session holds TDLib.
 
+## When telegram-all stops syncing
+
+TDLib can stay logged in while it no longer receives anything from Telegram ([#63](https://github.com/PsychQuant/che-msg/issues/63)). The usual cause: Telegram has invalidated the session because the same TDLib session was used in two places at once (two processes, or a copy of the database directory on another machine). TDLib then keeps `authorizationStateReady` and stays in `connectionStateUpdating`, retrying in the background forever; without a check, every read returns old data.
+
+How to tell:
+
+- An answer from a read tool carries a second text item starting `sync: not-synced`, naming TDLib's connection state and how many seconds TDLib has been open without syncing. Without a network (`connectionStateWaitingForNetwork`, `connectionStateConnectingToProxy`) it says to check the network. The call that opens TDLib first waits up to 10 seconds for it to sync.
+- `auth_status` returns `connection_state`, `unsynced_seconds` and `sync_stalled`. `sync_stalled` is `true` once TDLib has been logged in and **updating** for 120 seconds without finishing (counted across idle closes; time offline never counts). `next_step` then points to `logout`, with a hint to ask the user first.
+
+To recover (a new login sends a code to your account, so it is always your action), in this order:
+
+1. Call `logout`. It sends no log-out request to Telegram: it closes TDLib (up to 30 seconds) and renames the database directory to `tdlib.invalidated-<UTC timestamp>` next to it. If TDLib was already closed (idle), `logout` first opens it like any other call, which connects to Telegram and can take up to about a minute more. Nothing is deleted — the renamed directory is a backup of the local messages. It still holds a working auth key: do not move it back or copy it elsewhere while a new session is in use, or the duplicate happens again. Remove it by hand once the new session works.
+2. **Then** open Telegram → Settings → Devices on your phone and end the stalled session and any session you do not recognise, so the new login is not invalidated the same way. Do this only after step 1: once a session is ended, TDLib still running on its directory can lose its authorization and clear that directory itself, and the backup would be empty.
+3. Log in again with `auth_run` (or `telegram-all auth-phone` / `auth-code`).
+
 ## Tools (27)
 
 ### Authentication (6)
@@ -157,7 +172,7 @@ The `telegram-all` CLI does not take this lock yet ([#61](https://github.com/Psy
 | `auth_send_code` | Enter verification code |
 | `auth_send_password` | Enter 2FA password (if enabled) |
 | `auth_status` | Check current auth state |
-| `logout` | Log out and clear session |
+| `logout` | Local reset: close TDLib and rename its database directory aside (no request to Telegram, nothing deleted); ask the user first |
 
 ### User Info (3)
 
@@ -308,7 +323,7 @@ Sources/
 
 - This MCP operates as **your personal Telegram account**. It can read all your private chats.
 - API credentials and session are stored locally only.
-- Use `logout` to clear your session if needed.
+- `logout` is a local reset only: the session stays valid on Telegram's side, and the renamed `tdlib.invalidated-*` directory still holds a working auth key and the cached messages. To revoke access, end the session in Telegram → Settings → Devices, then delete the `tdlib.invalidated-*` directories (and `tdlib/`, if you are done with this Mac) under `~/Library/Application Support/che-telegram-all-mcp/` by hand.
 - Never share the TDLib database directory with others.
 
 ## License

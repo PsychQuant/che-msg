@@ -13,7 +13,7 @@ GITHUB_REPO="PsychQuant/che-msg"
 INSTALL_DIR="$HOME/bin"
 INSTALLED_BINARY="$INSTALL_DIR/$BINARY_NAME"
 VERSION_FILE="$INSTALL_DIR/.${BINARY_NAME}.version"
-DESIRED_VERSION="0.6.0"
+DESIRED_VERSION="0.7.0"
 DOWNLOAD_TIMEOUT=600  # universal binary ~220MB; allow slow links
 
 # --- Startup errors Claude Code can show (#31, PsychQuant/che-msg#58) ---
@@ -21,7 +21,7 @@ DOWNLOAD_TIMEOUT=600  # universal binary ~220MB; allow slow links
 # transport sees no response and shows a generic "-32000 Server error".
 # Answering the pending initialize request with a JSON-RPC 2.0 error lets it
 # show the reason instead. The wrapper stops early only for missing Keychain
-# credentials, a binary it cannot obtain, or a binary older than 0.6.0;
+# credentials, a binary it cannot obtain, or a binary older than 0.7.0;
 # another session running telegram-all never stops it (the server decides
 # who opens TDLib).
 #
@@ -165,7 +165,12 @@ fi
 # older binaries print nothing (they start as a server and stop at the empty
 # stdin). The probe runs without Telegram credentials, so even an old binary
 # cannot log in or open its database, and is stopped after 5 seconds.
-MIN_BINARY_VERSION="0.6.0"
+#
+# From 0.7.0 the logout tool is a local reset (PsychQuant/che-msg#63). A
+# 0.6.x binary still sends Telegram's log-out, which makes TDLib delete its
+# local database, while this plugin's skill tells the user that nothing is
+# deleted — so 0.6.x is refused too.
+MIN_BINARY_VERSION="0.7.0"
 VERSION_OUT=$(mktemp "${TMPDIR:-/tmp}/che-telegram-all-version-XXXXXX")
 env -u TELEGRAM_API_ID -u TELEGRAM_API_HASH -u TELEGRAM_PHONE -u TELEGRAM_2FA_PASSWORD \
     "$BINARY" --version </dev/null >"$VERSION_OUT" 2>/dev/null &
@@ -201,7 +206,13 @@ if [[ -z "$BINARY_VERSION" ]] || \
     else
         WHY="Its version record already says v$DESIRED_VERSION, so no download was attempted."
     fi
-    fail_startup "CheTelegramAllMCP $MIN_BINARY_VERSION or later is required. The binary at $SHOWN_BINARY $FOUND, and it would open TDLib without coordinating with other sessions. $WHY Install the current version by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
+    if [[ -n "$BINARY_VERSION" ]] && \
+       [[ "$(printf '%s\n%s\n' "0.6.0" "$BINARY_VERSION" | sort -V | head -1)" == "0.6.0" ]]; then
+        RISK="its logout tool sends Telegram's log-out, which deletes the local TDLib database"
+    else
+        RISK="it would open TDLib without coordinating with other sessions"
+    fi
+    fail_startup "CheTelegramAllMCP $MIN_BINARY_VERSION or later is required. The binary at $SHOWN_BINARY $FOUND, and $RISK. $WHY Install the current version by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
 fi
 
 # Read credentials from macOS Keychain
