@@ -72,7 +72,7 @@ hello
 
 ### Requirement: Merge and idempotent rewrite
 
-When a day file already exists, the tool SHALL read the message blocks it holds, keep every existing block unchanged, add only messages whose anchor id is not already present, order all blocks by ascending message id, and replace the file atomically by writing a temporary file in the same directory and renaming it over the original. Running the tool again with the same arguments and no new messages SHALL leave every file byte-identical. The tool SHALL NOT delete a file or remove a block. Before reading any message, when a day file in `<output_dir>/<chat_id>/` records a `utc_offset` that differs from the call's (compared as an offset, so `-00:00` equals `+00:00`), or records no readable `utc_offset`, the tool SHALL refuse the call with an error naming `utc_offset` (and the recorded offset when it is readable) and SHALL NOT write any file.
+When a day file already exists, the tool SHALL read the message blocks it holds, keep every existing block unchanged, add only messages whose anchor id is not already present, order all blocks by ascending message id, and replace the file atomically by writing a temporary file in the same directory and renaming it over the original. Running the tool again with the same arguments and no new messages SHALL leave every file byte-identical. The tool SHALL NOT delete a file or remove a block. Before reading any message, when a day file (a file named `YYYY-MM-DD.md`) in `<output_dir>/<chat_id>/` records a `utc_offset` that differs from the call's (compared as an offset, so `-00:00` equals `+00:00`), or cannot be read, has no readable `utc_offset`, or uses CRLF line endings in its frontmatter, the tool SHALL refuse the call with an error naming `utc_offset` (and the recorded offset when it is readable) and SHALL NOT write any day file or media file. Other files in that directory SHALL be ignored.
 
 #### Scenario: Older messages arrive after newer ones
 
@@ -96,7 +96,7 @@ A successful call SHALL return a single JSON object with the fields `files` (pat
 #### Scenario: Manifest after a first run
 
 - **WHEN** a first run archives 120 messages over 3 days, 4 of them photos, with TDLib synced
-- **THEN** the result is `{"files":["777/2026-10-09.md","777/2026-10-10.md","777/2026-10-11.md"],"new_messages":120,"media_messages":4,"media_downloaded":4,"media_skipped":[],"media_failed_ids":[],"media_pending_local_cache":0,"newest_message_id":<id>,"source":"tdlib","complete":true,"bookmark_safe":true}`
+- **THEN** the result is `{"files":["777/2026-10-09.md","777/2026-10-10.md","777/2026-10-11.md"],"newest_message_file":"777/2026-10-11.md","new_messages":120,"media_messages":4,"media_downloaded":4,"media_skipped":[],"media_failed_ids":[],"media_pending_local_cache":0,"newest_message_id":<id>,"source":"tdlib","complete":true,"bookmark_safe":true}`
 
 ### Requirement: Only newer messages are fetched
 

@@ -225,8 +225,8 @@ final class ArchiveDayFileTests: XCTestCase {
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let m = ArchiveMessage(id: 11, date: utc(2026, 10, 11, 2, 0), sender: "Alex", body: "b")
-        // -00:00 and +00:00 are the same offset; CRLF frontmatter is read.
-        try Data("---\r\nchat_id: 1\r\ndate: 2026-10-11\r\nutc_offset: \"-00:00\"\r\n---\r\n\r\n".utf8)
+        // -00:00 and +00:00 are the same offset.
+        try Data("---\nchat_id: 1\ndate: 2026-10-11\nutc_offset: \"-00:00\"\n---\n\n".utf8)
             .write(to: dir.appendingPathComponent("2026-10-11.md"))
         XCTAssertNoThrow(try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+00:00"))
         XCTAssertNoThrow(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+00:00", messages: [m]))
@@ -243,6 +243,50 @@ final class ArchiveDayFileTests: XCTestCase {
             let m = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: line)
             let out = ArchiveDayFile.render(chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
             XCTAssertTrue(out.contains("\n\\" + line + "\n"), line)
+        }
+    }
+
+    // MARK: - Verify round 3 (#69)
+
+    private func scratchDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dayfile-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Only files named like a day are day files; notes left in the chat directory are ignored.
+    func testOnlyDateNamedFilesAreChecked() throws {
+        let dir = try scratchDir()
+        try Data("my notes".utf8).write(to: dir.appendingPathComponent("notes.md"))
+        try Data("---\ntitle: x\n---\n".utf8).write(to: dir.appendingPathComponent("README.md"))
+        try Data("---\nchat_id: 1\ndate: 2026-10-11\nutc_offset: \"+08:00\"\n---\n\n".utf8)
+            .write(to: dir.appendingPathComponent("2026-10-11.md"))
+        XCTAssertNoThrow(try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+08:00"))
+    }
+
+    /// The tool writes LF only; a day file with CRLF frontmatter was edited elsewhere and is refused.
+    func testCRLFDayFileIsRefused() throws {
+        let dir = try scratchDir()
+        try Data("---\r\nchat_id: 1\r\ndate: 2026-10-11\r\nutc_offset: \"+08:00\"\r\n---\r\n\r\n".utf8)
+            .write(to: dir.appendingPathComponent("2026-10-11.md"))
+        XCTAssertThrowsError(try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+08:00")) { error in
+            XCTAssertEqual(error as? ArchiveDayFile.WriteError, .unreadableOffset(day: "2026-10-11"))
+        }
+        let m = ArchiveMessage(id: 11, date: utc(2026, 10, 11, 2, 0), sender: "Alex", body: "b")
+        XCTAssertThrowsError(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                      messages: [m]))
+    }
+
+    /// A day file that cannot be opened is not skipped.
+    func testUnopenableDayFileIsRefused() throws {
+        let dir = try scratchDir()
+        let file = dir.appendingPathComponent("2026-10-11.md")
+        try Data("---\nchat_id: 1\ndate: 2026-10-11\nutc_offset: \"+08:00\"\n---\n\n".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+        XCTAssertThrowsError(try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+08:00")) { error in
+            XCTAssertEqual(error as? ArchiveDayFile.WriteError, .unreadableOffset(day: "2026-10-11"))
         }
     }
 }

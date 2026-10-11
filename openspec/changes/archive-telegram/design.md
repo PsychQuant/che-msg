@@ -114,7 +114,7 @@ TDLib 回報的速率限制（`429 "Too Many Requests: retry after <n>"`，或�
 - `download_message_media`：`chat_id`、`message_id`、`output_dir`（皆必填）；回傳 `{"message_id","type","path","size"}`。
 - 訊息 JSON（TDLib 路徑）的媒體增加 `file`：`{"id","size","name"?}`，照片取最大尺寸。
 - 媒體位置：`<output_dir>/<chat_id>/media/<message_id>/<檔名>`；檔名：照片 `photo.jpg`、有原檔名用原檔名（去掉路徑分隔與開頭的點）、其他為類型加 TDLib 檔案的副檔名。
-- 清單：`{"files":[…],"new_messages":N,"media_messages":M,"newest_message_id":ID|null,"source":"tdlib"|"local-cache","complete":bool,"bookmark_safe":bool}`，加上條件欄位 `stopped_reason`、`retry_after_seconds`、`bookmark_unsafe_reason`（`incomplete`／`local-cache`／`not-synced`），以及媒體欄位 `media_downloaded`、`media_skipped`（`[{message_id,size}]`）、`media_failed_ids`、`media_pending_local_cache`、`media_retried_ids`。
+- 清單：`{"files":[…],"new_messages":N,"media_messages":M,"newest_message_id":ID|null,"newest_message_file":"<chat_id>/<day>.md"|null,"source":"tdlib"|"local-cache","complete":bool,"bookmark_safe":bool}`，加上條件欄位 `stopped_reason`、`retry_after_seconds`、`bookmark_unsafe_reason`（`incomplete`／`local-cache`／`not-synced`），以及媒體欄位 `media_downloaded`、`media_skipped`（`[{message_id,size}]`）、`media_failed_ids`、`media_pending_local_cache`、`media_retried_ids`。
 - 日檔：frontmatter `chat_id`、`date`、`utc_offset`；訊息區塊 `<!-- msg:<id> -->`、`**HH:mm 寄件人**：`、內文、空行；帶檔案的媒體內文為 `[<type>](media/<message_id>/)` 加空格加說明文字，其他非文字類型為 `[<type>]` 加說明文字。
 - 設定 `.claude/.telegram/config.yaml`：`chats: [{chat_id, label?}]`、`output_dir`、`since?`、`max_media_mb?`。索引 `.claude/.telegram/state/archives/<slug>/index.json`：`{"version":1,"chats":{"<chat_id>":{"last_message_id":…, "utc_offset":"+08:00","pending_media":[…],"last_run":{…}}}}`。
 

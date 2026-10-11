@@ -189,10 +189,10 @@ public struct ChatArchiver {
         return result
     }
 
-    /// The longest `FLOOD_WAIT` the archiver sleeps through before retrying once.
+    /// The longest rate-limit wait the archiver sleeps through before retrying once.
     public static let maxFloodWaitSeconds = 60
 
-    /// One page, sleeping through a short `FLOOD_WAIT` once. Returns nil (with the stop
+    /// One page, sleeping through a short rate-limit wait once. Returns nil (with the stop
     /// recorded in `result`) when the wait is long or repeats; other errors are thrown.
     private func fetchPage(_ chatId: Int64, _ fromMessageId: Int64,
                            into result: inout Result) async throws -> [[String: Any]]? {
