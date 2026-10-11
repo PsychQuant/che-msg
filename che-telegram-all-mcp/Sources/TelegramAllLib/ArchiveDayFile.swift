@@ -21,9 +21,10 @@ public enum ArchiveDayFile {
     /// Seconds east of UTC for `+HH:MM` / `-HH:MM`, or nil when malformed.
     public static func offsetSeconds(_ text: String) -> Int? {
         let chars = Array(text)
+        let isDigit: (Character) -> Bool = { ("0"..."9").contains($0) }
         guard chars.count == 6, chars[0] == "+" || chars[0] == "-", chars[3] == ":",
+              chars[1...2].allSatisfy(isDigit), chars[4...5].allSatisfy(isDigit),
               let hours = Int(String(chars[1...2])), let minutes = Int(String(chars[4...5])),
-              chars[1...2].allSatisfy(\.isASCII), chars[4...5].allSatisfy(\.isASCII),
               hours <= 23, minutes <= 59 else { return nil }
         let seconds = hours * 3600 + minutes * 60
         return chars[0] == "-" ? -seconds : seconds

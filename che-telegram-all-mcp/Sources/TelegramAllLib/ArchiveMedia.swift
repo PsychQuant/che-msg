@@ -47,14 +47,59 @@ public enum ArchiveMedia {
     }
 
     /// True when `directory` holds at least one regular, non-hidden file.
-    static func holdsFile(_ directory: URL) -> Bool {
+    static func holdsFile(_ directory: URL) -> Bool { existingFile(directory) != nil }
+
+    /// The first regular, non-hidden file in `directory` by name, or nil.
+    static func existingFile(_ directory: URL) -> URL? {
         let fm = FileManager.default
-        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return false }
-        return names.contains { name in
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return nil }
+        return names.sorted().lazy.map { directory.appendingPathComponent($0) }.first { url in
             var isDir: ObjCBool = false
-            return !name.hasPrefix(".") && fm.fileExists(atPath: directory.appendingPathComponent(name).path,
-                                                          isDirectory: &isDir) && !isDir.boolValue
+            return !url.lastPathComponent.hasPrefix(".") && fm.fileExists(atPath: url.path, isDirectory: &isDir)
+                && !isDir.boolValue
         }
+    }
+
+    public enum DownloadError: Error, LocalizedError, Equatable {
+        case noFile(messageId: Int64)
+        case failed(messageId: Int64)
+
+        public var errorDescription: String? {
+            switch self {
+            case .noFile(let id): return "message \(id) has no media file to download"
+            case .failed(let id): return "downloading the media of message \(id) failed"
+            }
+        }
+    }
+
+    /// Downloads one message's media into `<outputDir>/<chatId>/media/<messageId>/` and returns
+    /// `{"message_id","type","path","size"}` as JSON — never the message text or caption.
+    public static func downloadOne(chatId: Int64, messageId: Int64, outputDir: URL,
+                                   downloader: ArchiveMediaDownloading) async throws -> String {
+        let message = try await downloader.message(chatId: chatId, messageId: messageId)
+        guard let type = message["type"] as? String, file(of: message) != nil else {
+            throw DownloadError.noFile(messageId: messageId)
+        }
+        let chatDir = outputDir.appendingPathComponent(String(chatId))
+        let saved: URL
+        switch await ensure(message, chatDir: chatDir, downloader: downloader, maxBytes: nil) {
+        case .downloaded(let path, _):
+            saved = URL(fileURLWithPath: path)
+        case .alreadyPresent:
+            guard let existing = existingFile(directory(chatDir: chatDir, messageId: messageId)) else {
+                throw DownloadError.failed(messageId: messageId)
+            }
+            saved = existing
+        case .failed, .skipped:
+            throw DownloadError.failed(messageId: messageId)
+        case .noFile:
+            throw DownloadError.noFile(messageId: messageId)
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: saved.path)[.size] as? NSNumber)?.int64Value ?? 0
+        let object: [String: Any] = ["message_id": NSNumber(value: messageId), "type": type,
+                                     "path": saved.path, "size": NSNumber(value: size)]
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Makes sure the message's media directory holds its file.

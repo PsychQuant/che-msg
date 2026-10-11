@@ -54,7 +54,8 @@ public final class TDLibClient {
     /// reopened after an idle close must not bring a second manager
     /// (PsychQuant/che-msg#58).
     private static let manager = TDLibClientManager()
-    private let client: TDLibKit.TDLibClient
+    /// Internal so the archive adapters in TDLibClient+Archive.swift can reach it.
+    let client: TDLibKit.TDLibClient
     private let dbPath: String
 
     /// Non-reentrant lock protecting all mutable auth state.
@@ -769,7 +770,7 @@ public final class TDLibClient {
         return dict
     }
 
-    private func messageToDict(_ msg: Message) -> [String: Any] {
+    func messageToDict(_ msg: Message) -> [String: Any] {
         var dict: [String: Any] = [
             "id": msg.id,
             "chat_id": msg.chatId,

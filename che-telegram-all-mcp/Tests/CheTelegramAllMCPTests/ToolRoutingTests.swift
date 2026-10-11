@@ -37,6 +37,8 @@ final class ToolRoutingTests: XCTestCase {
 
     private static let readerTools = ["get_chats", "search_chats", "get_chat_history", "search_messages", "dump_chat_to_markdown"]
     private static let unsupportedTools = ["get_me", "get_user", "get_contacts", "get_chat", "get_chat_members"]
+    /// Answered from the local cache too, but with a manifest rather than the reader's JSON (#69).
+    private static let archiveTool = "archive_chat_to_markdown"
 
     private var cache: URL!
     private let reader = FakeReader()
@@ -106,6 +108,26 @@ final class ToolRoutingTests: XCTestCase {
         XCTAssertFalse(isOpen, "no TDLib client may be created while another process holds TDLib")
     }
 
+    /// Scenario "Another session holds TDLib" (telegram-chat-archive, #69).
+    func testArchiveIsAnsweredFromTheLocalCache() async throws {
+        try holdTDLib(asPid: 4242)
+        let server = try await makeServer()
+        let result = await server.handleToolCall(name: Self.archiveTool, arguments: [
+            "chat_id": .int(777), "output_dir": .string(cache.appendingPathComponent("archive").path),
+        ])
+        XCTAssertEqual(result.isError, false, "\(texts(result))")
+        let items = texts(result)
+        XCTAssertEqual(items.count, 2)
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: Data((items.first ?? "").utf8)) as? [String: Any])
+        XCTAssertEqual(manifest["source"] as? String, "local-cache")
+        XCTAssertEqual(manifest["bookmark_safe"] as? Bool, false)
+        XCTAssertTrue(items.last?.contains("source: local-cache") == true)
+        XCTAssertTrue(items.last?.contains("4242") == true)
+        XCTAssertTrue(reader.calls.allSatisfy { $0 == "get_chat_history" } && !reader.calls.isEmpty, "\(reader.calls)")
+        let isOpen = await server.isTDLibOpen
+        XCTAssertFalse(isOpen, "no TDLib client may be created while another process holds TDLib")
+    }
+
     /// Scenario "Unsupported read tool while TDLib is held elsewhere".
     func testUnsupportedReadToolsReportLocalReaderUnsupported() async throws {
         try holdTDLib(asPid: 4242)
@@ -127,8 +149,9 @@ final class ToolRoutingTests: XCTestCase {
         try holdTDLib(asPid: 4242)
         let server = try await makeServer()
         let others = CheTelegramAllMCPServer.defineTools().map(\.name)
-            .filter { !Self.readerTools.contains($0) && !Self.unsupportedTools.contains($0) }
-        XCTAssertEqual(others.count, 18)
+            .filter { !Self.readerTools.contains($0) && !Self.unsupportedTools.contains($0) && $0 != Self.archiveTool }
+        XCTAssertEqual(others.count, 19)
+        XCTAssertTrue(others.contains("download_message_media"), "media downloads need TDLib (#69)")
         for tool in others {
             let result = await server.handleToolCall(name: tool, arguments: arguments(for: tool))
             XCTAssertEqual(result.isError, true, tool)
