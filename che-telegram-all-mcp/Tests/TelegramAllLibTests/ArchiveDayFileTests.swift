@@ -217,4 +217,32 @@ final class ArchiveDayFileTests: XCTestCase {
         _ = try ArchiveDayFile.write(directory: chatDir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [n])
         XCTAssertEqual((try fm.attributesOfItem(atPath: file)[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
+
+    // MARK: - Verify round 2 (#69)
+
+    func testOffsetsCompareBySecondsAndUnreadableOffsetsAreRefused() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dayfile-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let m = ArchiveMessage(id: 11, date: utc(2026, 10, 11, 2, 0), sender: "Alex", body: "b")
+        // -00:00 and +00:00 are the same offset; CRLF frontmatter is read.
+        try Data("---\r\nchat_id: 1\r\ndate: 2026-10-11\r\nutc_offset: \"-00:00\"\r\n---\r\n\r\n".utf8)
+            .write(to: dir.appendingPathComponent("2026-10-11.md"))
+        XCTAssertNoThrow(try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+00:00"))
+        XCTAssertNoThrow(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+00:00", messages: [m]))
+        // A day file without a readable offset cannot be merged safely.
+        try Data("# notes\nutc_offset: \"+99:99\"\n".utf8).write(to: dir.appendingPathComponent("2026-10-12.md"))
+        XCTAssertThrowsError(try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+00:00")) { error in
+            XCTAssertEqual(error as? ArchiveDayFile.WriteError, .unreadableOffset(day: "2026-10-12"))
+            XCTAssertFalse(error.localizedDescription.contains("+99:99"), error.localizedDescription)
+        }
+    }
+
+    func testHeaderLikeLinesAreEscapedLoosely() {
+        for line in ["**9:00 X**：", "**09:00 X**: ", "**09:00 X**： ", "**12:30 會議**"] {
+            let m = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: line)
+            let out = ArchiveDayFile.render(chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
+            XCTAssertTrue(out.contains("\n\\" + line + "\n"), line)
+        }
+    }
 }

@@ -21,9 +21,14 @@ public enum ArchiveDayFile {
     public enum WriteError: Error, LocalizedError, Equatable {
         /// The day file was written at another UTC offset; its times and day would disagree.
         case offsetMismatch(existing: String, requested: String)
+        /// A day file in the chat directory has no readable `utc_offset`.
+        case unreadableOffset(day: String)
 
         public var errorDescription: String? {
             switch self {
+            case .unreadableOffset(let day):
+                return "day file \(day).md has no readable utc_offset in its frontmatter; this archive cannot be "
+                    + "merged into safely (move the file aside or restore its frontmatter)"
             case .offsetMismatch(let existing, let requested):
                 return "utc_offset \(requested) differs from \(existing), the offset this archive's day files were "
                     + "written with; archive this chat with utc_offset \(existing)"
@@ -89,19 +94,49 @@ public enum ArchiveDayFile {
         return "\(anchor(message.id))\n**\(time) \(sender)**：\n\(body)\n\n"
     }
 
-    /// A body line that starts like an anchor, or reads like a block header
-    /// (`**HH:mm name**：`), is escaped with a leading backslash so it cannot pass for the
+    /// A body line that starts like an anchor, or begins like a block header (`**` and a time,
+    /// as in `**HH:mm name**：`), is escaped with a leading backslash so it cannot pass for the
     /// start of another message to the parser or to a reader.
     private static func isAnchorOrHeaderShaped(_ line: Substring) -> Bool {
         line.hasPrefix("<!--")
-            || line.range(of: #"^\*\*[0-9]{2}:[0-9]{2} .*\*\*：$"#, options: .regularExpression) != nil
+            || line.range(of: #"^\*\*[0-9]{1,2}:[0-9]{2}"#, options: .regularExpression) != nil
+    }
+
+    /// Refuses when a day file in `directory` was written at another offset, or has no readable one.
+    public static func checkOffsets(directory: URL, utcOffset: String) throws {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
+        for name in names.sorted() where name.hasSuffix(".md") && !name.hasPrefix(".") {
+            let day = String(name.dropLast(3))
+            guard let handle = FileHandle(forReadingAtPath: directory.appendingPathComponent(name).path) else { continue }
+            defer { try? handle.close() }
+            let head = String(decoding: (try? handle.read(upToCount: 512)) ?? Data(), as: UTF8.self)
+            try checkOffset(recordedIn: head, day: day, utcOffset: utcOffset)
+        }
+    }
+
+    /// Refuses `utcOffset` for a day file whose frontmatter (`text`) records another offset or none.
+    /// Offsets are compared in seconds, so `-00:00` equals `+00:00`.
+    static func checkOffset(recordedIn text: String, day: String, utcOffset: String) throws {
+        guard let recorded = recordedOffset(text), let seconds = offsetSeconds(recorded) else {
+            throw WriteError.unreadableOffset(day: day)
+        }
+        if seconds != offsetSeconds(utcOffset) {
+            throw WriteError.offsetMismatch(existing: recorded, requested: utcOffset)
+        }
     }
 
     /// The `utc_offset` recorded in a day file's frontmatter, or nil.
+    /// Only a well-formed offset inside the leading frontmatter is returned, so nothing else from
+    /// the file can reach an error message.
     static func recordedOffset(_ text: String) -> String? {
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false).prefix(8)
-        where line.hasPrefix("utc_offset: ") {
-            return line.dropFirst("utc_offset: ".count).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        guard lines.first == "---" else { return nil }
+        for line in lines.dropFirst().prefix(8) {
+            if line == "---" { break }
+            guard line.hasPrefix("utc_offset: ") else { continue }
+            let value = line.dropFirst("utc_offset: ".count).trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
+            return offsetSeconds(value) == nil ? nil : value
         }
         return nil
     }
@@ -155,9 +190,7 @@ public enum ArchiveDayFile {
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let file = directory.appendingPathComponent("\(day).md")
         let existing = fm.fileExists(atPath: file.path) ? try String(contentsOf: file, encoding: .utf8) : nil
-        if let existing, let recorded = recordedOffset(existing), recorded != utcOffset {
-            throw WriteError.offsetMismatch(existing: recorded, requested: utcOffset)
-        }
+        if let existing { try checkOffset(recordedIn: existing, day: day, utcOffset: utcOffset) }
         let (content, added) = merged(existing: existing, chatId: chatId, day: day, utcOffset: utcOffset,
                                       messages: messages)
         if added.isEmpty && existing != nil { return [] }

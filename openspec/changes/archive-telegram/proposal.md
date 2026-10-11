@@ -11,7 +11,7 @@
 ## What Changes
 
 - 新增 MCP tool `archive_chat_to_markdown`（`che-telegram-all-mcp`）：輸入 `chat_id`、`output_dir`、可選 `after_message_id` / `since_date` / `utc_offset`（切分日期用的時區，同一份歸檔固定不變）；只抓比書籤新的訊息，寫成「每聊天每天一檔」`<output_dir>/<chat_id>/YYYY-MM-DD.md`。每則訊息前有 `<!-- msg:<id> -->` 錨點；寫檔時讀出既有訊息、併入新訊息、依 message id 排序、以暫存檔加 rename 原子覆寫，重跑不重複。回傳只含清單（寫了哪些檔、新訊息數、最新 message id、媒體數、來源、`complete`、`bookmark_safe`），**不含任何訊息文字**。
-- 速率限制：`FLOOD_WAIT` 不超過 60 秒時工具內重試一次；更長則停止並回 `complete: false`，已寫的檔保留，重跑時依錨點略過。
+- 速率限制：TDLib 回報的等待（`429 "Too Many Requests: retry after N"`，或 `FLOOD_WAIT_N`）不超過 60 秒時工具內重試一次；更長則停止並回 `complete: false`，已寫的檔保留，重跑時依錨點略過。
 - 書籤安全：只有在走回到上一個書籤（或 `since_date`、或對話開頭）、TDLib 已同步、且來源是 TDLib 時才回 `bookmark_safe: true`。
 - 另一個 session 持有 TDLib 時，工具改由本機快取讀取：照樣寫檔，但標 `source: local-cache` 且 `bookmark_safe: false`，寄件人名稱退回 `User <id>`。
 - 新增 skill `plugins/che-telegram-mcp/skills/archive-telegram/`：讀 `.claude/.telegram/config.yaml`（`chats`、`output_dir`、`since`），維護 `.claude/.telegram/state/archives/<slug>/index.json`（每個聊天的 `last_message_id` 與上次執行摘要，原子寫入），逐一呼叫工具，最後核對清單上的每個檔都存在且含對應錨點，再回報。只有工具回 `bookmark_safe: true` 時才前進該聊天的書籤。
@@ -43,4 +43,4 @@
   - New: che-telegram-all-mcp/Sources/TelegramAllLib/ChatArchiver.swift, che-telegram-all-mcp/Sources/TelegramAllLib/ArchiveDayFile.swift, che-telegram-all-mcp/Sources/TelegramAllLib/ArchiveMedia.swift, che-telegram-all-mcp/Tests/TelegramAllLibTests/ArchiveMediaTests.swift, che-telegram-all-mcp/Tests/TelegramAllLibTests/ArchiveDayFileTests.swift, che-telegram-all-mcp/Tests/TelegramAllLibTests/ChatArchiverTests.swift, plugins/che-telegram-mcp/skills/archive-telegram/SKILL.md
   - Modified: che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Server.swift, che-telegram-all-mcp/Sources/TelegramAllLib/TDLibClient.swift, che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/ToolRoutingTests.swift, che-telegram-all-mcp/README.md, che-telegram-all-mcp/CHANGELOG.md, plugins/che-telegram-mcp/README.md, plugins/che-telegram-mcp/CHANGELOG.md, tests/che-telegram-mcp/test-plugin-layout.sh
 - 發布：新版 binary 與 plugin（沿用 v0.7.0 / 1.6.0 的流程），在 #69 的 PR 合併時一起進行。
-- 假設（unattended 下記錄，可被推翻）：工具名稱 `archive_chat_to_markdown`；`utc_offset` 未指定時用伺服器所在時區，skill 會把第一次用的 offset 記在索引裡、之後固定傳同一個值；60 秒的 `FLOOD_WAIT` 重試門檻是估計值，待實際長歷史執行時確認；媒體下載用 TDLib 同步下載（`synchronous: true`），一則一則下載，大檔案會讓單次工具呼叫變長，待實際執行時確認是否需要並行。
+- 假設（unattended 下記錄，可被推翻）：工具名稱 `archive_chat_to_markdown`；`utc_offset` 未指定時用伺服器所在時區，skill 會把第一次用的 offset 記在索引裡、之後固定傳同一個值；60 秒的速率限制重試門檻是估計值，待實際長歷史執行時確認；媒體下載用 TDLib 同步下載（`synchronous: true`），一則一則下載，大檔案會讓單次工具呼叫變長，待實際執行時確認是否需要並行。

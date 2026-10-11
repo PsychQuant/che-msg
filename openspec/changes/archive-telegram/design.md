@@ -6,7 +6,7 @@ PsychQuant/che-msg#69：維護者想把指定的 Telegram 對話增量歸檔成�
 
 - `dump_chat_to_markdown`（`MarkdownExporter.dumpChatToMarkdown`）整檔重寫，訊息沒有 id，媒體說明文字遺失（#70）。
 - `TDLibClient.getChatHistory` 由新到舊分頁；只給 `limit` 與 `fromMessageId`、不給 `maxMessages` 與日期時走單頁路徑。
-- TDLib 錯誤由 `mapTDLibError` 轉成 `TDLibClient.Error.tdlibError(code:message:)`；速率限制是 code 420、訊息 `FLOOD_WAIT_<n>`。
+- TDLib 錯誤由 `mapTDLibError` 轉成 `TDLibClient.Error.tdlibError(code:message:)`；速率限制：伺服器回 code 420 `FLOOD_WAIT_<n>`，但 TDLib 會自己等，超過它的上限才對 client 回 `429 "Too Many Requests: retry after <n>"`（見「驗證第一輪的修正」）。
 - 另一個 session 持有 TDLib 時，`Server.handleToolCall` 改走本機快取：`LocalCacheReading.getChatHistory` 回傳 `LocalTDLibReader.Result`，其 `json` 是與 TDLib 模式同欄位的訊息陣列。
 - `TDLibSyncState` 由 server 持有，`snapshot()` 回報目前的 `connection_state`。
 - TDLibKit 提供 `downloadFile(fileId:limit:offset:priority:synchronous:) async throws -> File`，`synchronous: true` 時下載結束才回應，`File.local.path` 是 TDLib 快取裡的路徑。`TDLibClient.messageToDict` 目前只輸出媒體的類型、說明文字與檔名，沒有檔案 id。
@@ -52,7 +52,7 @@ PsychQuant/che-msg#69：維護者想把指定的 Telegram 對話增量歸檔成�
 
 ### 速率限制：短等一次、長則停
 
-`FLOOD_WAIT_<n>`，n ≤ 60 時等 n 秒重試該頁一次；n > 60 或重試再失敗就停止並回 `complete: false`、`retry_after_seconds`。已寫的日檔保留，重跑時錨點會略過已寫的訊息。60 秒是估計值：讓工具呼叫不至於超過 MCP 用戶端的等待時間，待長歷史實際執行時確認。
+TDLib 回報的速率限制（`429 "Too Many Requests: retry after <n>"`，或原樣傳來的 `FLOOD_WAIT_<n>`），n ≤ 60 時等 n 秒重試該頁一次；n > 60 或重試再失敗就停止並回 `complete: false`、`retry_after_seconds`。已寫的日檔保留，重跑時錨點會略過已寫的訊息。60 秒是估計值：讓工具呼叫不至於超過 MCP 用戶端的等待時間，待長歷史實際執行時確認。
 
 ### 訊息來源抽象成一個介面
 
@@ -93,6 +93,14 @@ PsychQuant/che-msg#69：維護者想把指定的 Telegram 對話增量歸檔成�
 - **skill 強化**：slug 不經 shell 計算；索引記錄的 `output_dir` 與設定不同時停止（避免 `a/b` 與 `a-b` 共用書籤）；`output_dir` 在 git repo 裡卻沒被 ignore 時停止；呼叫前先記下 `utc_offset`；核對 `chat_id` 只用 Grep 取單行。
 - 其餘低風險項目另開 #73（快取讀取器的游標與 TDLib 不一致，既有程式）、#75（`pending_media` 老化、媒體的 quarantine 標記、無日期訊息計數）。
 
+### 驗證第二輪的修正（2026-10-11）
+
+- **`newest_message_file`**：第一輪把 `files` 改成只列加入訊息的日檔後，重跑（最新訊息早已寫入）時 skill 在 `files` 裡找不到最新錨點，書籤永遠不前進，長歷史的第二輪也一樣。清單新增 `newest_message_file`（最新訊息所在日檔，不論這次是否寫入；與 `newest_message_id` 同為 null 或同不為 null），skill 對 `files` 加上它做核對。`files` 維持「這次寫入的」語意。
+- **offset 在讀訊息前整目錄檢查**：原本逐日檔在寫入途中檢查，字典順序可能先用新 offset 寫出新日檔才拒絕，留下混用兩種 offset、兩邊都被拒的目錄。改為呼叫開始（取得鎖後、讀任何訊息前）掃描 `<chat_id>/*.md` 的 frontmatter；以秒數比較（`-00:00` 等於 `+00:00`）；讀不到 offset 的日檔一律拒絕；錯誤訊息只回顯解析成功的 offset。skill 收到不符時改用記錄的 offset 重試一次。
+- **skill 的 git 檢查與 shell**：對目錄底下的檔案路徑（`<dir>/0/2000-01-01.md`、`<dir>/0/media/0/file`）做 `check-ignore`，在 `output_dir` 最近既有上層目錄所屬的 repo 裡判定；非 0 一律停止。所有 shell 路徑一律單引號包住、`'` 寫成 `'\''`，不再有「跳過檢查」的分支。核對只用列檔名的 Grep：`\A---\nchat_id: <id>\n` 與整行 `^<!-- msg:<id> -->$`。
+- 小項：鎖檔以 `O_NOFOLLOW | O_CLOEXEC` 開啟，只有 `EWOULDBLOCK` 回報「另一個歸檔進行中」；`retry after` 後沒有數字時改試 `FLOOD_WAIT_`，數字過大視為 14 天（TDLib 的上限）；檔名去掉 U+2028/U+2029 等換行字元、後備檔名也限 255 bytes；內文行只要以 `**` 加時間開頭就加反斜線。
+- 記錄、不改：兩個 `/archive-telegram` 同時跑同一個 workspace 時索引會互相覆蓋（skill 文件提醒不要這樣做）；`media/<id>` 本身是 symlink、修正前建立的 0755/0644 項目（只存在於開發分支）；錯打的 `chat_id` 會留下空的 `<chat_id>/`。
+
 ## Implementation Contract
 
 **Behavior**
@@ -122,7 +130,7 @@ PsychQuant/che-msg#69：維護者想把指定的 Telegram 對話增量歸檔成�
 **Acceptance criteria**
 
 - `ArchiveDayFileTests`：日檔範例逐字相符；合併 30/50 + 40/50 得 30/40/50；無新訊息重跑位元相同；媒體有無說明文字兩種。
-- `ChatArchiverTests`（假來源）：只抓比 `after_message_id` 新的訊息；`since_date` 起點；書籤安全表四列；`FLOOD_WAIT_30` 重試成功、`FLOOD_WAIT_420` 停止且保留已寫檔；清單不含文字。
+- `ChatArchiverTests`（假來源）：只抓比 `after_message_id` 新的訊息；`since_date` 起點；書籤安全表四列；速率限制（真實形狀 `retry after 30` 重試成功、`retry after 420` 停止且保留已寫檔，`FLOOD_WAIT_n` 仍可辨識）；清單不含文字。
 - `ToolRoutingTests`：TDLib 被持有時 `archive_chat_to_markdown` 走快取、`source: local-cache`、不建立 TDLib client；把它列入快取回答的工具後，回報 `tdlib_in_use` 的其餘工具在 3.2 時仍是 18 個；6.5 加入 `download_message_media` 後是 19 個（`testEveryOtherToolReportsTDLibInUse`）。
 - `ArchiveMediaTests`（假下載器）：照片存成 `photo.jpg`、已有檔案不重下、超過上限列入 `media_skipped`、下載失敗列入 `media_failed_ids` 且不影響 `bookmark_safe`、`retry_media_message_ids` 補下載、本機快取來源只計 `media_pending_local_cache`、檔名去掉路徑分隔與開頭的點。
 - 訊息 JSON 的 `file` 欄位：以 TDLibKit 模型的 JSON 解碼建構照片、檔案訊息，斷言 `file.id` 與大小（照片取最大尺寸）。

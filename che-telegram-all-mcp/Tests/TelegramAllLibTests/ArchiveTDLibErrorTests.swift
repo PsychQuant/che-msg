@@ -3,8 +3,8 @@ import TDLibKit
 @testable import TelegramAllLib
 
 /// TDLibKit errors on the archive path (PsychQuant/che-msg#69). The end-to-end run showed
-/// them reaching the server as "TDLibKit.Error error 1", and a FLOOD_WAIT in that form is
-/// not recognised by the archiver.
+/// them reaching the server as "TDLibKit.Error error 1", and a rate limit in that form
+/// (`429 "Too Many Requests: retry after N"`) was not recognised by the archiver.
 final class ArchiveTDLibErrorTests: XCTestCase {
     func testFloodWaitFromTDLibKitIsRecognised() async {
         do {

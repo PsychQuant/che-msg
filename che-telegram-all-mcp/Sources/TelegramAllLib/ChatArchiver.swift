@@ -65,6 +65,8 @@ public struct ChatArchiver {
         public var newMessages = 0
         public var mediaMessages = 0
         public var newestMessageId: Int64?
+        /// The day file holding `newestMessageId` (relative to the output directory), written by this call or not.
+        public var newestMessageFile: String?
         public var source: Source = .tdlib
         public var complete = false
         public var bookmarkSafe = false
@@ -79,6 +81,7 @@ public struct ChatArchiver {
                 "new_messages": newMessages,
                 "media_messages": mediaMessages,
                 "newest_message_id": newestMessageId.map { NSNumber(value: $0) } ?? NSNull(),
+                "newest_message_file": newestMessageFile ?? NSNull(),
                 "source": source.rawValue,
                 "complete": complete,
                 "bookmark_safe": bookmarkSafe,
@@ -132,10 +135,17 @@ public struct ChatArchiver {
                                                 attributes: [.posixPermissions: 0o700])
         // Day files are read, merged and replaced; two archives of one chat into one directory
         // at once would drop each other's blocks, so one holds a lock for the whole call.
-        let lock = open(chatDir.appendingPathComponent(".archive.lock").path, O_RDWR | O_CREAT, 0o600)
-        guard lock >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        let lock = open(chatDir.appendingPathComponent(".archive.lock").path,
+                        O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard lock >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { close(lock) }
-        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { throw ArchiveError.inProgress(chatId: request.chatId) }
+        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else {
+            if errno == EWOULDBLOCK { throw ArchiveError.inProgress(chatId: request.chatId) }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        // Before any page is read: a day file at another offset (or without one) would leave
+        // the directory with mixed offsets if the refusal came while writing.
+        try ArchiveDayFile.checkOffsets(directory: chatDir, utcOffset: request.utcOffset)
         var files: Set<String> = []
         var seen: Set<Int64> = []
         var fromMessageId: Int64 = 0
@@ -211,12 +221,17 @@ public struct ChatArchiver {
     static func floodWaitSeconds(_ error: Error) -> Int? {
         guard case TDLibClient.TDError.tdlibError(_, let message) = error else { return nil }
         for marker in ["retry after ", "FLOOD_WAIT_"] {
-            if let range = message.range(of: marker) {
-                return Int(message[range.upperBound...].prefix { $0.isASCII && $0.isNumber })
-            }
+            guard let range = message.range(of: marker) else { continue }
+            let digits = message[range.upperBound...].prefix { $0.isASCII && $0.isNumber }
+            guard !digits.isEmpty else { continue }
+            // TDLib clamps waits to 14 days; a number too large to parse is a long wait too.
+            return min(Int(digits) ?? maxReportedWaitSeconds, maxReportedWaitSeconds)
         }
         return nil
     }
+
+    /// The longest wait reported (TDLib's own clamp in NetQueryDelayer).
+    static let maxReportedWaitSeconds = 14 * 24 * 60 * 60
 
     private func isBelowBound(_ message: [String: Any], id: Int64, _ request: Request) -> Bool {
         if let after = request.afterMessageId { return id <= after }
@@ -236,9 +251,13 @@ public struct ChatArchiver {
                                            caption: message["caption"] as? String, messageId: id)
             let archived = ArchiveMessage(id: id, date: date, sender: senderLabel(message, names, request.selfLabel),
                                           body: body)
-            byDay[ArchiveDayFile.dayKey(for: date, offsetSeconds: offset), default: []].append(archived)
+            let day = ArchiveDayFile.dayKey(for: date, offsetSeconds: offset)
+            byDay[day, default: []].append(archived)
             media[id] = ArchiveDayFile.fileTypes.contains(type)
-            result.newestMessageId = max(result.newestMessageId ?? id, id)
+            if id > (result.newestMessageId ?? .min) {
+                result.newestMessageId = id
+                result.newestMessageFile = "\(request.chatId)/\(day).md"
+            }
         }
         // Text first: an interrupted run then keeps the page's messages even if a large
         // download had not finished.
