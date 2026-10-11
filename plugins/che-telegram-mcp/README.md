@@ -150,8 +150,9 @@ The last two lines record the installed version. Without them the wrapper still 
 | `chats` | `/che-telegram-mcp:chats` — show recent Telegram conversations |
 | `search` | `/che-telegram-mcp:search` — search Telegram message history |
 | `send` | `/che-telegram-mcp:send` — send a message to a chat |
+| `archive-telegram` | `/che-telegram-mcp:archive-telegram` — archive the chats listed in `.claude/.telegram/config.yaml` into per-day Markdown files and media (see [Archiving chats](#archiving-chats-archive-telegram)) |
 
-`auth`, `chats`, `search` and `send` run only when you type them (`disable-model-invocation: true`); for natural-language requests Claude uses `telegram-messaging`. The same setting also means scheduled tasks whose prompt is one of these skills, and subagent skill preloads, no longer run them.
+`auth`, `chats`, `search`, `send` and `archive-telegram` run only when you type them (`disable-model-invocation: true`); for natural-language requests Claude uses `telegram-messaging`. The same setting also means scheduled tasks whose prompt is one of these skills, and subagent skill preloads, no longer run them.
 
 Each skill's `allowed-tools` lets Claude call the listed tools **without a permission prompt, but only in the turn where you invoked the skill** — the grant clears as soon as you send your next message (invoking the skill again re-applies it):
 
@@ -161,13 +162,14 @@ Each skill's `allowed-tools` lets Claude call the listed tools **without a permi
 | `chats` | `auth_status`, `get_chats` | — |
 | `search` | `auth_status`, `search_chats`, `search_messages`, `get_chat_history` | — |
 | `send` | `auth_status`, `search_chats` | **`send_message`** — a sent message cannot be recalled, so it is left out on purpose |
+| `archive-telegram` | `auth_status` | **`archive_chat_to_markdown`**, **`download_message_media`** — they write files, so they keep their prompt |
 
 For `auth` this mostly covers the first turn: once Claude asks for your phone number or the SMS code and you reply, the grant has already cleared, so `auth_send_phone` / `auth_send_code` / `auth_send_password` go through your normal permission settings unless you re-invoke `/che-telegram-mcp:auth` with the value.
 
 Leaving `send_message` out means it goes through your normal [permission settings](https://code.claude.com/docs/en/permissions). If you want to be asked before Claude sends or changes anything, whatever mode you are in, add ask rules to `permissions.ask` in your settings: Claude Code never auto-approves a tool matched by an explicit ask rule, not even in auto or `bypassPermissions` mode, and in `dontAsk` mode it refuses the call instead of asking. Hooks can still approve such a call without asking you: for example a `PermissionRequest` hook — in your settings, in a plugin's `hooks.json`, or in a skill's or agent's frontmatter — can answer the prompt, and an installed mod that handles `tool.check` can approve the call (permissions docs, *Extend permissions with hooks*; permission-modes docs).
 
 - `/che-telegram-mcp:send` does not tie itself to one server, so cover `send_message` on both: `mcp__plugin_che-telegram-mcp_telegram-all__send_message` and `mcp__plugin_che-telegram-mcp_telegram-bot__send_message`.
-- The other tools that send, change or delete something — and that `telegram-messaging` can reach from a natural-language request — need ask rules of their own. On `telegram-all`: everything in the Write, Manage and Group lists below, plus `logout`, `dump_chat_to_markdown` (it writes a file) and the Auth list's login steps — `auth_run`, `auth_set_parameters`, `auth_send_phone`, `auth_send_code` and `auth_send_password` — which send codes and change the login. On `telegram-bot`: every tool except `get_me`, `get_chat`, `get_chat_administrators`, `get_chat_member_count`, `get_chat_member` and `get_my_commands` (`get_updates` with an offset drops pending updates for good).
+- The other tools that send, change or delete something — and that `telegram-messaging` can reach from a natural-language request — need ask rules of their own. On `telegram-all`: everything in the Write, Manage and Group lists below, plus `logout`, `dump_chat_to_markdown`, `archive_chat_to_markdown` and `download_message_media` (they write files) and the Auth list's login steps — `auth_run`, `auth_set_parameters`, `auth_send_phone`, `auth_send_code` and `auth_send_password` — which send codes and change the login. On `telegram-bot`: every tool except `get_me`, `get_chat`, `get_chat_administrators`, `get_chat_member_count`, `get_chat_member` and `get_my_commands` (`get_updates` with an offset drops pending updates for good).
 - Or add a whole-server rule, `mcp__plugin_che-telegram-mcp_telegram-all` or `mcp__plugin_che-telegram-mcp_telegram-bot`, to be asked for every call to that server, reads and the skills' pre-approved lookups included.
 
 Without such a rule, what happens depends on the [permission mode](https://code.claude.com/docs/en/permission-modes) and your allow rules:
@@ -189,6 +191,7 @@ Whenever no prompt appears, the only remaining guard is the skill's own instruct
 /che-telegram-mcp:chats                           → See recent conversations
 /che-telegram-mcp:search 會議紀錄                   → Search across chats
 /che-telegram-mcp:send @alice "see you tomorrow"  → Send a message
+/che-telegram-mcp:archive-telegram                → Archive the chats in .claude/.telegram/config.yaml
 ```
 
 Or just ask naturally:
@@ -198,9 +201,37 @@ Or just ask naturally:
 - "Dump my chat with Carol from January to a Markdown file"
 - "Show me the last 50 messages from the dev channel"
 
+## Archiving chats (`/archive-telegram`)
+
+`/che-telegram-mcp:archive-telegram` keeps an archive of chosen chats that grows with each run, like `/archive-mail` does for Apple Mail ([#69](https://github.com/PsychQuant/che-msg/issues/69)). List the chats by `chat_id` (find them with `get_chats` or `search_chats`) in `.claude/.telegram/config.yaml` in your workspace:
+
+```yaml
+output_dir: archives/telegram     # relative to the workspace, or absolute
+since: 2026-01-01                 # optional: where the first run starts (default: the whole history)
+max_media_mb: 50                  # optional: skip larger media (default: no limit)
+chats:
+  - chat_id: 123456789
+    label: 專案群組               # optional, used only in the report
+```
+
+Without this file the skill shows the template and does nothing else. Each run writes, per chat:
+
+- `archives/telegram/<chat_id>/YYYY-MM-DD.md` — one block per message, anchored by `<!-- msg:<message_id> -->`. Re-runs merge into these files; nothing already there is rewritten.
+- `archives/telegram/<chat_id>/media/<message_id>/` — the photo, video, document, audio, voice note, video note, animation or sticker. The message's line links to that directory.
+
+The bookmark of each chat (the newest archived message id) is kept in `.claude/.telegram/state/archives/<slug>/index.json`. It moves forward only when the run read the whole new range from a synced TDLib and the end-of-run check passed (every listed file exists, belongs to that chat and holds the newest message's anchor). Otherwise it stays, and the next run fetches the same range again — the merge drops what is already there. The report says why a bookmark did not move: a Telegram rate limit (with the wait in seconds), TDLib not synced yet, another session holding TDLib (then the archive comes from the local cache, without media), or a failed check.
+
+Media that failed to download are retried on the next run. Media skipped by `max_media_mb` are listed with their size; fetch one later with `download_message_media` (`chat_id`, `message_id`, `output_dir`), which also works on its own to save any single message's media ([#17](https://github.com/PsychQuant/che-msg/issues/17)).
+
+When a group is upgraded to a supergroup its `chat_id` changes (to a `-100…` id): put the new id in the config. The old directory stays.
+
+> **Privacy.** Archives and media are other people's messages and files, verbatim. Do not commit them to a public repository — add `output_dir` to `.gitignore` when the workspace is a git repository. The skill's report gives only counts, file names and message ids, never message text, captions or sender names.
+
+Needs `che-telegram-all-mcp` 0.8.0 or later (the release that adds `archive_chat_to_markdown` and `download_message_media`).
+
 ## Available Tools
 
-### `telegram-all` (Personal Account, TDLib) — 28 tools
+### `telegram-all` (Personal Account, TDLib) — 30 tools
 
 **Auth (6)**: `auth_status`, `auth_run`, `auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password`
 
@@ -213,6 +244,8 @@ Or just ask naturally:
 **Group (2)**: `create_group`, `add_chat_member`
 
 **Export (1)**: `dump_chat_to_markdown` — one-shot export with optional `since_date` / `until_date` / `max_messages`
+
+**Archive (2)**: `archive_chat_to_markdown` — incremental per-day archive with media and a content-free manifest; `download_message_media` — save one message's media (see [Archiving chats](#archiving-chats-archive-telegram))
 
 **Other (2)**: `logout`, `get_user`
 
@@ -229,8 +262,8 @@ Or just ask naturally:
 Several Claude Code sessions can enable `telegram-all` together. Each session starts its own server, and the servers share TDLib this way:
 
 - A server opens TDLib only when a tool first needs it, and closes it again once no call has used it for the idle timeout, so another session can open it. The timeout is `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` in seconds: 600 by default, `0` keeps TDLib open for the server's whole life.
-- While another session's server holds TDLib, `get_chats`, `search_chats`, `get_chat_history`, `search_messages` and `dump_chat_to_markdown` are answered from TDLib's local cache. The result has a second part that starts with `source: local-cache`, names the process holding TDLib, counts the records that could not be decoded, and gives for each chat the date of its newest cached message. The cache holds only the messages TDLib has loaded, so newer messages can exist on Telegram.
-- `get_me`, `get_user`, `get_contacts`, `get_chat` and `get_chat_members` return `{"type":"local_reader_unsupported",…}`. Sending, editing, `auth_*`, `logout` and every other tool return `{"type":"tdlib_in_use","lock_holder_pid":…}`: use the session that holds TDLib, or wait until it has been idle for its timeout.
+- While another session's server holds TDLib, `get_chats`, `search_chats`, `get_chat_history`, `search_messages` and `dump_chat_to_markdown` are answered from TDLib's local cache, and `archive_chat_to_markdown` archives from it without downloading media or advancing bookmarks (`bookmark_safe: false`). The result has a second part that starts with `source: local-cache`, names the process holding TDLib, counts the records that could not be decoded, and gives for each chat the date of its newest cached message. The cache holds only the messages TDLib has loaded, so newer messages can exist on Telegram.
+- `get_me`, `get_user`, `get_contacts`, `get_chat` and `get_chat_members` return `{"type":"local_reader_unsupported",…}`. Sending, editing, `download_message_media`, `auth_*`, `logout` and every other tool return `{"type":"tdlib_in_use","lock_holder_pid":…}`: use the session that holds TDLib, or wait until it has been idle for its timeout.
 
 To change the timeout, set the variable for the MCP server, for example in `~/.claude/settings.json`:
 

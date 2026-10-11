@@ -51,11 +51,11 @@ See each server's README for installation and configuration details.
 che-msg/
 ├── che-telegram-bot-mcp/           # Telegram Bot API
 │   ├── TelegramBotAPI/             #   Pure HTTP client library
-│   ├── CheTelegramBotMCP/          #   MCP Server (30 tools)
+│   ├── CheTelegramBotMCP/          #   MCP Server (31 tools)
 │   └── telegram-bot/               #   CLI tool (6 commands)
 ├── che-telegram-all-mcp/           # Telegram personal account via TDLib
 │   ├── TelegramAllLib/             #   TDLib wrapper library
-│   ├── CheTelegramAllMCP/          #   MCP Server (26 tools)
+│   ├── CheTelegramAllMCP/          #   MCP Server (30 tools)
 │   └── telegram-all/               #   CLI tool (10 commands)
 ├── .claude-plugin/marketplace.json # The che-msg plugin marketplace
 ├── plugins/                        # Claude Code plugins (che-telegram-mcp, che-archive-lines)
