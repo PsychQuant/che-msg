@@ -1,13 +1,53 @@
 import Foundation
 import TDLibKit
 
+/// Runs a TDLibKit call for the archive, turning TDLibKit's own errors into
+/// `TDError.tdlibError` so the archiver can read `FLOOD_WAIT_<n>` and the server reports
+/// TDLib's message. A 406 message must not be shown, so it is dropped.
+internal func archiveTDLibCall<T>(_ body: () async throws -> T) async throws -> T {
+    do {
+        return try await body()
+    } catch let error as TDLibKit.Error {
+        throw TDLibClient.TDError.tdlibError(code: error.code, message: error.code == 406 ? "" : error.message)
+    }
+}
+
+/// What a TDLib chat id names, by TDLib's id ranges (td/telegram/DialogId.cpp).
+internal enum ArchiveChatID: Equatable {
+    case user(Int64)
+    case basicGroup(Int64)
+    case supergroup(Int64)
+    /// Secret chats and ids TDLib does not use: nothing to create them from.
+    case other
+
+    private static let maxUserId: Int64 = (1 << 40) - 1
+    private static let maxBasicGroupId: Int64 = 999_999_999_999
+    private static let zeroChannelId: Int64 = -1_000_000_000_000
+    private static let maxChannelId: Int64 = 1_000_000_000_000 - (1 << 31)
+
+    init(_ chatId: Int64) {
+        if (1...Self.maxUserId).contains(chatId) {
+            self = .user(chatId)
+        } else if (1...Self.maxBasicGroupId).contains(-chatId) {
+            self = .basicGroup(-chatId)
+        } else if chatId < Self.zeroChannelId, (1...Self.maxChannelId).contains(Self.zeroChannelId - chatId) {
+            self = .supergroup(Self.zeroChannelId - chatId)
+        } else {
+            self = .other
+        }
+    }
+}
+
 /// TDLib as the archive's history source and media downloader (PsychQuant/che-msg#69).
 extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
     /// One page of `getChatHistory`, newest first, as message JSON objects.
     public func page(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [[String: Any]] {
         guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let result = try await client.getChatHistory(chatId: chatId, fromMessageId: fromMessageId, limit: limit,
-                                                     offset: 0, onlyLocal: false)
+        if fromMessageId == 0 { try await loadChatForArchive(chatId) }
+        let result = try await archiveTDLibCall {
+            try await client.getChatHistory(chatId: chatId, fromMessageId: fromMessageId, limit: limit,
+                                            offset: 0, onlyLocal: false)
+        }
         return result.messages?.map { messageToDict($0) } ?? []
     }
 
@@ -15,7 +55,9 @@ extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
     /// returns its path in TDLib's cache.
     public func download(fileId: Int) async throws -> String {
         guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let file = try await client.downloadFile(fileId: fileId, limit: 0, offset: 0, priority: 1, synchronous: true)
+        let file = try await archiveTDLibCall {
+            try await client.downloadFile(fileId: fileId, limit: 0, offset: 0, priority: 1, synchronous: true)
+        }
         guard file.local.isDownloadingCompleted, !file.local.path.isEmpty else {
             throw TDError.tdlibError(code: 0, message: "download of file \(fileId) did not complete")
         }
@@ -24,7 +66,30 @@ extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
 
     public func message(chatId: Int64, messageId: Int64) async throws -> [String: Any] {
         guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        return messageToDict(try await client.getMessage(chatId: chatId, messageId: messageId))
+        try await loadChatForArchive(chatId)
+        return messageToDict(try await archiveTDLibCall { try await client.getMessage(chatId: chatId, messageId: messageId) })
+    }
+}
+
+extension TDLibClient {
+    /// Makes `chatId` known to this TDLib before reading it. `getChat` answers for chats TDLib
+    /// has seen (its chat database keeps them), but a fresh login has seen few, and reading an
+    /// unseen chat fails with "Chat not found"; such a chat is created from its id.
+    func loadChatForArchive(_ chatId: Int64) async throws {
+        do {
+            _ = try await archiveTDLibCall { try await client.getChat(chatId: chatId) }
+        } catch TDError.tdlibError(code: 400, message: _) {
+            switch ArchiveChatID(chatId) {
+            case .user(let userId):
+                _ = try await archiveTDLibCall { try await client.createPrivateChat(force: false, userId: userId) }
+            case .basicGroup(let groupId):
+                _ = try await archiveTDLibCall { try await client.createBasicGroupChat(basicGroupId: groupId, force: false) }
+            case .supergroup(let supergroupId):
+                _ = try await archiveTDLibCall { try await client.createSupergroupChat(force: false, supergroupId: supergroupId) }
+            case .other:
+                throw TDError.tdlibError(code: 400, message: "Chat not found")
+            }
+        }
     }
 }
 
