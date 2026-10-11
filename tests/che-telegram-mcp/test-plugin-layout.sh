@@ -30,9 +30,10 @@
 #        disable-model-invocation to it along with the four slash skills. The
 #        key must be absent or the literal false: Claude Code also reads yes/on/
 #        1 — and numbers such as 1.0 — as true, so anything else fails.
-#   (h)  the four slash skills (auth, chats, search, send) set
-#        disable-model-invocation to the literal, unquoted `true` — they run
-#        only when the user types them. Claude Code before 2.1.218 recognises
+#   (h)  the five slash skills (auth, chats, search, send, archive-telegram)
+#        set disable-model-invocation to the literal, unquoted `true` — they run
+#        only when the user types them (archive-telegram writes archives and an
+#        index, PsychQuant/che-msg#69). Claude Code before 2.1.218 recognises
 #        only true, so yes/on/1/"true" fail here. (g) and (h) each fail in
 #        their own safe direction.
 #   (i)  no skill registers `hooks` (they stay registered for the rest of the
@@ -305,7 +306,7 @@ elif "telegram-messaging" in meta and not router_invocable("telegram-messaging")
     bad("g", "skills/telegram-messaging/SKILL.md sets disable-model-invocation")
 
 # ---------- (h) slash skills ----------
-for name in ("auth", "chats", "search", "send"):
+for name in ("auth", "chats", "search", "send", "archive-telegram"):
     if not os.path.isfile(os.path.join(root, "skills", name, "SKILL.md")):
         bad("h", f"skills/{name}/SKILL.md is missing")
     elif name in unreadable:
@@ -353,7 +354,7 @@ else
 fi
 report f  "skills pre-approve only allowlisted read-only tools (auth steps only in auth)"
 report g  "telegram-messaging exists and stays model-invocable"
-report h  "auth/chats/search/send set disable-model-invocation: true"
+report h  "auth/chats/search/send/archive-telegram set disable-model-invocation: true"
 report i  "no skill sets hooks or runs !\`command\` blocks"
 report j  "the plugin and the repository README name the marketplace this repository publishes"
 

@@ -16,8 +16,8 @@
 
 ## 4. archive-telegram skill
 
-- [ ] 4.1 依 design「skill 管設定與索引」，新增 `plugins/che-telegram-mcp/skills/archive-telegram/SKILL.md`：讀 `.claude/.telegram/config.yaml`（缺檔或無 `chats` 時顯示範本並停止）、維護 `.claude/.telegram/state/archives/<slug>/index.json`（暫存檔加 rename）、逐一呼叫工具並帶入書籤、`since` 與記錄的 `utc_offset`，只在 `bookmark_safe` 時前進書籤，滿足「archive-telegram skill configuration and index」。驗證：`tests/che-telegram-mcp/test-plugin-layout.sh` 與 `claude plugin validate plugins/che-telegram-mcp` 在新 skill 存在時通過，並逐段審閱 SKILL.md 對照該需求的兩個 scenario。
-- [ ] 4.2 skill 結尾核對每份清單的檔案存在、frontmatter `chat_id` 相符、`newest_message_id` 的錨點存在，失敗時不前進該聊天書籤，並依聊天回報新訊息數、媒體數、書籤是否前進與原因、停止原因，不引用任何訊息內容，滿足「archive-telegram end-of-run check and report」。驗證：逐段審閱 SKILL.md 對照該需求的三個 scenario（含被速率限制的聊天與缺檔）。[after: 4.1]
+- [x] 4.1 依 design「skill 管設定與索引」，新增 `plugins/che-telegram-mcp/skills/archive-telegram/SKILL.md`：讀 `.claude/.telegram/config.yaml`（缺檔或無 `chats` 時顯示範本並停止）、維護 `.claude/.telegram/state/archives/<slug>/index.json`（暫存檔加 rename）、逐一呼叫工具並帶入書籤、`since` 與記錄的 `utc_offset`，只在 `bookmark_safe` 時前進書籤，滿足「archive-telegram skill configuration and index」。驗證：`tests/che-telegram-mcp/test-plugin-layout.sh` 與 `claude plugin validate plugins/che-telegram-mcp` 在新 skill 存在時通過，並逐段審閱 SKILL.md 對照該需求的兩個 scenario。
+- [x] 4.2 skill 結尾核對每份清單的檔案存在、frontmatter `chat_id` 相符、`newest_message_id` 的錨點存在，失敗時不前進該聊天書籤，並依聊天回報新訊息數、媒體數、書籤是否前進與原因、停止原因，不引用任何訊息內容，滿足「archive-telegram end-of-run check and report」。驗證：逐段審閱 SKILL.md 對照該需求的三個 scenario（含被速率限制的聊天與缺檔）。[after: 4.1]
 
 ## 5. 文件與驗收
 
@@ -32,5 +32,5 @@
 - [x] 6.3 依 design「歸檔時預設下載所有媒體」與「媒體下載不影響書籤，失敗以 id 重試」，新增 `ArchiveMedia`（下載器介面與檔名規則）並接入 `ChatArchiver`：TDLib 路徑下載、已有檔案不重下、`max_media_bytes` 上限、失敗列入 `media_failed_ids`、`retry_media_message_ids` 按 id 補下載、本機快取只計 `media_pending_local_cache`，清單加入媒體欄位，滿足「Media download into the archive」「Media retry by message id」與修改後的「Content-free manifest」。驗證：`ArchiveMediaTests` 以假下載器涵蓋上述各情境，並斷言下載失敗不改變 `bookmark_safe`、清單不含檔名與說明文字。[after: 2.2, 2.3, 6.1]
 - [x] 6.4 `Server.swift` 的 `archive_chat_to_markdown` 接受 `max_media_bytes` 與 `retry_media_message_ids`，以 TDLibKit `downloadFile(synchronous: true)` 與 `getMessage` 實作下載器與按 id 取訊息。驗證：`ArchiveToolTests` 涵蓋兩個新參數的型別驗證（負數上限、非整數 id 被拒）。[after: 3.1, 6.2, 6.3]
 - [x] 6.5 依 design「單則下載工具共用下載核心」，新增 MCP tool `download_message_media`（`chat_id`、`message_id`、`output_dir`），回傳 `message_id`、`type`、`path`、`size`；文字訊息回 `isError: true`；TDLib 被別的 session 持有時回 `tdlib_in_use`，滿足「Single message media download tool」與修改後的「Tool routing while TDLib is held by another process」。驗證：`ArchiveToolTests` 涵蓋文字訊息的錯誤與相對路徑被拒；`ToolRoutingTests` 斷言它在 TDLib 被持有時回 `tdlib_in_use`（回 `tdlib_in_use` 的工具由 18 個變成 19 個）。[after: 6.4]
-- [ ] 6.6 skill `archive-telegram` 讀 `max_media_mb` 並換算成 `max_media_bytes`，把每個聊天的 `media_failed_ids` 存成索引的 `pending_media`、下次以 `retry_media_message_ids` 傳回，回報下載、略過（含大小）與失敗的媒體數。驗證：逐段審閱 SKILL.md 對照「archive-telegram skill configuration and index」與「archive-telegram end-of-run check and report」修改後的內容。[after: 4.2]
+- [x] 6.6 skill `archive-telegram` 讀 `max_media_mb` 並換算成 `max_media_bytes`，把每個聊天的 `media_failed_ids` 存成索引的 `pending_media`、下次以 `retry_media_message_ids` 傳回，回報下載、略過（含大小）與失敗的媒體數。驗證：逐段審閱 SKILL.md 對照「archive-telegram skill configuration and index」與「archive-telegram end-of-run check and report」修改後的內容。[after: 4.2]
 
