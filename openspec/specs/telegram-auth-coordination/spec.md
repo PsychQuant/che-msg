@@ -257,60 +257,94 @@ code:
 ---
 ### Requirement: `auth_status` response includes structured next-step hint
 
-The MCP `auth_status` tool SHALL return a JSON response containing the current `state` (matching `TDLibClient.AuthState` raw value) and a `next_step` field that is either: (a) `null` when `state == ready`, or (b) a JSON object with `tool` (string identifying the recommended MCP tool to call next), `required_args` (array of argument names), and `hint` (human-readable string identifying any context the caller needs).
+The MCP `auth_status` tool SHALL return a JSON response containing the current `state` (matching `TDLibClient.AuthState` raw value), a `next_step` field, a `last_error` field, and three sync fields:
 
-#### Scenario: next_step is null at ready
+- `connection_state`: the latest TDLib connection state name (for example `connectionStateReady`, `connectionStateUpdating`), or `null` when TDLib has reported none since it was opened;
+- `unsynced_seconds`: the server's unsynced duration in whole seconds (time TDLib has been open since it last reported `connectionStateReady`, as defined by the `telegram-tdlib-lifecycle` capability);
+- `sync_stalled`: `true` exactly when `state == ready`, the latest connection state is `connectionStateUpdating`, and the server's updating duration (as defined by the `telegram-tdlib-lifecycle` capability) is at least 120 seconds; otherwise `false`. Time without a network connection never makes a session stalled.
 
-- **WHEN** caller invokes `auth_status` AND `authState == ready`
-- **THEN** the response is `{"state": "ready", "next_step": null, "last_error": null}`
+`next_step` SHALL be either: (a) `null` when `state == closed`, or when `state == ready` and `sync_stalled` is `false`; (b) when `state == ready` and `sync_stalled` is `true`, the object `{"tool": "logout", "required_args": [], "hint": <string>}` whose hint states how long TDLib has been updating without finishing, that a session invalidated by Telegram is the likely cause, that the user must be asked before calling `logout` (it resets the local session and a new login needs a code), and that the remedy is `logout` followed by `auth_run`; or (c) in every other state, a JSON object with `tool` (string identifying the recommended MCP tool to call next), `required_args` (array of argument names), and `hint` (human-readable string identifying any context the caller needs).
+
+#### Scenario: next_step is null at ready while synced
+
+- **WHEN** caller invokes `auth_status` AND `authState == ready` AND TDLib's latest connection state is `connectionStateReady`
+- **THEN** the response is `{"state": "ready", "next_step": null, "last_error": null, "connection_state": "connectionStateReady", "unsynced_seconds": 0, "sync_stalled": false}`
 
 #### Scenario: next_step describes auth_run as the next tool
 
 - **WHEN** caller invokes `auth_status` AND `authState == waitingForCode`
-- **THEN** the response payload includes `"next_step": {"tool": "auth_run", "required_args": ["code"], "hint": "..."}`
+- **THEN** the response payload includes `"next_step": {"tool": "auth_run", "required_args": ["code"], "hint": "..."}` and `"sync_stalled": false`
+
+#### Scenario: stalled sync at ready points to logout
+
+- **WHEN** caller invokes `auth_status` AND `authState == ready` AND TDLib has stayed in `connectionStateUpdating` for 130 seconds (unsynced and updating durations both 130)
+- **THEN** the response includes `"sync_stalled": true`, `"unsynced_seconds": 130`, `"connection_state": "connectionStateUpdating"`, and `"next_step": {"tool": "logout", "required_args": [], "hint": "..."}` whose hint says to ask the user first and names `logout` and then `auth_run`
+
+#### Scenario: offline at ready is not stalled
+
+- **WHEN** caller invokes `auth_status` AND `authState == ready` AND TDLib has reported `connectionStateWaitingForNetwork` for 300 seconds
+- **THEN** the response includes `"sync_stalled": false`, `"unsynced_seconds": 300`, and `"next_step": null`
 
 ##### Example: response shape
 
-| State | next_step |
-| --- | --- |
-| `waitingForParameters` (no env vars) | `{"tool": "auth_run", "required_args": ["api_id", "api_hash"], "hint": "..."}` |
-| `waitingForPhoneNumber` (no env) | `{"tool": "auth_run", "required_args": ["phone"], "hint": "..."}` |
-| `waitingForCode` | `{"tool": "auth_run", "required_args": ["code"], "hint": "..."}` |
-| `waitingForPassword` (no env) | `{"tool": "auth_run", "required_args": ["password"], "hint": "..."}` |
-| `ready` | `null` |
+| State | Connection state | unsynced_seconds | sync_stalled | next_step |
+| --- | --- | --- | --- | --- |
+| `waitingForParameters` (no env vars) | any | any | `false` | `{"tool": "auth_run", "required_args": ["api_id", "api_hash"], "hint": "..."}` |
+| `waitingForPhoneNumber` (no env) | any | any | `false` | `{"tool": "auth_run", "required_args": ["phone"], "hint": "..."}` |
+| `waitingForCode` | any | any | `false` | `{"tool": "auth_run", "required_args": ["code"], "hint": "..."}` |
+| `waitingForPassword` (no env) | any | any | `false` | `{"tool": "auth_run", "required_args": ["password"], "hint": "..."}` |
+| `ready` | `connectionStateReady` | 0 | `false` | `null` |
+| `ready` | `connectionStateUpdating` | 60 | `false` | `null` |
+| `ready` | `connectionStateUpdating` | 130 | `true` | `{"tool": "logout", "required_args": [], "hint": "..."}` |
+| `ready` | `connectionStateWaitingForNetwork` | 300 | `false` | `null` |
 
 <!-- @trace
-source: improve-auth-coordination-and-auto-flow
-updated: 2026-04-26
--->
-
-<!-- @trace
-source: improve-auth-coordination-and-auto-flow
-updated: 2026-04-26
+source: telegram-all-sync-health
+updated: 2026-10-11
 code:
-  - che-telegram-all-mcp/Sources/TelegramAllLib/AutoFire.swift
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/MarkdownSenderResolveTests.swift
+  - .agents/skills/spectra-analyze/SKILL.md
+  - che-telegram-bot-mcp/Sources/CheTelegramBotMCPCore/Server.swift
+  - che-telegram-all-mcp/Sources/TelegramAllLib/TDLibSyncState.swift
   - .agents/skills/spectra-debug/SKILL.md
-  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/CheTelegramAllMCPTests.swift
-  - .agents/skills/spectra-archive/SKILL.md
-  - che-telegram-all-mcp/Tests/E2ETests/TelegramE2ETests.swift
-  - .agents/skills/spectra-ask/SKILL.md
-  - .agents/skills/spectra-apply/SKILL.md
-  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Server.swift
-  - .agents/skills/spectra-discuss/SKILL.md
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/AutoFireChainTests.swift
-  - .agents/skills/spectra-propose/SKILL.md
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/AuthCoalescingTests.swift
-  - che-telegram-all-mcp/Sources/TelegramAllLib/TDLibClient.swift
   - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/AuthStatusNextStepTests.swift
-  - che-telegram-all-mcp/CHANGELOG.md
-  - .agents/skills/spectra-audit/SKILL.md
-  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/AuthRunHandlerTests.swift
-  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/AuthResponses.swift
-  - che-telegram-all-mcp/Sources/telegram-all/TelegramAllCLI.swift
-  - che-telegram-all-mcp/Sources/TelegramAllLib/AuthCoalescing.swift
-  - che-telegram-all-mcp/README.md
+  - CLAUDE.md
+  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/LogoutFlow.swift
+  - .agents/skills/spectra-drift/SKILL.md
   - che-msg.code-workspace
-  - che-telegram-all-mcp/Tests/E2ETests/DumpChatToMarkdownE2ETests.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/AuthStateLockingTests.swift
+  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/CLIBootstrap.swift
+  - che-telegram-all-mcp/README.md
+  - .agents/skills/spectra-archive/SKILL.md
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/MarkdownFormatTests.swift
+  - plugins/che-telegram-mcp/.claude-plugin/plugin.json
+  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/AuthResponses.swift
+  - .agents/skills/spectra-audit/SKILL.md
+  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/LogoutFlowTests.swift
+  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/SyncNoteTests.swift
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/TDLibSyncStateTests.swift
+  - che-telegram-all-mcp/Sources/TelegramAllLib/TDLibSessionReset.swift
+  - .claude-plugin/marketplace.json
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LogoutResetTests.swift
+  - che-telegram-all-mcp/Sources/TelegramAllLib/TDLibClient.swift
+  - .agents/skills/spectra-propose/SKILL.md
+  - che-telegram-all-mcp/mcpb/manifest.json
+  - che-telegram-bot-mcp/CHANGELOG.md
   - .agents/skills/spectra-ingest/SKILL.md
+  - che-telegram-bot-mcp/mcpb/manifest.json
+  - plugins/che-telegram-mcp/README.md
+  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/SyncNote.swift
+  - plugins/che-telegram-mcp/bin/che-telegram-bot-mcp-wrapper.sh
+  - tests/che-telegram-mcp/test-wrapper-mcp-error.sh
+  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Server.swift
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/TDLibSyncWaitTests.swift
+  - .agents/skills/spectra-apply/SKILL.md
+  - .agents/skills/spectra-review/SKILL.md
+  - .agents/skills/spectra-commit/SKILL.md
+  - che-telegram-all-mcp/CHANGELOG.md
+  - .agents/skills/spectra-verify/SKILL.md
+  - AGENTS.md
+  - plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh
+  - plugins/che-telegram-mcp/CHANGELOG.md
+  - .agents/skills/spectra-discuss/SKILL.md
+  - plugins/che-telegram-mcp/skills/telegram-messaging/SKILL.md
 -->
