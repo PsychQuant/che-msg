@@ -263,4 +263,72 @@ final class ChatArchiverTests: XCTestCase {
             XCTAssertEqual(code, 400)
         }
     }
+
+    // MARK: - Verify round 1 (#69)
+
+    /// What TDLib actually returns once its own flood-wait handling gives up
+    /// (td/telegram/net/NetQueryDelayer.cpp: `429 "Too Many Requests: retry after N"`).
+    private func tdlibRateLimit(_ n: Int) -> Error {
+        TDLibClient.TDError.tdlibError(code: 429, message: "Too Many Requests: retry after \(n)")
+    }
+
+    func testTDLibRateLimitIsRecognised() {
+        XCTAssertEqual(ChatArchiver.floodWaitSeconds(tdlibRateLimit(30)), 30)
+        XCTAssertEqual(ChatArchiver.floodWaitSeconds(TDLibClient.TDError.tdlibError(code: 420, message: "FLOOD_WAIT_7")), 7)
+        XCTAssertNil(ChatArchiver.floodWaitSeconds(TDLibClient.TDError.tdlibError(code: 400, message: "CHAT_ID_INVALID")))
+        XCTAssertNil(ChatArchiver.floodWaitSeconds(TDLibClient.TDError.tdlibError(code: 429, message: "Too Many Requests")))
+    }
+
+    func testRealShortRateLimitIsWaitedOutOnce() async throws {
+        let source = FakeSource([Self.msg(30, 2), Self.msg(20, 1)])
+        source.failures = [tdlibRateLimit(30)]
+        let sleeps = Sleeps()
+        let result = try await ChatArchiver(source: source, sourceKind: .tdlib, isSynced: { true }, pageSize: 10,
+                                            sleep: { sleeps.seconds.append($0) })
+            .archive(.init(chatId: 777, outputDir: try outputDir(), utcOffset: "+08:00"))
+        XCTAssertEqual(sleeps.seconds, [30])
+        XCTAssertTrue(result.complete)
+    }
+
+    func testRealLongRateLimitStops() async throws {
+        let source = FakeSource([Self.msg(30, 2)])
+        source.failures = [tdlibRateLimit(420)]
+        let result = try await archiver(source).archive(.init(chatId: 777, outputDir: try outputDir(), utcOffset: "+08:00"))
+        XCTAssertEqual(result.stoppedReason, "flood_wait")
+        XCTAssertEqual(result.retryAfterSeconds, 420)
+        XCTAssertFalse(result.complete)
+    }
+
+    /// `files` lists only day files this call wrote; `<chat_id>/` exists even when nothing was written.
+    func testFilesListsOnlyWrittenDaysAndTheChatDirectoryExists() async throws {
+        let dir = try outputDir()
+        let source = FakeSource([Self.msg(30, 2), Self.msg(20, 1)])
+        let first = try await archiver(source).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertEqual(first.files, ["777/2026-10-11.md"])
+        let second = try await archiver(source).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertEqual(second.files, [])
+        XCTAssertEqual(second.newMessages, 0)
+        let emptyDir = try outputDir()
+        _ = try await archiver(FakeSource([])).archive(.init(chatId: 888, outputDir: emptyDir, utcOffset: "+08:00"))
+        var isDir: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: emptyDir.appendingPathComponent("888").path, isDirectory: &isDir))
+        XCTAssertTrue(isDir.boolValue)
+    }
+
+    /// Two archives of the same chat into the same directory cannot run at once.
+    func testConcurrentArchiveOfTheSameChatIsRefused() async throws {
+        let dir = try outputDir()
+        let chatDir = dir.appendingPathComponent("777")
+        try FileManager.default.createDirectory(at: chatDir, withIntermediateDirectories: true)
+        let fd = open(chatDir.appendingPathComponent(".archive.lock").path, O_RDWR | O_CREAT, 0o600)
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+        defer { close(fd) }
+        do {
+            _ = try await archiver(FakeSource([Self.msg(30, 2)])).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+            XCTFail("expected the archive to be refused")
+        } catch let error as ChatArchiver.ArchiveError {
+            XCTAssertEqual(error, .inProgress(chatId: 777))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: chatDir.appendingPathComponent("2026-10-11.md").path))
+    }
 }

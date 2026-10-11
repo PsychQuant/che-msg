@@ -26,7 +26,7 @@ internal func parseArchiveChatArgs(_ args: [String: Value], now: Date = Date(),
     let utcOffset: String
     if let given = try optionalStringArg(args, "utc_offset") {
         guard ArchiveDayFile.offsetSeconds(given) != nil else {
-            throw HandlerArgError(message: "utc_offset must be +HH:MM or -HH:MM; got \"\(given)\"")
+            throw HandlerArgError(message: "utc_offset must be +HH:MM or -HH:MM, at most 18:00 either way; got \"\(given)\"")
         }
         utcOffset = given
     } else {

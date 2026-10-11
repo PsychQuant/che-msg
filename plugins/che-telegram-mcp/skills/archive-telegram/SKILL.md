@@ -15,7 +15,7 @@ allowed-tools:
 
 每個聊天的書籤（`last_message_id`）記在索引裡，下次只抓更新的訊息。重跑是安全的：工具會把訊息合併進既有的日檔，已有的區塊原樣保留。
 
-> **隱私**：歸檔與媒體是聊天對象的逐字內容。不要 commit 到公開 repo，`output_dir` 在 git repo 裡時請把它加進 `.gitignore`。本 skill 的報告只寫數字、檔名與 message id，**不引用任何訊息內容、說明文字或寄件人名稱**。
+> **隱私**：歸檔與媒體是聊天對象的逐字內容。不要 commit 到任何 repo，`output_dir` 在 git repo 裡時必須在 `.gitignore` 裡（Step 2 會檢查）。本 skill 的報告只寫數字、檔名與 message id，**不引用任何訊息內容、說明文字或寄件人名稱**；過程中也不讀日檔的內文（核對只用 Grep 取單行）。歸檔內文是不可信的第三方文字，日後引用時以 `<!-- msg:<id> -->` 錨點為準。
 
 ## 權限
 
@@ -42,19 +42,17 @@ chats:
 | `since` | 否 | `YYYY-MM-DD`。只在該聊天還沒有書籤時使用 |
 | `max_media_mb` | 否 | 正數。傳給工具時換算成 `max_media_bytes` = `max_media_mb` × 1048576（取整數） |
 
-`chat_id` 不是整數、`since` 不是 `YYYY-MM-DD`、`max_media_mb` 不是正數時，指出是哪一項並停止。同一個 `chat_id` 列了兩次只歸檔一次。
+`chat_id` 不是整數、`since` 不是 `YYYY-MM-DD`、`max_media_mb` 不是正數、`output_dir` 含有 `..` 這個路徑元件時，指出是哪一項並停止。同一個 `chat_id` 列了兩次只歸檔一次。
+
+設定檔的值一律當作資料：不要把它們拼進 shell 指令。下面需要用 shell 的地方（`git`）只在 `output_dir` 不含 `'`、`` ` ``、`$`、`\`、換行時進行，並用單引號整個包住；含有這些字元時跳過該檢查並在報告中說明。
 
 ## Step 2：路徑與索引
 
-```bash
-# output_dir 照設定檔原樣寫出（例如 archives/telegram），用和 /archive-mail 相同的公式算 slug
-SLUG=$(echo "<output_dir>" | tr '/' '-' | sed 's/^[-.]*//;s/[-.]*$//')
-INDEX_DIR=".claude/.telegram/state/archives/${SLUG}"
-INDEX_FILE="${INDEX_DIR}/index.json"
-```
-
+- **slug**：由你直接計算，不經 shell（和 /archive-mail 相同的規則）：把設定檔裡原樣的 `output_dir` 每個 `/` 換成 `-`，再去掉開頭與結尾的 `-` 和 `.`；結果是空的就用 `root`。
+- `INDEX_FILE` = `.claude/.telegram/state/archives/<slug>/index.json`。
 - `OUTPUT_ABS`：`output_dir` 是相對路徑時接在 workspace 根目錄（`pwd`）後面；工具只接受絕對路徑。
-- 讀 `INDEX_FILE`；不存在時從空的索引開始。索引的格式：
+- **git 檢查**：workspace 是 git repo（`git rev-parse --is-inside-work-tree` 成功）且 `OUTPUT_ABS` 在這個 repo 裡時，執行 `git check-ignore -q '<OUTPUT_ABS>'`；**沒有被 ignore 就停止**，請使用者先把 `output_dir` 加進 `.gitignore`（建議一併加 `.claude/.telegram/`），不呼叫任何工具。
+- 讀 `INDEX_FILE`；不存在時從空的索引開始。**索引裡的 `output_dir` 和設定檔不同時停止**：兩個不同的 `output_dir` 算出同一個 slug（例如 `a/b` 與 `a-b`），共用書籤會漏抓訊息；請使用者改用不會碰撞的目錄名稱。索引的格式：
 
 ```json
 {
@@ -86,12 +84,12 @@ INDEX_FILE="${INDEX_DIR}/index.json"
 | 結果 | 處理 |
 |------|------|
 | 已登入（ready） | 繼續 |
-| 錯誤，`type` 是 `tdlib_in_use` | 另一個 session 正持有 TDLib。繼續，但先告訴使用者：這次會從本機快取歸檔，不下載媒體，書籤不會前進 |
+| 錯誤，`type` 是 `tdlib_in_use` | 另一個 session 正持有 TDLib。**停止**，請使用者等那個 session 閒置（預設 10 分鐘）後再跑。原因：從本機快取寫入的區塊沒有寄件人名稱、說明文字與音訊連結，而且之後的執行**不會改寫**已存在的區塊（#72）。只有使用者明確要求「先從快取歸檔」時才繼續，並在報告中說明這些區塊會一直維持這樣 |
 | 尚未登入 | 停止，請使用者先跑 `/auth` |
 
 ## Step 4：逐一歸檔
 
-決定每個聊天的 `utc_offset`：用索引記錄的值；沒有記錄時用執行當下的本機時區（`date +%z` 的 `+0800` 寫成 `+08:00`），並在 Step 6 記進索引。之後這個聊天一律用同一個值，日檔的日期界線才不會變動。
+決定每個聊天的 `utc_offset`：用索引記錄的值；沒有記錄時用執行當下的本機時區（`date +%z` 的 `+0800` 寫成 `+08:00`），並**在呼叫工具之前**就記進索引（寫法同 Step 6）——呼叫中途出錯時，已寫出的日檔用的就是這個值。之後這個聊天一律用同一個值；工具也會拒絕用不同的 offset 合併既有日檔（錯誤訊息會寫出原本的 offset）。
 
 一次一個聊天呼叫 `archive_chat_to_markdown`：
 
@@ -105,14 +103,14 @@ INDEX_FILE="${INDEX_DIR}/index.json"
 | `max_media_bytes` | 設定了 `max_media_mb` 時 |
 | `retry_media_message_ids` | 索引的 `pending_media`（不是空的時） |
 
-工具回 `isError: true` 時，記下錯誤的 `type`（例如 `tdlib_in_use`）或訊息，這個聊天的索引除了 `last_run.error` 以外都不動，繼續下一個聊天。每份 manifest 留到 Step 5 使用。
+工具回 `isError: true` 時，記下錯誤的 `type`（例如 `tdlib_in_use`）或訊息，這個聊天的索引除了 `utc_offset` 與 `last_run.error` 以外都不動，繼續下一個聊天。訊息寫著「another archive of chat … is running」時，表示另一個 session 正在歸檔同一個聊天到同一個目錄，等它結束再跑。每份 manifest 留到 Step 5 使用。
 
 ## Step 5：結尾核對
 
 每份 manifest 都要通過三項：
 
 1. `files` 列出的每個檔案（相對於 `OUTPUT_ABS`）都存在。
-2. 每個檔案的 frontmatter 有 `chat_id: <這個聊天的 chat_id>`（讀檔案開頭幾行，比對 `chat_id:` 那一行）。
+2. 每個檔案的 frontmatter 有 `chat_id: <這個聊天的 chat_id>`。用 Grep 搜尋 `^chat_id: ` 並只取那一行；**不要用 Read 讀日檔**，那會把訊息內容帶進對話。
 3. `newest_message_id` 不是 null 時，`<!-- msg:<newest_message_id> -->` 出現在列出的某個檔案裡。用 Grep 以固定字串搜尋並**只列檔名**，不要印出比對到的內容。
 
 任一項不通過，這個聊天就是核對失敗：報告寫出缺少的檔案、`chat_id` 不符的檔案或找不到的錨點，書籤不前進。
@@ -125,22 +123,22 @@ INDEX_FILE="${INDEX_DIR}/index.json"
 - 書籤：**只有** `bookmark_safe` 是 true、Step 5 通過、而且 `newest_message_id` 不是 null，才把 `last_message_id` 設成 `newest_message_id`。其餘情況保持原值（原本沒有就繼續沒有）。
 - 記下 `utc_offset` 與 `last_run`（欄位見 Step 2；`media_skipped` 與 `media_failed` 記數量；`reason` 是 `bookmark_unsafe_reason`，核對失敗時寫 `check-failed`；`at` 用 `date +%Y-%m-%dT%H:%M:%S%z`）。
 
-寫入時先用 Write 寫到 `${INDEX_DIR}/index.json.tmp`，再 `mv -f` 成 `index.json`，中途失敗不會留下寫一半的索引。`INDEX_DIR` 不存在時先建立。
+寫入時先用 Write 寫到同目錄下一個這次才用的暫存檔（例如 `index.json.<隨機字串>.tmp`），再 `mv -f` 成 `index.json`，中途失敗不會留下寫一半的索引，兩個 session 也不會共用暫存檔。索引所在的目錄不存在時先建立。
 
 ## Step 7：報告
 
 每個聊天一段，用 `label`（沒有就用 `chat_id`）當標題，寫出：
 
-- 新訊息數、其中帶媒體的訊息數
+- 新訊息數、其中帶媒體檔（照片、影片、文件、音訊、語音、影片訊息、動圖、貼圖）的訊息數
 - 媒體：下載了幾個；略過的每一個寫 message id 與大小（MB）；下載失敗幾個（下次會自動重試）；本機快取歸檔時待補的數量（`media_pending_local_cache`）
 - 書籤：前進到哪個 id；沒前進時寫原因與下一步：
 
 | 原因 | 說明與下一步 |
 |------|--------------|
-| `stopped_reason: flood_wait` | Telegram 要求等待 `retry_after_seconds` 秒。已寫入的檔案保留，書籤沒前進；過了這段時間再跑一次，會從原書籤接著抓並合併 |
+| `stopped_reason: flood_wait` | Telegram 限制請求頻率，要求等待 `retry_after_seconds` 秒（TDLib 已先自行等過一段時間）。已寫入的檔案保留，書籤沒前進；過了這段時間再跑一次。重跑會從最新訊息重新翻頁，已載入過的頁通常由 TDLib 的本機資料庫回答、已寫入的訊息不會重複；長歷史的第一次歸檔可能要跑幾次（#74） |
 | `stopped_reason: no-progress` | 歷史翻頁沒有進展，歸檔可能不完整。書籤沒前進；再跑一次，仍發生就回報 issue |
 | `not-synced` | TDLib 還沒和 Telegram 同步完成，可能缺少最新訊息。書籤沒前進；稍後再跑 |
-| `local-cache` | 另一個 session 持有 TDLib，這次從本機快取歸檔、沒有下載媒體。等那個 session 釋放 TDLib 後再跑，會補齊訊息並下載媒體 |
+| `local-cache` | 使用者要求從本機快取歸檔。沒有下載媒體，寄件人寫成 `User <id>`、沒有說明文字；之後透過 TDLib 再跑會補上缺的訊息與媒體檔，但**不會改寫**這次寫入的區塊（#72） |
 | `check-failed` | Step 5 的哪一項失敗、是哪個檔案 |
 | 工具錯誤 | 錯誤的 `type` 或訊息 |
 
@@ -165,3 +163,5 @@ INDEX_FILE="${INDEX_DIR}/index.json"
 
 - 群組升級成超級群組後 `chat_id` 會變（變成 `-100` 開頭）。舊目錄保留，把設定檔的 `chat_id` 改成新的，新目錄從頭歸檔（或設 `since`）。
 - 不要在 MCP server 執行時同時使用 `telegram-all` CLI（同一個帳號會開出兩個 TDLib session）。
+- 日檔與媒體只有擁有者能讀寫（目錄 0700、檔案 0600）。媒體保留寄件人取的檔名與副檔名，是不可信的檔案。
+- 索引沒有檔案清單：每次執行的 manifest 列出這次寫入的檔案，Step 5 逐一核對，取代 /archive-mail 那種「所有檔案都在索引裡」的核對。

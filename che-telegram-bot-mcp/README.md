@@ -92,7 +92,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 |----------|----------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Yes | Bot token from @BotFather |
 
-## Tools (30)
+## Tools (31)
 
 ### Bot Info
 
@@ -193,7 +193,7 @@ Sources/
 
 - **No third-party dependencies** beyond MCP Swift SDK
 - Uses `URLSession` to call Telegram Bot API directly
-- All 30 tools map to official [Telegram Bot API](https://core.telegram.org/bots/api) methods
+- All 31 tools map to official [Telegram Bot API](https://core.telegram.org/bots/api) methods
 
 ## Limitations
 

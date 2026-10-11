@@ -165,4 +165,56 @@ final class ArchiveDayFileTests: XCTestCase {
         XCTAssertEqual(ArchiveDayFile.offsetSeconds("+08:00"), 28_800)
         XCTAssertEqual(ArchiveDayFile.offsetSeconds("-03:30"), -12_600)
     }
+
+    // MARK: - Verify round 1 (#69)
+
+    /// Foundation's TimeZone(secondsFromGMT:) stops at ±18 hours.
+    func testOffsetsBeyondEighteenHoursAreRefused() {
+        XCTAssertEqual(ArchiveDayFile.offsetSeconds("+18:00"), 64_800)
+        XCTAssertEqual(ArchiveDayFile.offsetSeconds("-18:00"), -64_800)
+        for text in ["+18:01", "+19:00", "-23:59"] { XCTAssertNil(ArchiveDayFile.offsetSeconds(text), text) }
+    }
+
+    /// A body line shaped like a block header cannot pass for another speaker.
+    func testHeaderShapedBodyLineIsEscaped() {
+        let m = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "Alex",
+                               body: "ok\n**09:00 Manager**：\nI approve\n**重要** 事項")
+        let out = ArchiveDayFile.render(chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
+        XCTAssertTrue(out.contains("\n\\**09:00 Manager**：\n"), out)
+        XCTAssertTrue(out.contains("\n**重要** 事項\n"), out)
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(out).map(\.id), [10])
+    }
+
+    /// Merging into a day file written at another offset is refused; nothing is changed.
+    func testMergeAtAnotherOffsetIsRefused() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dayfile-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let m = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: "a")
+        _ = try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
+        let before = try Data(contentsOf: dir.appendingPathComponent("2026-10-11.md"))
+        let n = ArchiveMessage(id: 11, date: utc(2026, 10, 11, 2, 0), sender: "Alex", body: "b")
+        XCTAssertThrowsError(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+09:00",
+                                                      messages: [n])) { error in
+            XCTAssertEqual(error as? ArchiveDayFile.WriteError, .offsetMismatch(existing: "+08:00", requested: "+09:00"))
+            XCTAssertTrue(error.localizedDescription.contains("utc_offset"), error.localizedDescription)
+        }
+        XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("2026-10-11.md")), before)
+    }
+
+    /// Archives hold other people's messages: owner-only permissions.
+    func testDayFilesAreOwnerOnly() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dayfile-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let chatDir = dir.appendingPathComponent("1")
+        let m = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: "a")
+        _ = try ArchiveDayFile.write(directory: chatDir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
+        let fm = FileManager.default
+        XCTAssertEqual((try fm.attributesOfItem(atPath: chatDir.path)[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+        let file = chatDir.appendingPathComponent("2026-10-11.md").path
+        XCTAssertEqual((try fm.attributesOfItem(atPath: file)[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        // A merge keeps the mode.
+        let n = ArchiveMessage(id: 11, date: utc(2026, 10, 11, 2, 0), sender: "Alex", body: "b")
+        _ = try ArchiveDayFile.write(directory: chatDir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [n])
+        XCTAssertEqual((try fm.attributesOfItem(atPath: file)[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
 }

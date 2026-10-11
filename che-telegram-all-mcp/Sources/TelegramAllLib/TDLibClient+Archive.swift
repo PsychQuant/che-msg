@@ -12,6 +12,15 @@ internal func archiveTDLibCall<T>(_ body: () async throws -> T) async throws -> 
     }
 }
 
+/// Paging below a cursor (PsychQuant/che-msg#69).
+internal enum ArchiveCursor {
+    /// The messages of `page` older than `cursor`; all of them when `cursor` is 0 (newest).
+    static func strictlyBelow(_ page: [[String: Any]], cursor: Int64) -> [[String: Any]] {
+        guard cursor != 0 else { return page }
+        return page.filter { (($0["id"] as? NSNumber)?.int64Value ?? .max) < cursor }
+    }
+}
+
 /// What a TDLib chat id names, by TDLib's id ranges (td/telegram/DialogId.cpp).
 internal enum ArchiveChatID: Equatable {
     case user(Int64)
@@ -25,12 +34,13 @@ internal enum ArchiveChatID: Equatable {
     private static let zeroChannelId: Int64 = -1_000_000_000_000
     private static let maxChannelId: Int64 = 1_000_000_000_000 - (1 << 31)
 
+    // Compared without negating `chatId`: `-Int64.min` traps and would end the server process.
     init(_ chatId: Int64) {
         if (1...Self.maxUserId).contains(chatId) {
             self = .user(chatId)
-        } else if (1...Self.maxBasicGroupId).contains(-chatId) {
+        } else if (-Self.maxBasicGroupId ... -1).contains(chatId) {
             self = .basicGroup(-chatId)
-        } else if chatId < Self.zeroChannelId, (1...Self.maxChannelId).contains(Self.zeroChannelId - chatId) {
+        } else if (Self.zeroChannelId - Self.maxChannelId ... Self.zeroChannelId - 1).contains(chatId) {
             self = .supergroup(Self.zeroChannelId - chatId)
         } else {
             self = .other
@@ -48,7 +58,9 @@ extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
             try await client.getChatHistory(chatId: chatId, fromMessageId: fromMessageId, limit: limit,
                                             offset: 0, onlyLocal: false)
         }
-        return result.messages?.map { messageToDict($0) } ?? []
+        // TDLib excludes the cursor at offset 0 (OrderedMessages::get_history); filtering keeps
+        // the protocol's "strictly below" true even if that ever changes.
+        return ArchiveCursor.strictlyBelow(result.messages?.map { messageToDict($0) } ?? [], cursor: fromMessageId)
     }
 
     /// Downloads a file completely (`synchronous: true` returns only when it is done) and
@@ -114,8 +126,7 @@ public final class LocalCacheHistorySource: ArchiveHistorySource {
         guard let messages = try JSONSerialization.jsonObject(with: Data(result.json.utf8)) as? [[String: Any]] else {
             throw CocoaError(.coderReadCorrupt)
         }
-        guard fromMessageId != 0 else { return messages }
-        return messages.filter { (($0["id"] as? NSNumber)?.int64Value ?? .max) < fromMessageId }
+        return ArchiveCursor.strictlyBelow(messages, cursor: fromMessageId)
     }
 }
 

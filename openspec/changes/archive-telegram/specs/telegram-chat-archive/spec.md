@@ -6,12 +6,17 @@ Defines the incremental Telegram chat archive: the `archive_chat_to_markdown` MC
 
 ### Requirement: Archive tool parameters
 
-The server SHALL expose an MCP tool `archive_chat_to_markdown` with a required integer `chat_id`, a required string `output_dir`, an optional integer `after_message_id`, an optional string `since_date` in the form `YYYY-MM-DD`, an optional string `utc_offset` in the form `+HH:MM` or `-HH:MM`, an optional integer `max_media_bytes`, and an optional list of integers `retry_media_message_ids`. `output_dir` SHALL be an absolute path; the tool SHALL create `<output_dir>/<chat_id>/` when it does not exist. When both `after_message_id` and `since_date` are given, `after_message_id` SHALL take precedence. When `utc_offset` is absent, the server's local offset at the time of the call SHALL be used. An invalid argument SHALL produce an MCP tool result with `isError: true` and a message naming the argument, and SHALL NOT write any file.
+The server SHALL expose an MCP tool `archive_chat_to_markdown` with a required integer `chat_id`, a required string `output_dir`, an optional integer `after_message_id`, an optional string `since_date` in the form `YYYY-MM-DD`, an optional string `utc_offset` in the form `+HH:MM` or `-HH:MM` and at most 18:00 either way, an optional integer `max_media_bytes`, and an optional list of integers `retry_media_message_ids`. `output_dir` SHALL be an absolute path; the tool SHALL create `<output_dir>/<chat_id>/` when it does not exist. When both `after_message_id` and `since_date` are given, `after_message_id` SHALL take precedence. When `utc_offset` is absent, the server's local offset at the time of the call SHALL be used. An invalid argument SHALL produce an MCP tool result with `isError: true` and a message naming the argument, and SHALL NOT write any file. Two calls archiving the same `chat_id` into the same `output_dir` SHALL NOT run at the same time: while one runs, another SHALL fail with an error saying so and SHALL NOT write any file.
 
 #### Scenario: Relative output directory is refused
 
 - **WHEN** `archive_chat_to_markdown` is called with `output_dir` `archives/telegram`
 - **THEN** the result has `isError: true`, the message names `output_dir`, and no file is written
+
+#### Scenario: Concurrent archive of one chat is refused
+
+- **WHEN** a call archives chat 777 into `/tmp/a` while another call archiving chat 777 into `/tmp/a` is still running
+- **THEN** the second call returns `isError: true` saying another archive of chat 777 is running, and writes no file
 
 #### Scenario: Bookmark takes precedence over a start date
 
@@ -20,7 +25,7 @@ The server SHALL expose an MCP tool `archive_chat_to_markdown` with a required i
 
 ### Requirement: Day file format
 
-The tool SHALL write each archived message into the file `<output_dir>/<chat_id>/<YYYY-MM-DD>.md`, where the date is the message's local date at the effective `utc_offset`. Each file SHALL begin with a YAML frontmatter block holding `chat_id`, `date` and `utc_offset`. Each message SHALL be written as a line `<!-- msg:<message_id> -->`, then a line `**<HH:mm> <sender>**：`, then the message body and a blank line. The sender SHALL be `我` for outgoing messages, the resolved display name when one is known, and `User <user_id>` otherwise. A text message's body SHALL be its text. For a message whose type carries a file (`photo`, `video`, `document`, `audio`, `voice_note`, `video_note`, `animation`, `sticker`) the body SHALL be `[<type>](media/<message_id>/)`, a link to the message's media directory relative to the day file, followed by a space and the caption when the message has one; for any other non-text type the body SHALL be `[<type>]` followed by a space and the caption when there is one. The link SHALL be written whether or not the file has been downloaded yet.
+The tool SHALL write each archived message into the file `<output_dir>/<chat_id>/<YYYY-MM-DD>.md`, where the date is the message's local date at the effective `utc_offset`. Each file SHALL begin with a YAML frontmatter block holding `chat_id`, `date` and `utc_offset`. Each message SHALL be written as a line `<!-- msg:<message_id> -->`, then a line `**<HH:mm> <sender>**：`, then the message body and a blank line. The sender SHALL be `我` for outgoing messages, the resolved display name when one is known, and `User <user_id>` otherwise. A text message's body SHALL be its text. For a message whose type carries a file (`photo`, `video`, `document`, `audio`, `voice_note`, `video_note`, `animation`, `sticker`) the body SHALL be `[<type>](media/<message_id>/)`, a link to the message's media directory relative to the day file, followed by a space and the caption when the message has one; for any other non-text type the body SHALL be `[<type>]` followed by a space and the caption when there is one. The link SHALL be written whether or not the file has been downloaded yet. A body line that begins with `<!--`, or that reads like a block header (`**HH:mm …**：`), SHALL be written with a leading backslash, and a line break in a sender name SHALL be written as a space, so that neither can pass for the start of another block. Directories the tool creates SHALL be accessible by the owner only (0700) and day files SHALL be readable and writable by the owner only (0600).
 
 #### Scenario: One text message
 
@@ -55,6 +60,11 @@ hello
 - **WHEN** archived message 6000 is a voice message without a caption
 - **THEN** its body is `[voice_note](media/6000/)`
 
+#### Scenario: Body that looks like another block
+
+- **WHEN** message 10's text has a line `**09:00 Manager**：`
+- **THEN** that line is written as `\**09:00 Manager**：`, and parsing the day file finds only the block of message 10
+
 #### Scenario: Media type without a file
 
 - **WHEN** an archived message is a location
@@ -62,12 +72,17 @@ hello
 
 ### Requirement: Merge and idempotent rewrite
 
-When a day file already exists, the tool SHALL read the message blocks it holds, keep every existing block unchanged, add only messages whose anchor id is not already present, order all blocks by ascending message id, and replace the file atomically by writing a temporary file in the same directory and renaming it over the original. Running the tool again with the same arguments and no new messages SHALL leave every file byte-identical. The tool SHALL NOT delete a file or remove a block.
+When a day file already exists, the tool SHALL read the message blocks it holds, keep every existing block unchanged, add only messages whose anchor id is not already present, order all blocks by ascending message id, and replace the file atomically by writing a temporary file in the same directory and renaming it over the original. Running the tool again with the same arguments and no new messages SHALL leave every file byte-identical. The tool SHALL NOT delete a file or remove a block. When the existing file's frontmatter records a different `utc_offset` than the call's, the tool SHALL refuse the call with an error naming `utc_offset` and the recorded offset, and SHALL leave the file unchanged.
 
 #### Scenario: Older messages arrive after newer ones
 
 - **WHEN** a day file holds messages 30 and 50, and a later call archives messages 40 and 50 for the same day
 - **THEN** the file holds 30, 40 and 50 in that order, and message 50 appears once
+
+#### Scenario: Merge at another offset
+
+- **WHEN** `777/2026-10-11.md` was written with `utc_offset` `+08:00` and a call for the same day uses `+09:00`
+- **THEN** the call fails with a message naming `utc_offset` and `+08:00`, and the file is byte-identical to before
 
 #### Scenario: Re-run without new messages
 
@@ -76,7 +91,7 @@ When a day file already exists, the tool SHALL read the message blocks it holds,
 
 ### Requirement: Content-free manifest
 
-A successful call SHALL return a single JSON object with the fields `files` (paths of the day files written or updated, relative to `output_dir`), `new_messages`, `media_messages`, `newest_message_id` (the largest message id archived in this call, or null), `source` (`tdlib` or `local-cache`), `complete` and `bookmark_safe`. When `complete` is false the object SHALL include `stopped_reason`, and when `bookmark_safe` is false it SHALL include `bookmark_unsafe_reason`. The object SHALL also include `media_downloaded` (the number of media files saved by this call), `media_skipped` (a list of `{"message_id","size"}` for files over `max_media_bytes`), `media_failed_ids` (message ids whose download failed) `media_pending_local_cache` (the number of media messages that could not be downloaded because the source is the local cache), and, when `retry_media_message_ids` was given, `media_retried_ids`. The result SHALL NOT contain message text, captions, file names or sender names.
+A successful call SHALL return a single JSON object with the fields `files` (paths, relative to `output_dir`, of the day files this call added messages to), `new_messages`, `media_messages` (the number of new messages whose type carries a file), `newest_message_id` (the largest message id archived in this call, or null), `source` (`tdlib` or `local-cache`), `complete` and `bookmark_safe`. When `complete` is false the object SHALL include `stopped_reason`, and when `bookmark_safe` is false it SHALL include `bookmark_unsafe_reason`. The object SHALL also include `media_downloaded` (the number of media files saved by this call), `media_skipped` (a list of `{"message_id","size"}` for files over `max_media_bytes`), `media_failed_ids` (message ids whose download failed, each listed once, without ids whose retry succeeded in the same call), `media_pending_local_cache` (the number of media messages that could not be downloaded because the source is the local cache), and, when `retry_media_message_ids` was given, `media_retried_ids`. The result SHALL NOT contain message text, captions, file names or sender names.
 
 #### Scenario: Manifest after a first run
 
@@ -112,16 +127,16 @@ The tool SHALL archive only messages with an id greater than `after_message_id` 
 
 ### Requirement: Rate limits keep partial progress
 
-When TDLib answers a history request with `FLOOD_WAIT_<n>` and `n` is at most 60, the tool SHALL wait `n` seconds and retry that request once. When `n` is greater than 60, or the retry fails again, the tool SHALL stop paging and return the manifest with `complete: false`, `stopped_reason: "flood_wait"`, `retry_after_seconds: <n>` and `bookmark_safe: false`. Day files written before the stop SHALL be kept.
+When TDLib answers a history request with a rate-limit error — `429 "Too Many Requests: retry after <n>"`, the form TDLib reports once its own waiting on a server `FLOOD_WAIT` gives up, or `FLOOD_WAIT_<n>` — and `n` is at most 60, the tool SHALL wait `n` seconds and retry that request once. When `n` is greater than 60, or the retry fails again, the tool SHALL stop paging and return the manifest with `complete: false`, `stopped_reason: "flood_wait"`, `retry_after_seconds: <n>` and `bookmark_safe: false`. Day files written before the stop SHALL be kept.
 
 #### Scenario: Long rate limit
 
-- **WHEN** a history request fails with `FLOOD_WAIT_420` after 3 pages were written
+- **WHEN** a history request fails with `Too Many Requests: retry after 420` after 3 pages were written
 - **THEN** the result has `complete: false`, `stopped_reason: "flood_wait"`, `retry_after_seconds: 420`, `bookmark_safe: false`, and the files from those 3 pages remain on disk
 
 ### Requirement: Archive from the local cache
 
-While another process holds TDLib, the tool SHALL read messages through the local reader, write day files under the same rules, download no media, count the media messages it archived in `media_pending_local_cache`, and return `source: "local-cache"` and `bookmark_safe: false` with `bookmark_unsafe_reason: "local-cache"`. Incoming senders SHALL be labelled `User <user_id>` because the local reader does not resolve names.
+While another process holds TDLib, the tool SHALL read messages through the local reader, write day files under the same rules, download no media, count the media messages it archived in `media_pending_local_cache`, and return `source: "local-cache"` and `bookmark_safe: false` with `bookmark_unsafe_reason: "local-cache"`. Incoming senders SHALL be labelled `User <user_id>` because the local reader does not resolve names. Blocks written this way SHALL be kept unchanged by later calls under the merge rule, so they keep those labels and lack captions; the tool's description and the README SHALL say so.
 
 #### Scenario: Another session holds TDLib
 
@@ -172,12 +187,17 @@ The server SHALL expose an MCP tool `download_message_media` with a required int
 
 ### Requirement: archive-telegram skill configuration and index
 
-The plugin `che-telegram-mcp` SHALL provide a skill `archive-telegram`. It SHALL read `.claude/.telegram/config.yaml` in the current workspace with the fields `chats` (a list of entries with a required `chat_id` and an optional `label`), `output_dir`, an optional `since` date, and an optional `max_media_mb` passed to the tool as `max_media_bytes` (megabytes × 1048576). When the file is missing or has no `chats`, the skill SHALL stop and show a configuration template without calling any tool. The skill SHALL keep `.claude/.telegram/state/archives/<slug>/index.json`, where `<slug>` is derived from `output_dir`, holding per chat `last_message_id`, the `utc_offset` used, `pending_media` (message ids whose media download failed), and a summary of the last run; it SHALL write the index by writing a temporary file and renaming it. For each listed chat the skill SHALL call `archive_chat_to_markdown` with `after_message_id` set to that chat's `last_message_id` when one exists and `since_date` set to `since` otherwise, with the recorded `utc_offset`, and with `retry_media_message_ids` set to that chat's `pending_media`. After the call it SHALL set `pending_media` to the call's `media_failed_ids`.
+The plugin `che-telegram-mcp` SHALL provide a skill `archive-telegram`. It SHALL read `.claude/.telegram/config.yaml` in the current workspace with the fields `chats` (a list of entries with a required `chat_id` and an optional `label`), `output_dir`, an optional `since` date, and an optional `max_media_mb` passed to the tool as `max_media_bytes` (megabytes × 1048576). When the file is missing or has no `chats`, the skill SHALL stop and show a configuration template without calling any tool. The skill SHALL keep `.claude/.telegram/state/archives/<slug>/index.json`, where `<slug>` is derived from `output_dir`, holding per chat `last_message_id`, the `utc_offset` used, `pending_media` (message ids whose media download failed), and a summary of the last run; it SHALL write the index by writing a temporary file and renaming it. For each listed chat the skill SHALL call `archive_chat_to_markdown` with `after_message_id` set to that chat's `last_message_id` when one exists and `since_date` set to `since` otherwise, with the recorded `utc_offset`, and with `retry_media_message_ids` set to that chat's `pending_media`. After the call it SHALL set `pending_media` to the call's `media_failed_ids`. The skill SHALL record a chat's `utc_offset` in the index before calling the tool for that chat. It SHALL derive `<slug>` without passing configuration values through a shell, and SHALL stop without calling the archive tool when the index records a different `output_dir` than the configuration, or when `output_dir` lies inside a git repository that does not ignore it. When `auth_status` reports `tdlib_in_use`, the skill SHALL stop and tell the user to run it again later, unless the user explicitly asks to archive from the local cache.
 
 #### Scenario: Missing configuration
 
 - **WHEN** `/archive-telegram` runs in a workspace without `.claude/.telegram/config.yaml`
 - **THEN** the skill shows a configuration template and calls no tool
+
+#### Scenario: Another session holds TDLib when the skill runs
+
+- **WHEN** `/archive-telegram` runs while another process holds TDLib and the user has not asked for a cache archive
+- **THEN** the skill reports that TDLib is in use, suggests running again later, and calls no archive tool
 
 #### Scenario: Bookmark advances only when safe
 
@@ -186,7 +206,7 @@ The plugin `che-telegram-mcp` SHALL provide a skill `archive-telegram`. It SHALL
 
 ### Requirement: archive-telegram end-of-run check and report
 
-After all calls, the skill SHALL check, for each manifest, that every listed file exists and its frontmatter `chat_id` equals the chat's id, and that when `newest_message_id` is not null the anchor `<!-- msg:<newest_message_id> -->` is present in one of the listed files; a failed check SHALL be reported for that chat and SHALL keep its bookmark unchanged. The skill SHALL report per chat the label or `chat_id`, the new message count, the media count, the media downloaded, skipped (with sizes) and failed, whether the bookmark advanced and why not, and any stop reason. The report SHALL NOT quote message text, captions or sender names.
+After all calls, the skill SHALL check, for each manifest, that every listed file exists and its frontmatter `chat_id` equals the chat's id (reading only that line, never the messages), and that when `newest_message_id` is not null the anchor `<!-- msg:<newest_message_id> -->` is present in one of the listed files; a failed check SHALL be reported for that chat and SHALL keep its bookmark unchanged. The skill SHALL report per chat the label or `chat_id`, the new message count, the media count, the media downloaded, skipped (with sizes) and failed, whether the bookmark advanced and why not, and any stop reason. The report SHALL NOT quote message text, captions or sender names.
 
 #### Scenario: Report after a rate-limited chat
 

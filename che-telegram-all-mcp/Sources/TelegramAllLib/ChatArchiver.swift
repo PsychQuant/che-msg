@@ -12,6 +12,18 @@ public protocol ArchiveHistorySource {
 public struct ChatArchiver {
     public enum Source: String, Sendable { case tdlib, localCache = "local-cache" }
 
+    public enum ArchiveError: Error, LocalizedError, Equatable {
+        /// Another archive of this chat into the same directory is running.
+        case inProgress(chatId: Int64)
+
+        public var errorDescription: String? {
+            switch self {
+            case .inProgress(let chatId):
+                return "another archive of chat \(chatId) into this output_dir is running; try again when it has finished"
+            }
+        }
+    }
+
     public struct Request {
         public var chatId: Int64
         public var outputDir: URL
@@ -116,6 +128,14 @@ public struct ChatArchiver {
         result.source = sourceKind
         let offset = ArchiveDayFile.offsetSeconds(request.utcOffset) ?? 0
         let chatDir = request.outputDir.appendingPathComponent(String(request.chatId))
+        try FileManager.default.createDirectory(at: chatDir, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        // Day files are read, merged and replaced; two archives of one chat into one directory
+        // at once would drop each other's blocks, so one holds a lock for the whole call.
+        let lock = open(chatDir.appendingPathComponent(".archive.lock").path, O_RDWR | O_CREAT, 0o600)
+        guard lock >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { throw ArchiveError.inProgress(chatId: request.chatId) }
         var files: Set<String> = []
         var seen: Set<Int64> = []
         var fromMessageId: Int64 = 0
@@ -140,6 +160,11 @@ public struct ChatArchiver {
             fromMessageId = lowest
         }
         try await retryMedia(request, chatDir: chatDir, into: &result)
+        // An id can fail in the walk and again (or not) on retry; list each once, and not
+        // at all when the retry saved it.
+        let retried = Set(result.mediaRetriedIds ?? [])
+        var listed = Set<Int64>()
+        result.mediaFailedIds = result.mediaFailedIds.filter { !retried.contains($0) && listed.insert($0).inserted }
         result.files = files.sorted()
         result.complete = reachedBound && result.stoppedReason == nil
         if !reachedBound && result.stoppedReason == nil { result.stoppedReason = "no-progress" }
@@ -179,11 +204,18 @@ public struct ChatArchiver {
         }
     }
 
-    /// `n` from a TDLib `FLOOD_WAIT_<n>` error, or nil for any other error.
+    /// The wait in seconds from a rate-limit error, or nil for any other error. TDLib waits out
+    /// a server `FLOOD_WAIT_<n>` itself and, once that exceeds its limit, reports
+    /// `429 "Too Many Requests: retry after <n>"` (td/telegram/net/NetQueryDelayer.cpp); the
+    /// `FLOOD_WAIT_<n>` form is kept for errors passed through unchanged.
     static func floodWaitSeconds(_ error: Error) -> Int? {
-        guard case TDLibClient.TDError.tdlibError(_, let message) = error,
-              let range = message.range(of: "FLOOD_WAIT_") else { return nil }
-        return Int(message[range.upperBound...].prefix { $0.isNumber })
+        guard case TDLibClient.TDError.tdlibError(_, let message) = error else { return nil }
+        for marker in ["retry after ", "FLOOD_WAIT_"] {
+            if let range = message.range(of: marker) {
+                return Int(message[range.upperBound...].prefix { $0.isASCII && $0.isNumber })
+            }
+        }
+        return nil
     }
 
     private func isBelowBound(_ message: [String: Any], id: Int64, _ request: Request) -> Bool {
@@ -205,17 +237,20 @@ public struct ChatArchiver {
             let archived = ArchiveMessage(id: id, date: date, sender: senderLabel(message, names, request.selfLabel),
                                           body: body)
             byDay[ArchiveDayFile.dayKey(for: date, offsetSeconds: offset), default: []].append(archived)
-            media[id] = type != "text"
+            media[id] = ArchiveDayFile.fileTypes.contains(type)
             result.newestMessageId = max(result.newestMessageId ?? id, id)
         }
-        await ensureMedia(messages, chatDir: chatDir, maxBytes: request.maxMediaBytes, into: &result)
+        // Text first: an interrupted run then keeps the page's messages even if a large
+        // download had not finished.
         for (day, dayMessages) in byDay {
             let added = try ArchiveDayFile.write(directory: chatDir, chatId: request.chatId, day: day,
                                                  utcOffset: request.utcOffset, messages: dayMessages)
+            guard !added.isEmpty else { continue }
             result.newMessages += added.count
             result.mediaMessages += added.filter { media[$0] == true }.count
             files.insert("\(request.chatId)/\(day).md")
         }
+        await ensureMedia(messages, chatDir: chatDir, maxBytes: request.maxMediaBytes, into: &result)
     }
 
     /// Downloads (TDLib path) or counts as pending (local cache) the media of `messages`.
@@ -243,7 +278,9 @@ public struct ChatArchiver {
 
     /// Retries the media of `retryMediaMessageIds` by fetching each message by id.
     private func retryMedia(_ request: Request, chatDir: URL, into result: inout Result) async throws {
-        guard let ids = request.retryMediaMessageIds, !ids.isEmpty else { return }
+        guard let requested = request.retryMediaMessageIds, !requested.isEmpty else { return }
+        var unique = Set<Int64>()
+        let ids = requested.filter { unique.insert($0).inserted }
         guard let media else { result.mediaFailedIds.append(contentsOf: ids); return }
         var retried: [Int64] = []
         for id in ids {
