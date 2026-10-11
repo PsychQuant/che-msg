@@ -156,4 +156,74 @@ final class ArchiveMediaTests: XCTestCase {
         XCTAssertEqual(result.mediaFailedIds, [5000])
         XCTAssertFalse(FileManager.default.fileExists(atPath: out.appendingPathComponent("777/media").path))
     }
+
+    /// The local reader's messages carry a type but no `file` field (LocalMessage.dictionary),
+    /// so pending media is counted by type.
+    func testLocalCachePendingCountsMediaTypesWithoutFileInfo() async throws {
+        let root = scratch(), out = root.appendingPathComponent("out")
+        let result = try await archiver([ChatArchiverTests.msg(7200, 4, type: "video"),
+                                         ChatArchiverTests.msg(7100, 3, type: "photo"),
+                                         ChatArchiverTests.msg(7000, 2, type: "location"),
+                                         ChatArchiverTests.msg(6900, 1)],
+                                        downloader: nil, kind: .localCache)
+            .archive(.init(chatId: 777, outputDir: out, utcOffset: "+08:00"))
+        XCTAssertEqual(result.mediaPendingLocalCache, 2)
+    }
+
+    // MARK: - Single message download (task 6.5)
+
+    private func object(_ json: String) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    }
+
+    // Scenario "Viewing one photo".
+    func testDownloadOnePhoto() async throws {
+        let root = scratch(), view = root.appendingPathComponent("view")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        downloader.messages = [5_243_904: Self.media(5_243_904, 1, fileId: 12, caption: "secret caption")]
+        let first = try object(await ArchiveMedia.downloadOne(chatId: 777, messageId: 5_243_904, outputDir: view,
+                                                             downloader: downloader))
+        let expected = view.appendingPathComponent("777/media/5243904/photo.jpg").path
+        XCTAssertEqual(first["path"] as? String, expected)
+        XCTAssertEqual(first["message_id"] as? Int, 5_243_904)
+        XCTAssertEqual(first["type"] as? String, "photo")
+        XCTAssertEqual(first["size"] as? Int, 8)
+        XCTAssertEqual(Set(first.keys), ["message_id", "type", "path", "size"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expected))
+        // Already there: same path, no second download.
+        let second = try object(await ArchiveMedia.downloadOne(chatId: 777, messageId: 5_243_904, outputDir: view,
+                                                              downloader: downloader))
+        XCTAssertEqual(second["path"] as? String, expected)
+        XCTAssertEqual(second["size"] as? Int, 8)
+        XCTAssertEqual(downloader.downloads, [12])
+    }
+
+    // Scenario "Text message".
+    func testDownloadOneTextMessageIsAnError() async throws {
+        let root = scratch(), view = root.appendingPathComponent("view")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        downloader.messages = [1: ChatArchiverTests.msg(1, 0, text: "hello")]
+        do {
+            _ = try await ArchiveMedia.downloadOne(chatId: 777, messageId: 1, outputDir: view, downloader: downloader)
+            XCTFail("expected an error")
+        } catch let error as ArchiveMedia.DownloadError {
+            XCTAssertEqual(error, .noFile(messageId: 1))
+            XCTAssertFalse(error.localizedDescription.contains("hello"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: view.path))
+    }
+
+    func testDownloadOneFailureIsAnError() async throws {
+        let root = scratch()
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        downloader.messages = [7100: Self.media(7100, 3, fileId: 71)]
+        downloader.failing = [71]
+        do {
+            _ = try await ArchiveMedia.downloadOne(chatId: 777, messageId: 7100, outputDir: root.appendingPathComponent("v"),
+                                                   downloader: downloader)
+            XCTFail("expected an error")
+        } catch let error as ArchiveMedia.DownloadError {
+            XCTAssertEqual(error, .failed(messageId: 7100))
+        }
+    }
 }

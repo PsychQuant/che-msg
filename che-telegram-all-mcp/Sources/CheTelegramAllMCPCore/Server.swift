@@ -374,6 +374,41 @@ public final class CheTelegramAllMCPServer {
                     "self_label": prop("string", "Label for outgoing messages (default \"我\")"),
                  ],
                  required: ["chat_id", "output_path"]),
+
+            // Archive (PsychQuant/che-msg#69): per-day Markdown files and media; manifest only
+            tool("archive_chat_to_markdown",
+                 description: """
+                 Archive a chat incrementally into per-day Markdown files <output_dir>/<chat_id>/YYYY-MM-DD.md \
+                 (one block per message, anchored by <!-- msg:<id> -->) and download each message's media into \
+                 <output_dir>/<chat_id>/media/<message_id>/. Re-runs merge into the existing files. Returns a \
+                 manifest (files, counts, newest_message_id, complete, bookmark_safe, media results) and never \
+                 message text. Advance a stored bookmark to newest_message_id only when bookmark_safe is true. \
+                 While another session holds TDLib it archives from the local cache without media.
+                 """,
+                 properties: [
+                    "chat_id": prop("integer", "Chat ID"),
+                    "output_dir": prop("string", "Absolute path of the archive root; <chat_id>/ is created under it"),
+                    "after_message_id": prop("integer", "Bookmark: archive only messages with a larger id (takes precedence over since_date)"),
+                    "since_date": prop("string", "First day to archive, YYYY-MM-DD at utc_offset (default: the whole history)"),
+                    "utc_offset": prop("string", "Offset that decides each message's day, +HH:MM or -HH:MM (default: the server's current offset)"),
+                    "max_media_bytes": prop("integer", "Skip media files larger than this many bytes (default: no limit)"),
+                    "retry_media_message_ids": arrayOfIntsProp("Ids of messages whose media download failed before; downloaded again without rewriting day files"),
+                 ],
+                 required: ["chat_id", "output_dir"]),
+
+            tool("download_message_media",
+                 description: """
+                 Download one message's photo, video, document, audio, voice note, video note, animation or \
+                 sticker into <output_dir>/<chat_id>/media/<message_id>/ and return message_id, type, path and \
+                 size (no message text or caption). When the file is already there it is returned without \
+                 downloading again.
+                 """,
+                 properties: [
+                    "chat_id": prop("integer", "Chat ID"),
+                    "message_id": prop("integer", "Message ID"),
+                    "output_dir": prop("string", "Absolute path of the archive root"),
+                 ],
+                 required: ["chat_id", "message_id", "output_dir"]),
         ]
     }
 
@@ -644,6 +679,17 @@ public final class CheTelegramAllMCPServer {
                     selfLabel: parsed.selfLabel
                 )
 
+            // Archive (#69)
+            case "archive_chat_to_markdown":
+                let request = try parseArchiveChatArgs(args)
+                let archiver = ChatArchiver.tdlib(tdlib, isSynced: { [syncState] in syncState.snapshot.isSynced })
+                result = try await archiver.archive(request).manifestJSON()
+
+            case "download_message_media":
+                let parsed = try parseDownloadMediaArgs(args)
+                result = try await ArchiveMedia.downloadOne(chatId: parsed.chatId, messageId: parsed.messageId,
+                                                            outputDir: parsed.outputDir, downloader: tdlib)
+
             default:
                 return errorResult("Unknown tool: \(name)")
             }
@@ -666,10 +712,11 @@ public final class CheTelegramAllMCPServer {
 
     // MARK: - While Another Process Holds TDLib
 
-    /// Routes a call made while another process holds TDLib: the five reading
-    /// tools are answered from TDLib's local cache with a source note, the
-    /// other read tools report `local_reader_unsupported`, and every other
-    /// tool reports `tdlib_in_use`. Arguments are checked as in TDLib mode.
+    /// Routes a call made while another process holds TDLib: the tools in
+    /// `localReaderTools` (five reading tools and `archive_chat_to_markdown`) are
+    /// answered from TDLib's local cache with a source note, the other read tools
+    /// report `local_reader_unsupported`, and every other tool reports
+    /// `tdlib_in_use`. Arguments are checked as in TDLib mode.
     private func handleWhileTDLibIsHeld(name: String, arguments args: [String: Value],
                                         holderPid: Int32?) async -> CallTool.Result {
         if localReaderUnsupportedTools.contains(name) {
@@ -693,6 +740,12 @@ public final class CheTelegramAllMCPServer {
                 let chatId = try requiredInt64(args, "chat_id")
                 guard let query = args["query"]?.stringValue else { return errorResult("query is required") }
                 answer = try reader.searchMessages(chatId: chatId, query: query, limit: try parseLimit(args, default: 50))
+            case "archive_chat_to_markdown":
+                let request = try parseArchiveChatArgs(args)
+                let source = LocalCacheHistorySource(reader: reader)
+                let manifest = try await ChatArchiver.localCache(source).archive(request).manifestJSON()
+                answer = LocalTDLibReader.Result(json: manifest, undecodableCount: source.undecodableCount,
+                                                 freshness: source.freshness)
             default:
                 let parsed = try parseDumpChatToMarkdownArgs(args)
                 answer = try await reader.dumpChatToMarkdown(chatId: parsed.chatId, outputPath: parsed.outputPath,

@@ -8,7 +8,7 @@ final class CheTelegramAllMCPTests: XCTestCase {
 
     func testToolCount() {
         let tools = CheTelegramAllMCPServer.defineTools()
-        XCTAssertEqual(tools.count, 28)
+        XCTAssertEqual(tools.count, 30)
     }
 
     func testAllExpectedToolsExist() {
@@ -34,6 +34,8 @@ final class CheTelegramAllMCPTests: XCTestCase {
             "mark_as_read",
             // History export
             "dump_chat_to_markdown",
+            // Archive (#69)
+            "archive_chat_to_markdown", "download_message_media",
         ]
 
         XCTAssertEqual(names, expected, "Tool set mismatch")

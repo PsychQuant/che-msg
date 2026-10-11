@@ -156,4 +156,13 @@ final class ArchiveDayFileTests: XCTestCase {
         let out = ArchiveDayFile.render(chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
         XCTAssertEqual(ArchiveDayFile.parseBlocks(out).map(\.id), [10], out)
     }
+
+    /// Signs inside the digit fields are not numbers (Int("-1") parses, so check digits).
+    func testOffsetFieldsMustBeDigits() {
+        for text in ["+-1:00", "-+1:00", "+08:-1", "+08:+1", "+٠٨:00"] {
+            XCTAssertNil(ArchiveDayFile.offsetSeconds(text), text)
+        }
+        XCTAssertEqual(ArchiveDayFile.offsetSeconds("+08:00"), 28_800)
+        XCTAssertEqual(ArchiveDayFile.offsetSeconds("-03:30"), -12_600)
+    }
 }

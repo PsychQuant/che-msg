@@ -221,14 +221,17 @@ public struct ChatArchiver {
     /// Downloads (TDLib path) or counts as pending (local cache) the media of `messages`.
     private func ensureMedia(_ messages: [[String: Any]], chatDir: URL, maxBytes: Int64?,
                              into result: inout Result) async {
-        for message in messages where ArchiveMedia.file(of: message) != nil {
+        for message in messages {
             guard let media else {
-                if let id = Self.id(of: message),
+                // The local reader gives a message's type but no file info, so count by type.
+                if let type = message["type"] as? String, ArchiveDayFile.fileTypes.contains(type),
+                   let id = Self.id(of: message),
                    !ArchiveMedia.holdsFile(ArchiveMedia.directory(chatDir: chatDir, messageId: id)) {
                     result.mediaPendingLocalCache += 1
                 }
                 continue
             }
+            guard ArchiveMedia.file(of: message) != nil else { continue }
             switch await ArchiveMedia.ensure(message, chatDir: chatDir, downloader: media, maxBytes: maxBytes) {
             case .downloaded: result.mediaDownloaded += 1
             case .skipped(let size): result.mediaSkipped.append(.init(messageId: Self.id(of: message) ?? 0, size: size))

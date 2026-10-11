@@ -8,6 +8,7 @@ import TelegramAllLib
 /// The tools the local reader answers while another process holds TDLib.
 internal let localReaderTools: Set<String> = [
     "get_chats", "search_chats", "get_chat_history", "search_messages", "dump_chat_to_markdown",
+    "archive_chat_to_markdown",
 ]
 
 /// Read tools the local reader does not answer; every other tool needs TDLib.
