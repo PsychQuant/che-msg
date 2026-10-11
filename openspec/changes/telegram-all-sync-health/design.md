@@ -33,9 +33,13 @@
 
 剛開 TDLib 時通常處於 Updating，立刻回答會給舊資料。等待只加在 lifecycle 的 open closure（`waitForAuthorizationToSettle` 之後、僅在授權 `ready` 時），所以只影響開啟 TDLib 的那一次；TDLib 已開時不等。10 秒是估計值：正常補一天份資料約數秒（apply 時以重新登入後的正常 session 量測確認，量測值寫回本段）。
 
+**量測（2026-10-11，task 7.2）**：維護者以 v0.7.0 重新登入後，正常 session 在 TDLib 閒置關閉約 11 分鐘後重開，由開啟 TDLib 的那次 `auth_status` 呼叫到回報 `connectionStateReady` 共三次：≤ 4.6 秒、≤ 5.5 秒、≤ 5.0 秒（以呼叫前後的時間戳計，含工具往返與模型處理時間，是上界）。三次都在 10 秒內回到 Ready，回答不帶同步說明。結論：10 秒保留。未量到的情境：離線數天後的首次補資料可能超過 10 秒，此時回答照常附 `sync: not-synced` 說明，不影響正確性。
+
 ### 停滯門檻 120 秒
 
 （判準已由「只有補資料卡住才算停滯；登出要先問使用者」取代：改看更新中時間；120 秒門檻保留。）原寫法：`auth_status` 的 `sync_stalled` 與回答中的「可能已被作廢」文字都以 `unsynced_seconds >= 120` 為準。依據：作廢的 session 90 秒毫無進展；正常 session 補資料不應超過一分鐘。估計值，apply 時與 10 秒一起量測；若正常 session 開啟後的 Updating 時間接近 120 秒，提高門檻並記錄。
+
+**量測（2026-10-11，task 7.2）**：同一批三次量測中，正常 session 的更新中時間最多約 5 秒，離 120 秒有二十倍以上的距離；重新登入前，被 Telegram 作廢的 session 在 TDLib 開啟 10 秒時 `sync_stalled: false`、142 秒時 `sync_stalled: true`，與 #63 診斷時觀察到的「一直停在 Updating」一致。結論：120 秒保留。未量到的情境：長時間離線後的大量補資料是否會超過 120 秒（verify 第二輪 logic N6），即使誤判，`next_step` 也只是提示先問使用者，不會自動重置。
 
 ### 同步說明沿用 `localCacheNote` 的形式
 
