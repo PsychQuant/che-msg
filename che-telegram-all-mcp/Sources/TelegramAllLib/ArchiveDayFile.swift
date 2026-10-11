@@ -59,12 +59,19 @@ public enum ArchiveDayFile {
     /// starts like an anchor is escaped so that it never reads back as one.
     public static func block(_ message: ArchiveMessage, offsetSeconds: Int) -> String {
         let time = formatter("HH:mm", offsetSeconds).string(from: message.date)
+        // The sender sits on the header line: a line break in it would start a new line that
+        // the parser could read as an anchor, so line breaks become spaces.
+        let sender = message.sender
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
         let body = message.body
             .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.hasPrefix("<!--") ? "\\" + $0 : String($0) }
             .joined(separator: "\n")
-        return "\(anchor(message.id))\n**\(time) \(message.sender)**：\n\(body)\n\n"
+        return "\(anchor(message.id))\n**\(time) \(sender)**：\n\(body)\n\n"
     }
 
     /// The frontmatter block of a day file.
