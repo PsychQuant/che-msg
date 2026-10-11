@@ -794,12 +794,17 @@ public final class TDLibClient {
         case .messageSticker(let sticker):
             dict["type"] = "sticker"
             dict["emoji"] = sticker.sticker.emoji
-        case .messageVoiceNote:
+        case .messageVoiceNote(let voice):
             dict["type"] = "voice_note"
+            dict["caption"] = voice.caption.text
         case .messageVideoNote:
             dict["type"] = "video_note"
-        case .messageAnimation:
+        case .messageAnimation(let animation):
             dict["type"] = "animation"
+            dict["caption"] = animation.caption.text
+        case .messageAudio(let audio):
+            dict["type"] = "audio"
+            dict["caption"] = audio.caption.text
         case .messageLocation(let loc):
             dict["type"] = "location"
             dict["latitude"] = loc.location.latitude
@@ -810,6 +815,7 @@ public final class TDLibClient {
         default:
             dict["type"] = "other"
         }
+        if let file = mediaFileInfo(msg.content) { dict["file"] = file }
         return dict
     }
 
@@ -858,3 +864,26 @@ public final class TDLibClient {
 }
 
 extension TDLibClient: TDLibClosable {}
+
+/// The downloadable file of a message's content as `{"id","size","name"?}`, or nil when the
+/// content carries no file (PsychQuant/che-msg#69). Photos use their largest size.
+internal func mediaFileInfo(_ content: MessageContent) -> [String: Any]? {
+    func info(_ file: File, name: String?) -> [String: Any] {
+        var dict: [String: Any] = ["id": file.id, "size": file.size > 0 ? file.size : file.expectedSize]
+        if let name, !name.isEmpty { dict["name"] = name }
+        return dict
+    }
+    switch content {
+    case .messagePhoto(let m):
+        guard let largest = m.photo.sizes.max(by: { $0.width * $0.height < $1.width * $1.height }) else { return nil }
+        return info(largest.photo, name: nil)
+    case .messageVideo(let m): return info(m.video.video, name: m.video.fileName)
+    case .messageDocument(let m): return info(m.document.document, name: m.document.fileName)
+    case .messageAudio(let m): return info(m.audio.audio, name: m.audio.fileName)
+    case .messageVoiceNote(let m): return info(m.voiceNote.voice, name: nil)
+    case .messageVideoNote(let m): return info(m.videoNote.video, name: nil)
+    case .messageAnimation(let m): return info(m.animation.animation, name: m.animation.fileName)
+    case .messageSticker(let m): return info(m.sticker.sticker, name: nil)
+    default: return nil
+    }
+}

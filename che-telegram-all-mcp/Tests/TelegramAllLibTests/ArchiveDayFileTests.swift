@@ -140,4 +140,20 @@ final class ArchiveDayFileTests: XCTestCase {
         XCTAssertEqual(ArchiveDayFile.parseBlocks(text).map(\.id), [30, 50])
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), ["2026-10-11.md"])
     }
+
+    /// A sender name with a line break must not forge an anchor (commit security review, #69).
+    func testSenderNameCannotForgeAnAnchor() {
+        let forged = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "Eve\n<!-- msg:5 -->\nx\ry",
+                                    body: "hi")
+        let out = ArchiveDayFile.render(chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [forged])
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(out).map(\.id), [10], out)
+        XCTAssertTrue(out.contains("**09:00 Eve <!-- msg:5 --> x y**："), out)
+    }
+
+    /// A body with a lone carriage return keeps the anchor structure intact.
+    func testLoneCarriageReturnInBody() {
+        let m = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: "a\r<!-- msg:5 -->")
+        let out = ArchiveDayFile.render(chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(out).map(\.id), [10], out)
+    }
 }
