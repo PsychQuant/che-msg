@@ -20,19 +20,35 @@ public struct ChatArchiver {
         public var since: Date?
         public var utcOffset: String
         public var selfLabel: String
+        public var maxMediaBytes: Int64?
+        public var retryMediaMessageIds: [Int64]?
 
         public init(chatId: Int64, outputDir: URL, afterMessageId: Int64? = nil, since: Date? = nil,
-                    utcOffset: String, selfLabel: String = "我") {
+                    utcOffset: String, selfLabel: String = "我", maxMediaBytes: Int64? = nil,
+                    retryMediaMessageIds: [Int64]? = nil) {
             self.chatId = chatId
             self.outputDir = outputDir
             self.afterMessageId = afterMessageId
             self.since = since
             self.utcOffset = utcOffset
             self.selfLabel = selfLabel
+            self.maxMediaBytes = maxMediaBytes
+            self.retryMediaMessageIds = retryMediaMessageIds
         }
     }
 
+    public struct SkippedMedia: Equatable {
+        public var messageId: Int64
+        public var size: Int64
+        public init(messageId: Int64, size: Int64) { self.messageId = messageId; self.size = size }
+    }
+
     public struct Result: Equatable {
+        public var mediaDownloaded = 0
+        public var mediaSkipped: [SkippedMedia] = []
+        public var mediaFailedIds: [Int64] = []
+        public var mediaPendingLocalCache = 0
+        public var mediaRetriedIds: [Int64]?
         public var files: [String] = []
         public var newMessages = 0
         public var mediaMessages = 0
@@ -55,6 +71,12 @@ public struct ChatArchiver {
                 "complete": complete,
                 "bookmark_safe": bookmarkSafe,
             ]
+            object["media_downloaded"] = mediaDownloaded
+            object["media_skipped"] = mediaSkipped.map { ["message_id": NSNumber(value: $0.messageId),
+                                                          "size": NSNumber(value: $0.size)] }
+            object["media_failed_ids"] = mediaFailedIds.map { NSNumber(value: $0) }
+            object["media_pending_local_cache"] = mediaPendingLocalCache
+            if let mediaRetriedIds { object["media_retried_ids"] = mediaRetriedIds.map { NSNumber(value: $0) } }
             if let stoppedReason { object["stopped_reason"] = stoppedReason }
             if let retryAfterSeconds { object["retry_after_seconds"] = retryAfterSeconds }
             if let bookmarkUnsafeReason { object["bookmark_unsafe_reason"] = bookmarkUnsafeReason }
@@ -72,17 +94,21 @@ public struct ChatArchiver {
     public let pageSize: Int
     /// Waits the given number of seconds (injected so tests do not sleep).
     public let sleep: (Int) async -> Void
+    /// Downloads media on the TDLib path; nil on the local-cache path.
+    public let media: ArchiveMediaDownloading?
 
     public init(source: ArchiveHistorySource, sourceKind: Source,
                 resolveNames: (([[String: Any]]) async -> [Int64: String])? = nil,
                 isSynced: @escaping () -> Bool, pageSize: Int = 100,
-                sleep: @escaping (Int) async -> Void = { try? await Task.sleep(nanoseconds: UInt64($0) * 1_000_000_000) }) {
+                sleep: @escaping (Int) async -> Void = { try? await Task.sleep(nanoseconds: UInt64($0) * 1_000_000_000) },
+                media: ArchiveMediaDownloading? = nil) {
         self.source = source
         self.sourceKind = sourceKind
         self.resolveNames = resolveNames
         self.isSynced = isSynced
         self.pageSize = pageSize
         self.sleep = sleep
+        self.media = media
     }
 
     public func archive(_ request: Request) async throws -> Result {
@@ -113,6 +139,7 @@ public struct ChatArchiver {
             guard !reachedBound, fresh > 0, let lowest = page.compactMap(Self.id(of:)).min() else { break }
             fromMessageId = lowest
         }
+        try await retryMedia(request, chatDir: chatDir, into: &result)
         result.files = files.sorted()
         result.complete = reachedBound && result.stoppedReason == nil
         if !reachedBound && result.stoppedReason == nil { result.stoppedReason = "no-progress" }
@@ -181,6 +208,7 @@ public struct ChatArchiver {
             media[id] = type != "text"
             result.newestMessageId = max(result.newestMessageId ?? id, id)
         }
+        await ensureMedia(messages, chatDir: chatDir, maxBytes: request.maxMediaBytes, into: &result)
         for (day, dayMessages) in byDay {
             let added = try ArchiveDayFile.write(directory: chatDir, chatId: request.chatId, day: day,
                                                  utcOffset: request.utcOffset, messages: dayMessages)
@@ -188,6 +216,50 @@ public struct ChatArchiver {
             result.mediaMessages += added.filter { media[$0] == true }.count
             files.insert("\(request.chatId)/\(day).md")
         }
+    }
+
+    /// Downloads (TDLib path) or counts as pending (local cache) the media of `messages`.
+    private func ensureMedia(_ messages: [[String: Any]], chatDir: URL, maxBytes: Int64?,
+                             into result: inout Result) async {
+        for message in messages where ArchiveMedia.file(of: message) != nil {
+            guard let media else {
+                if let id = Self.id(of: message),
+                   !ArchiveMedia.holdsFile(ArchiveMedia.directory(chatDir: chatDir, messageId: id)) {
+                    result.mediaPendingLocalCache += 1
+                }
+                continue
+            }
+            switch await ArchiveMedia.ensure(message, chatDir: chatDir, downloader: media, maxBytes: maxBytes) {
+            case .downloaded: result.mediaDownloaded += 1
+            case .skipped(let size): result.mediaSkipped.append(.init(messageId: Self.id(of: message) ?? 0, size: size))
+            case .failed: if let id = Self.id(of: message) { result.mediaFailedIds.append(id) }
+            case .alreadyPresent, .noFile: break
+            }
+        }
+    }
+
+    /// Retries the media of `retryMediaMessageIds` by fetching each message by id.
+    private func retryMedia(_ request: Request, chatDir: URL, into result: inout Result) async throws {
+        guard let ids = request.retryMediaMessageIds, !ids.isEmpty else { return }
+        guard let media else { result.mediaFailedIds.append(contentsOf: ids); return }
+        var retried: [Int64] = []
+        for id in ids {
+            guard let message = try? await media.message(chatId: request.chatId, messageId: id) else {
+                result.mediaFailedIds.append(id); continue
+            }
+            switch await ArchiveMedia.ensure(message, chatDir: chatDir, downloader: media, maxBytes: request.maxMediaBytes) {
+            case .downloaded:
+                result.mediaDownloaded += 1
+                retried.append(id)
+            case .alreadyPresent:
+                retried.append(id)
+            case .skipped(let size):
+                result.mediaSkipped.append(.init(messageId: id, size: size))
+            case .failed, .noFile:
+                result.mediaFailedIds.append(id)
+            }
+        }
+        result.mediaRetriedIds = retried
     }
 
     private func senderLabel(_ message: [String: Any], _ names: [Int64: String], _ selfLabel: String) -> String {
