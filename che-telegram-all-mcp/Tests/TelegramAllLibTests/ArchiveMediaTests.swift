@@ -8,13 +8,17 @@ final class ArchiveMediaTests: XCTestCase {
     final class FakeDownloader: ArchiveMediaDownloading, @unchecked Sendable {
         let cache: URL
         var failing: Set<Int> = []
+        var failOnce: Set<Int> = []
+        var onDownload: ((Int) -> Void)?
         var downloads: [Int] = []
         var messages: [Int64: [String: Any]] = [:]
         var ext = "jpg"
         init(cache: URL) { self.cache = cache }
         func download(fileId: Int) async throws -> String {
             downloads.append(fileId)
+            onDownload?(fileId)
             if failing.contains(fileId) { throw NSError(domain: "fake", code: 1) }
+            if failOnce.remove(fileId) != nil { throw NSError(domain: "fake", code: 3) }
             let path = cache.appendingPathComponent("file_\(fileId).\(ext)")
             try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
             try Data("bytes-\(fileId)".utf8).write(to: path)
@@ -225,5 +229,104 @@ final class ArchiveMediaTests: XCTestCase {
         } catch let error as ArchiveMedia.DownloadError {
             XCTAssertEqual(error, .failed(messageId: 7100))
         }
+    }
+
+    // MARK: - Verify round 1 (#69)
+
+    /// A download that fails in the walk and succeeds on retry in the same run is not failed.
+    func testRetrySuccessClearsTheFailureAndIdsAreUnique() async throws {
+        let root = scratch(), out = root.appendingPathComponent("out")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        downloader.failOnce = [71]
+        downloader.messages = [7100: Self.media(7100, 3, fileId: 71)]
+        let result = try await archiver([Self.media(7100, 3, fileId: 71)], downloader: downloader)
+            .archive(.init(chatId: 777, outputDir: out, utcOffset: "+08:00", retryMediaMessageIds: [7100, 7100]))
+        XCTAssertEqual(result.mediaFailedIds, [])
+        XCTAssertEqual(result.mediaRetriedIds, [7100])
+        XCTAssertEqual(result.mediaDownloaded, 1)
+    }
+
+    func testAFailureSeenTwiceIsListedOnce() async throws {
+        let root = scratch(), out = root.appendingPathComponent("out")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        downloader.failing = [71]
+        downloader.messages = [7100: Self.media(7100, 3, fileId: 71)]
+        let result = try await archiver([Self.media(7100, 3, fileId: 71)], downloader: downloader)
+            .archive(.init(chatId: 777, outputDir: out, utcOffset: "+08:00", retryMediaMessageIds: [7100]))
+        XCTAssertEqual(result.mediaFailedIds, [7100])
+    }
+
+    /// The page's text is on disk before its media is downloaded.
+    func testTextIsWrittenBeforeMedia() async throws {
+        let root = scratch(), out = root.appendingPathComponent("out")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        var dayFileExisted: [Bool] = []
+        downloader.onDownload = { _ in
+            dayFileExisted.append(FileManager.default.fileExists(atPath: out.appendingPathComponent("777/2026-10-11.md").path))
+        }
+        _ = try await archiver([Self.media(7100, 3, fileId: 71)], downloader: downloader)
+            .archive(.init(chatId: 777, outputDir: out, utcOffset: "+08:00"))
+        XCTAssertEqual(dayFileExisted, [true])
+    }
+
+    /// `media_messages` counts messages whose type carries a file, like the pending count.
+    func testMediaMessagesCountsFileTypesOnly() async throws {
+        let root = scratch(), out = root.appendingPathComponent("out")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        let result = try await archiver([Self.media(7100, 3, fileId: 71),
+                                         ChatArchiverTests.msg(7000, 2, type: "location"),
+                                         ChatArchiverTests.msg(6900, 1, type: "poll")], downloader: downloader)
+            .archive(.init(chatId: 777, outputDir: out, utcOffset: "+08:00"))
+        XCTAssertEqual(result.mediaMessages, 1)
+    }
+
+    func testFileNamesAreSanitisedByScalarAndCapped() {
+        let combining = ArchiveMedia.fileName(type: "document", name: "a/\u{301}b.pdf", downloadedPath: "/c/x")
+        XCTAssertFalse(combining.unicodeScalars.contains("/"), combining)
+        XCTAssertEqual(ArchiveMedia.fileName(type: "document", name: "\u{7}x\u{0}y.pdf", downloadedPath: "/c/x"), "xy.pdf")
+        let long = ArchiveMedia.fileName(type: "document", name: String(repeating: "檔", count: 120) + ".pdf",
+                                         downloadedPath: "/c/x")
+        XCTAssertLessThanOrEqual(long.utf8.count, 255)
+        XCTAssertTrue(long.hasSuffix(".pdf"), long)
+    }
+
+    /// A symlink in the media directory is not a downloaded file, and replacing it leaves its target alone.
+    func testSymlinkIsNotADownloadedFile() async throws {
+        let root = scratch(), chatDir = root.appendingPathComponent("777")
+        let target = root.appendingPathComponent("elsewhere.txt")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: target)
+        let mediaDir = ArchiveMedia.directory(chatDir: chatDir, messageId: 7100)
+        try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: mediaDir.appendingPathComponent("photo.jpg"), withDestinationURL: target)
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        let outcome = await ArchiveMedia.ensure(Self.media(7100, 3, fileId: 71), chatDir: chatDir,
+                                                downloader: downloader, maxBytes: nil)
+        let saved = mediaDir.appendingPathComponent("photo.jpg")
+        XCTAssertEqual(outcome, .downloaded(path: saved.path, size: 8))
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: saved.path)[.type] as? FileAttributeType, .typeRegular)
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "keep")
+    }
+
+    func testTemporaryFileIsRemovedWhenSavingFails() async throws {
+        let root = scratch(), chatDir = root.appendingPathComponent("777")
+        let mediaDir = ArchiveMedia.directory(chatDir: chatDir, messageId: 7100)
+        try FileManager.default.createDirectory(at: mediaDir.appendingPathComponent("photo.jpg"), withIntermediateDirectories: true)
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        let outcome = await ArchiveMedia.ensure(Self.media(7100, 3, fileId: 71), chatDir: chatDir,
+                                                downloader: downloader, maxBytes: nil)
+        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: mediaDir.path), ["photo.jpg"])
+    }
+
+    func testMediaIsOwnerOnly() async throws {
+        let root = scratch(), chatDir = root.appendingPathComponent("777")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        _ = await ArchiveMedia.ensure(Self.media(7100, 3, fileId: 71), chatDir: chatDir, downloader: downloader, maxBytes: nil)
+        let mediaDir = ArchiveMedia.directory(chatDir: chatDir, messageId: 7100)
+        let fm = FileManager.default
+        XCTAssertEqual((try fm.attributesOfItem(atPath: mediaDir.path)[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+        let file = mediaDir.appendingPathComponent("photo.jpg").path
+        XCTAssertEqual((try fm.attributesOfItem(atPath: file)[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 }

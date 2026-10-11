@@ -31,11 +31,26 @@ public enum ArchiveMedia {
     public static func fileName(type: String, name: String?, downloadedPath: String) -> String {
         if type == "photo" { return "photo.jpg" }
         if let name {
-            let cleaned = String(name.filter { $0 != "/" && $0 != "\\" && $0 != "\0" }.drop(while: { $0 == "." }))
+            // By scalar, not Character: "/" followed by a combining mark is one Character.
+            var scalars = String.UnicodeScalarView(name.unicodeScalars.filter {
+                $0 != "/" && $0 != "\\" && !CharacterSet.controlCharacters.contains($0)
+            })
+            while scalars.first == "." { scalars.removeFirst() }
+            let cleaned = capped(String(scalars))
             if !cleaned.isEmpty { return cleaned }
         }
         let ext = URL(fileURLWithPath: downloadedPath).pathExtension
         return ext.isEmpty ? type : "\(type).\(ext)"
+    }
+
+    /// `name` shortened to the 255 bytes a file name may have, keeping a short extension.
+    static func capped(_ name: String, limit: Int = 255) -> String {
+        guard name.utf8.count > limit else { return name }
+        let ext = (name as NSString).pathExtension
+        let keep = ext.isEmpty || ext.utf8.count > 16 ? "" : "." + ext
+        var stem = String.UnicodeScalarView(name.unicodeScalars.dropLast(keep.unicodeScalars.count))
+        while String(stem).utf8.count + keep.utf8.count > limit { stem.removeLast() }
+        return String(stem) + keep
     }
 
     /// The message's file as `(id, size, name)`, or nil when it carries none.
@@ -49,14 +64,14 @@ public enum ArchiveMedia {
     /// True when `directory` holds at least one regular, non-hidden file.
     static func holdsFile(_ directory: URL) -> Bool { existingFile(directory) != nil }
 
-    /// The first regular, non-hidden file in `directory` by name, or nil.
+    /// The first regular, non-hidden file in `directory` by name, or nil. A symbolic link is
+    /// not a downloaded file (`attributesOfItem` describes the link, not its target).
     static func existingFile(_ directory: URL) -> URL? {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return nil }
         return names.sorted().lazy.map { directory.appendingPathComponent($0) }.first { url in
-            var isDir: ObjCBool = false
-            return !url.lastPathComponent.hasPrefix(".") && fm.fileExists(atPath: url.path, isDirectory: &isDir)
-                && !isDir.boolValue
+            !url.lastPathComponent.hasPrefix(".")
+                && (try? fm.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeRegular
         }
     }
 
@@ -110,18 +125,26 @@ public enum ArchiveMedia {
         let directory = directory(chatDir: chatDir, messageId: messageId)
         if holdsFile(directory) { return .alreadyPresent }
         if let maxBytes, file.size > maxBytes { return .skipped(size: file.size) }
+        let fm = FileManager.default
+        // Copy through a temporary name so a half-copied file never looks complete.
+        let temporary = directory.appendingPathComponent(".\(UUID().uuidString).tmp")
         do {
             let downloaded = try await downloader.download(fileId: file.id)
-            let fm = FileManager.default
-            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let target = directory.appendingPathComponent(fileName(type: type, name: file.name, downloadedPath: downloaded))
-            // Copy through a temporary name so a half-copied file never looks complete.
-            let temporary = directory.appendingPathComponent(".\(UUID().uuidString).tmp")
             try fm.copyItem(at: URL(fileURLWithPath: downloaded), to: temporary)
+            // Archives hold other people's files: owner-only, whatever mode TDLib's cache had.
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+            // A symbolic link where the file belongs is not a download (existingFile skips it);
+            // remove the link itself, never what it points to.
+            if (try? fm.attributesOfItem(atPath: target.path)[.type] as? FileAttributeType) == .typeSymbolicLink {
+                try fm.removeItem(at: target)
+            }
             try fm.moveItem(at: temporary, to: target)
             let size = (try? fm.attributesOfItem(atPath: target.path)[.size] as? NSNumber)?.int64Value ?? 0
             return .downloaded(path: target.path, size: size)
         } catch {
+            try? fm.removeItem(at: temporary)
             return .failed
         }
     }

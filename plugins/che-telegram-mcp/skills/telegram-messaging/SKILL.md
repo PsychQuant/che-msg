@@ -65,6 +65,8 @@ Answers from read tools may carry a second text item starting `sync: not-synced`
 | `get_chat_history` | Read history (`chat_id`, `limit`, `from_message_id`, optional `since_date` / `until_date` / `max_messages`) |
 | `search_messages` | Search within a chat by keyword |
 | `dump_chat_to_markdown` | One-shot export with date range / cap |
+| `archive_chat_to_markdown` | Incremental per-day archive with media (writes files; the `/che-telegram-mcp:archive-telegram` skill drives it from a config) |
+| `download_message_media` | Save one message's media into `<output_dir>/<chat_id>/media/<message_id>/` (writes a file) |
 
 #### Sending / modifying messages
 | Tool | Purpose |

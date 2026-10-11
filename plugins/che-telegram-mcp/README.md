@@ -216,16 +216,18 @@ chats:
 
 Without this file the skill shows the template and does nothing else. Each run writes, per chat:
 
-- `archives/telegram/<chat_id>/YYYY-MM-DD.md` — one block per message, anchored by `<!-- msg:<message_id> -->`. Re-runs merge into these files; nothing already there is rewritten.
+- `archives/telegram/<chat_id>/YYYY-MM-DD.md` — one block per message, anchored by `<!-- msg:<message_id> -->`. Re-runs merge into these files; nothing already there is rewritten. Owner-only (0600).
 - `archives/telegram/<chat_id>/media/<message_id>/` — the photo, video, document, audio, voice note, video note, animation or sticker. The message's line links to that directory.
 
-The bookmark of each chat (the newest archived message id) is kept in `.claude/.telegram/state/archives/<slug>/index.json`. It moves forward only when the run read the whole new range from a synced TDLib and the end-of-run check passed (every listed file exists, belongs to that chat and holds the newest message's anchor). Otherwise it stays, and the next run fetches the same range again — the merge drops what is already there. The report says why a bookmark did not move: a Telegram rate limit (with the wait in seconds), TDLib not synced yet, another session holding TDLib (then the archive comes from the local cache, without media), or a failed check.
+The bookmark of each chat (the newest archived message id) is kept in `.claude/.telegram/state/archives/<slug>/index.json`. It moves forward only when the run read the whole new range from a synced TDLib and the end-of-run check passed (every listed file exists, belongs to that chat and holds the newest message's anchor). Otherwise it stays, and the next run fetches the same range again — the merge drops what is already there. The report says why a bookmark did not move: a Telegram rate limit (with the wait in seconds), TDLib not synced yet, or a failed check.
+
+While another session holds TDLib the skill stops instead of archiving from TDLib's local cache: blocks written from the cache have no sender names, captions or audio links, and later runs never rewrite a block that is already there ([#72](https://github.com/PsychQuant/che-msg/issues/72)). Ask for a cache archive explicitly if you want one anyway. It also stops when `output_dir` sits in a git repository without being ignored, and when two `output_dir` values would share one index.
 
 Media that failed to download are retried on the next run. Media skipped by `max_media_mb` are listed with their size; fetch one later with `download_message_media` (`chat_id`, `message_id`, `output_dir`), which also works on its own to save any single message's media ([#17](https://github.com/PsychQuant/che-msg/issues/17)).
 
 When a group is upgraded to a supergroup its `chat_id` changes (to a `-100…` id): put the new id in the config. The old directory stays.
 
-> **Privacy.** Archives and media are other people's messages and files, verbatim. Do not commit them to a public repository — add `output_dir` to `.gitignore` when the workspace is a git repository. The skill's report gives only counts, file names and message ids, never message text, captions or sender names.
+> **Privacy.** Archives and media are other people's messages and files, verbatim. Do not commit them to any repository — the skill refuses to run while `output_dir` is inside a git repository and not ignored. Media keep the sender's file name and extension: treat them as untrusted files. The skill's report gives only counts, file names and message ids, never message text, captions or sender names.
 
 Needs `che-telegram-all-mcp` 0.8.0 or later (the release that adds `archive_chat_to_markdown` and `download_message_media`).
 

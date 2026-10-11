@@ -8,7 +8,7 @@ import TDLibKit
 final class ArchiveTDLibErrorTests: XCTestCase {
     func testFloodWaitFromTDLibKitIsRecognised() async {
         do {
-            _ = try await archiveTDLibCall { () async throws -> Int in throw TDLibKit.Error(code: 429, message: "FLOOD_WAIT_30") }
+            _ = try await archiveTDLibCall { () async throws -> Int in throw TDLibKit.Error(code: 429, message: "Too Many Requests: retry after 30") }
             XCTFail("expected an error")
         } catch {
             XCTAssertEqual(ChatArchiver.floodWaitSeconds(error), 30)
@@ -16,7 +16,7 @@ final class ArchiveTDLibErrorTests: XCTestCase {
                 return XCTFail("not mapped: \(error)")
             }
             XCTAssertEqual(code, 429)
-            XCTAssertEqual(message, "FLOOD_WAIT_30")
+            XCTAssertEqual(message, "Too Many Requests: retry after 30")
         }
     }
 
@@ -59,5 +59,18 @@ final class ArchiveTDLibErrorTests: XCTestCase {
         XCTAssertEqual(ArchiveChatID(-1_997_852_516_353), .other)   // secret chats start here
         XCTAssertEqual(ArchiveChatID(-2_000_000_000_001), .other)
         XCTAssertEqual(ArchiveChatID(0), .other)
+    }
+
+    /// Negating Int64.min traps; the classifier must not (it would kill the MCP server).
+    func testMostNegativeIdDoesNotTrap() {
+        XCTAssertEqual(ArchiveChatID(Int64.min), .other)
+        XCTAssertEqual(ArchiveChatID(Int64.max), .other)
+    }
+
+    /// Both archive sources page strictly below the cursor, whatever the underlying call returns.
+    func testCursorFilter() {
+        let page: [[String: Any]] = [["id": NSNumber(value: 30)], ["id": NSNumber(value: 20)], ["id": NSNumber(value: 10)]]
+        XCTAssertEqual(ArchiveCursor.strictlyBelow(page, cursor: 20).compactMap { ($0["id"] as? NSNumber)?.int64Value }, [10])
+        XCTAssertEqual(ArchiveCursor.strictlyBelow(page, cursor: 0).count, 3)
     }
 }

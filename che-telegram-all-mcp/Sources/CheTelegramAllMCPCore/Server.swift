@@ -383,7 +383,9 @@ public final class CheTelegramAllMCPServer {
                  <output_dir>/<chat_id>/media/<message_id>/. Re-runs merge into the existing files. Returns a \
                  manifest (files, counts, newest_message_id, complete, bookmark_safe, media results) and never \
                  message text. Advance a stored bookmark to newest_message_id only when bookmark_safe is true. \
-                 While another session holds TDLib it archives from the local cache without media.
+                 While another session holds TDLib it archives from the local cache without media, sender \
+                 names or captions, and later calls never rewrite those blocks. Day files are owner-only; one \
+                 archive per chat directory runs at a time.
                  """,
                  properties: [
                     "chat_id": prop("integer", "Chat ID"),
@@ -400,8 +402,8 @@ public final class CheTelegramAllMCPServer {
                  description: """
                  Download one message's photo, video, document, audio, voice note, video note, animation or \
                  sticker into <output_dir>/<chat_id>/media/<message_id>/ and return message_id, type, path and \
-                 size (no message text or caption). When the file is already there it is returned without \
-                 downloading again.
+                 size (no message text or caption; path contains the sender's original file name). When the \
+                 file is already there it is returned without downloading again.
                  """,
                  properties: [
                     "chat_id": prop("integer", "Chat ID"),

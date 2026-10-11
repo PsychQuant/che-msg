@@ -18,14 +18,28 @@ public struct ArchiveMessage: Equatable, Sendable {
 /// The per-chat per-day Markdown file of the Telegram archive
 /// (telegram-chat-archive, "Day file format").
 public enum ArchiveDayFile {
-    /// Seconds east of UTC for `+HH:MM` / `-HH:MM`, or nil when malformed.
+    public enum WriteError: Error, LocalizedError, Equatable {
+        /// The day file was written at another UTC offset; its times and day would disagree.
+        case offsetMismatch(existing: String, requested: String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .offsetMismatch(let existing, let requested):
+                return "utc_offset \(requested) differs from \(existing), the offset this archive's day files were "
+                    + "written with; archive this chat with utc_offset \(existing)"
+            }
+        }
+    }
+
+    /// Seconds east of UTC for `+HH:MM` / `-HH:MM` up to ±18:00 (the range Foundation's
+    /// `TimeZone(secondsFromGMT:)` accepts), or nil when malformed or out of range.
     public static func offsetSeconds(_ text: String) -> Int? {
         let chars = Array(text)
         let isDigit: (Character) -> Bool = { ("0"..."9").contains($0) }
         guard chars.count == 6, chars[0] == "+" || chars[0] == "-", chars[3] == ":",
               chars[1...2].allSatisfy(isDigit), chars[4...5].allSatisfy(isDigit),
               let hours = Int(String(chars[1...2])), let minutes = Int(String(chars[4...5])),
-              hours <= 23, minutes <= 59 else { return nil }
+              minutes <= 59, hours * 3600 + minutes * 60 <= 18 * 3600 else { return nil }
         let seconds = hours * 3600 + minutes * 60
         return chars[0] == "-" ? -seconds : seconds
     }
@@ -70,9 +84,26 @@ public enum ArchiveDayFile {
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.hasPrefix("<!--") ? "\\" + $0 : String($0) }
+            .map { isAnchorOrHeaderShaped($0) ? "\\" + $0 : String($0) }
             .joined(separator: "\n")
         return "\(anchor(message.id))\n**\(time) \(sender)**：\n\(body)\n\n"
+    }
+
+    /// A body line that starts like an anchor, or reads like a block header
+    /// (`**HH:mm name**：`), is escaped with a leading backslash so it cannot pass for the
+    /// start of another message to the parser or to a reader.
+    private static func isAnchorOrHeaderShaped(_ line: Substring) -> Bool {
+        line.hasPrefix("<!--")
+            || line.range(of: #"^\*\*[0-9]{2}:[0-9]{2} .*\*\*：$"#, options: .regularExpression) != nil
+    }
+
+    /// The `utc_offset` recorded in a day file's frontmatter, or nil.
+    static func recordedOffset(_ text: String) -> String? {
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false).prefix(8)
+        where line.hasPrefix("utc_offset: ") {
+            return line.dropFirst("utc_offset: ".count).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        }
+        return nil
     }
 
     /// The frontmatter block of a day file.
@@ -121,19 +152,24 @@ public enum ArchiveDayFile {
     public static func write(directory: URL, chatId: Int64, day: String, utcOffset: String,
                              messages: [ArchiveMessage]) throws -> [Int64] {
         let fm = FileManager.default
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let file = directory.appendingPathComponent("\(day).md")
         let existing = fm.fileExists(atPath: file.path) ? try String(contentsOf: file, encoding: .utf8) : nil
+        if let existing, let recorded = recordedOffset(existing), recorded != utcOffset {
+            throw WriteError.offsetMismatch(existing: recorded, requested: utcOffset)
+        }
         let (content, added) = merged(existing: existing, chatId: chatId, day: day, utcOffset: utcOffset,
                                       messages: messages)
         if added.isEmpty && existing != nil { return [] }
         let temporary = directory.appendingPathComponent(".\(day).md.\(UUID().uuidString).tmp")
         do {
-            try Data(content.utf8).write(to: temporary)
+            // Owner-only from the start: archives hold other people's messages.
+            guard fm.createFile(atPath: temporary.path, contents: Data(content.utf8),
+                                attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
             if existing == nil {
                 try fm.moveItem(at: temporary, to: file)
             } else {
-                _ = try fm.replaceItemAt(file, withItemAt: temporary)
+                _ = try fm.replaceItemAt(file, withItemAt: temporary, options: .usingNewMetadataOnly)
             }
         } catch {
             try? fm.removeItem(at: temporary)

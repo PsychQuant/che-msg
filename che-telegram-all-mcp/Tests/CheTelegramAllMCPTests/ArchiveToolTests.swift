@@ -97,6 +97,7 @@ final class ArchiveToolTests: XCTestCase {
         let base: [String: Value] = ["chat_id": .int(777), "output_dir": .string(out.path)]
         let cases: [(String, Value)] = [
             ("utc_offset", .string("+8")), ("utc_offset", .string("+-1:00")), ("utc_offset", .int(8)),
+            ("utc_offset", .string("+19:00")),
             ("since_date", .string("2026-02-30")), ("since_date", .string("2026/01/01")), ("since_date", .int(20260101)),
             ("after_message_id", .int(-1)), ("after_message_id", .string("x")),
             ("max_media_bytes", .int(-1)), ("max_media_bytes", .string("big")),
