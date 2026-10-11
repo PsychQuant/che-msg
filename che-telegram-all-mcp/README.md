@@ -139,8 +139,8 @@ Session data is stored in: `~/Library/Application Support/che-telegram-all-mcp/t
 Several Claude Code sessions can run this server at the same time ([#58](https://github.com/PsychQuant/che-msg/issues/58)). TDLib allows one process per database, so the servers share it:
 
 - A server does not open TDLib at startup. It opens TDLib on the first call that needs it, taking the lock `~/.cache/che-telegram-all-mcp.tdlib.lock` (owner PID in `~/.cache/che-telegram-all-mcp.tdlib.owner`), and closes it after `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` seconds without calls, never during a call. It also closes TDLib and releases the lock when the MCP connection ends.
-- While another process holds TDLib, five read tools — `get_chats`, `search_chats`, `get_chat_history`, `search_messages`, `dump_chat_to_markdown` — are answered from TDLib's local cache, read-only. The answer carries a second text item starting `source: local-cache`, naming the holder, the number of records that could not be decoded, and per chat the date of the newest cached message; the cache holds only what TDLib has loaded, so newer messages can exist on Telegram.
-- `get_me`, `get_user`, `get_contacts`, `get_chat` and `get_chat_members` return `local_reader_unsupported`; write tools, `auth_*` and `logout` return `tdlib_in_use` with `lock_holder_pid`. Retry after the holder goes idle.
+- While another process holds TDLib, five read tools — `get_chats`, `search_chats`, `get_chat_history`, `search_messages`, `dump_chat_to_markdown` — are answered from TDLib's local cache, read-only, and `archive_chat_to_markdown` archives from it (no media downloads, no sender names, `bookmark_safe: false`; see [Archive a chat](#archive-a-chat-incrementally)). The answer carries a second text item starting `source: local-cache`, naming the holder, the number of records that could not be decoded, and per chat the date of the newest cached message; the cache holds only what TDLib has loaded, so newer messages can exist on Telegram.
+- `get_me`, `get_user`, `get_contacts`, `get_chat` and `get_chat_members` return `local_reader_unsupported`; write tools, `download_message_media`, `auth_*` and `logout` return `tdlib_in_use` with `lock_holder_pid`. Retry after the holder goes idle.
 - The reader accepts only the TDLib version it was verified against (1.8.60); otherwise it returns `local_reader_unavailable` with reason `unsupported_tdlib_version` rather than guess.
 - A wrapper from plugin che-telegram-mcp 1.4.x or older still holds its own lock directory (`~/.cache/che-telegram-all-mcp.lock`); 0.6.0 servers treat it as a holder while that wrapper runs.
 
@@ -161,9 +161,9 @@ To recover (a new login sends a code to your account, so it is always your actio
 2. **Then** open Telegram → Settings → Devices on your phone and end the stalled session and any session you do not recognise, so the new login is not invalidated the same way. Do this only after step 1: once a session is ended, TDLib still running on its directory can lose its authorization and clear that directory itself, and the backup would be empty.
 3. Log in again with `auth_run` (or `telegram-all auth-phone` / `auth-code`).
 
-## Tools (27)
+## Tools (30)
 
-### Authentication (6)
+### Authentication (7)
 
 | Tool | Description |
 |------|-------------|
@@ -172,6 +172,7 @@ To recover (a new login sends a code to your account, so it is always your actio
 | `auth_send_code` | Enter verification code |
 | `auth_send_password` | Enter 2FA password (if enabled) |
 | `auth_status` | Check current auth state |
+| `auth_run` | Run the whole login in one tool, repeated until ready |
 | `logout` | Local reset: close TDLib and rename its database directory aside (no request to Telegram, nothing deleted); ask the user first |
 
 ### User Info (3)
@@ -219,6 +220,13 @@ To recover (a new login sends a code to your account, so it is always your actio
 | Tool | Description |
 |------|-------------|
 | `mark_as_read` | Mark messages as read |
+
+### Archive (2)
+
+| Tool | Description |
+|------|-------------|
+| `archive_chat_to_markdown` | Archive a chat incrementally into per-day Markdown files and download its media under `output_dir`; returns a manifest without message text ([#69](https://github.com/PsychQuant/che-msg/issues/69)) |
+| `download_message_media` | Download one message's media into the same layout and return its path and size ([#17](https://github.com/PsychQuant/che-msg/issues/17)) |
 
 ## Usage Examples
 
@@ -278,6 +286,39 @@ Output Markdown format (excerpt):
 [photo]
 ```
 
+### Archive a chat incrementally
+
+`archive_chat_to_markdown` keeps an archive that grows with each run ([#69](https://github.com/PsychQuant/che-msg/issues/69)). The plugin's `/archive-telegram` skill drives it from a config file; the tool can also be called directly:
+
+```
+archive_chat_to_markdown({
+  chat_id: 123456789,
+  output_dir: "/path/to/project/archives/telegram",  // absolute
+  after_message_id: 9000,          // bookmark: only newer messages (wins over since_date)
+  since_date: "2026-01-01",        // first run without a bookmark (default: whole history)
+  utc_offset: "+08:00",            // decides each message's day (default: the server's offset)
+  max_media_bytes: 52428800,       // skip larger media (default: no limit)
+  retry_media_message_ids: [7100]  // media that failed last time
+})
+```
+
+It writes:
+
+- `<output_dir>/<chat_id>/YYYY-MM-DD.md` — frontmatter `chat_id`, `date`, `utc_offset`, then one block per message: an anchor `<!-- msg:<message_id> -->` and `**HH:mm sender**：` followed by the text. Re-runs merge into the existing file: blocks already there are kept as they are, new ones are added in message-id order, and the file is replaced atomically, so running twice changes nothing.
+- `<output_dir>/<chat_id>/media/<message_id>/` — the message's photo (`photo.jpg`), video, document (original file name), audio, voice note, video note, animation or sticker, downloaded completely through TDLib and copied there. A media block reads `[photo](media/<message_id>/) caption`, so the link is right before the file arrives. A directory that already holds a file is not downloaded again.
+
+The result is a manifest only — `files`, `new_messages`, `media_messages`, `newest_message_id`, `source`, `complete`, `bookmark_safe` (with `bookmark_unsafe_reason`), `media_downloaded`, `media_skipped` (`message_id` and `size`), `media_failed_ids`, `media_pending_local_cache`, `media_retried_ids`, and `stopped_reason` / `retry_after_seconds` when it stopped early. It never contains message text.
+
+**Bookmark rule.** Store `newest_message_id` as the next `after_message_id` only when `bookmark_safe` is `true`: the walk reached the previous bookmark (or `since_date`, or the start of the chat), the source was TDLib and TDLib was synced. Otherwise keep the old bookmark — the next run fetches the same range again and the merge drops what is already there. A `FLOOD_WAIT` of up to 60 seconds is waited out once; a longer one stops the run with `complete: false`, `stopped_reason: "flood_wait"` and `retry_after_seconds`, keeping the files written so far. A failed media download is listed in `media_failed_ids` and does not affect the bookmark; pass those ids as `retry_media_message_ids` next time.
+
+**Other sessions.** While another process holds TDLib, the archive is written from TDLib's local cache: senders are `User <id>`, no media is downloaded (`media_pending_local_cache` counts it), and `bookmark_safe` is `false` with reason `local-cache`, so the next TDLib run fetches the range again and downloads the media.
+
+**Supergroups.** When a group is upgraded to a supergroup its `chat_id` changes (to a `-100…` id). Archive the new id; the old directory stays.
+
+`download_message_media({chat_id, message_id, output_dir})` saves one message's media into the same `<output_dir>/<chat_id>/media/<message_id>/` and returns `message_id`, `type`, `path` and `size`; a file already there is returned without downloading again, and a message without media is an error ([#17](https://github.com/PsychQuant/che-msg/issues/17)).
+
+> **Privacy.** Archives and media are other people's messages and files, verbatim. Do not commit them to a public repository; add the archive directory to `.gitignore` when it sits inside a git repository.
+
 ### CLI: dump from the command line
 
 The same capability is exposed through `telegram-all history` flags — useful for scripting and testing outside MCP:
@@ -305,11 +346,16 @@ Sources/
 ├── CheTelegramAllMCP/
 │   └── main.swift              # Entry point
 ├── CheTelegramAllMCPCore/
-│   └── Server.swift            # MCP Server (27 tools + dispatch)
+│   ├── Server.swift            # MCP Server (30 tools + dispatch)
+│   └── ArchiveToolArgs.swift   # archive / download_message_media argument checks
 ├── TelegramAllLib/
 │   ├── TDLibClient.swift       # TDLib wrapper (auth + all operations)
+│   ├── TDLibClient+Archive.swift # TDLib and local cache as archive sources
 │   ├── MessageFilters.swift    # Pagination + date-filter pure helpers
-│   └── MarkdownExporter.swift  # dump_chat_to_markdown orchestrator
+│   ├── MarkdownExporter.swift  # dump_chat_to_markdown orchestrator
+│   ├── ChatArchiver.swift      # archive_chat_to_markdown: paging, bookmark safety, manifest
+│   ├── ArchiveDayFile.swift    # per-day file format and idempotent merge
+│   └── ArchiveMedia.swift      # media download into media/<message_id>/
 └── telegram-all/
     ├── TelegramAllCLI.swift    # ArgumentParser subcommands
     └── AuthHelper.swift
@@ -325,6 +371,7 @@ Sources/
 - API credentials and session are stored locally only.
 - `logout` is a local reset only: the session stays valid on Telegram's side, and the renamed `tdlib.invalidated-*` directory still holds a working auth key and the cached messages. To revoke access, end the session in Telegram → Settings → Devices, then delete the `tdlib.invalidated-*` directories (and `tdlib/`, if you are done with this Mac) under `~/Library/Application Support/che-telegram-all-mcp/` by hand.
 - Never share the TDLib database directory with others.
+- `archive_chat_to_markdown`, `download_message_media` and `dump_chat_to_markdown` write other people's messages and files to disk. Keep their output out of public repositories.
 
 ## License
 

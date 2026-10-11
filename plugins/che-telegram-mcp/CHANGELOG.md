@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `/che-telegram-mcp:archive-telegram` ([#69](https://github.com/PsychQuant/che-msg/issues/69)): archives the chats listed by `chat_id` in `.claude/.telegram/config.yaml` (`output_dir`, optional `since` and `max_media_mb`) into per-day Markdown files and media, keeps each chat's bookmark, `utc_offset` and failed media in `.claude/.telegram/state/archives/<slug>/index.json`, advances a bookmark only when the run is `bookmark_safe` and the end-of-run check passes, and reports counts and reasons without quoting messages. It runs only when typed and pre-approves only `auth_status`.
+- README: the two new `telegram-all` tools `archive_chat_to_markdown` and `download_message_media` (resolves [#17](https://github.com/PsychQuant/che-msg/issues/17)), the archive layout, the bookmark rule, supergroup `chat_id` changes, and a reminder that archives are other people's content and stay out of public repositories. Needs `che-telegram-all-mcp` 0.8.0.
+
 ## [1.6.0] - 2026-10-10
 
 telegram-all says when TDLib is not synced with Telegram, and `logout` is a local reset ([#63](https://github.com/PsychQuant/che-msg/issues/63)). The wrappers pin binary `DESIRED_VERSION` 0.7.0.

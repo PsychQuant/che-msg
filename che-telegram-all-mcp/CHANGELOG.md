@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- `archive_chat_to_markdown` archives a chat incrementally ([#69](https://github.com/PsychQuant/che-msg/issues/69)): per-day files `<output_dir>/<chat_id>/YYYY-MM-DD.md` with a `<!-- msg:<id> -->` anchor per message, merged on every run and replaced atomically (running twice changes nothing), and each message's media in `<output_dir>/<chat_id>/media/<message_id>/`. Parameters: `chat_id`, `output_dir` (absolute), `after_message_id` (bookmark, wins over `since_date`), `since_date`, `utc_offset` (default: the server's offset), `max_media_bytes`, `retry_media_message_ids`. It returns a manifest without message text; `bookmark_safe` is true only when the walk reached the previous bookmark from a synced TDLib. A `FLOOD_WAIT` up to 60 s is waited out once; a longer one stops with `complete: false`, `stopped_reason: "flood_wait"` and `retry_after_seconds`, keeping the files written so far. While another process holds TDLib it archives from the local cache, without media or names, `bookmark_safe: false`.
+- `download_message_media(chat_id, message_id, output_dir)` saves one message's photo, video, document, audio, voice note, video note, animation or sticker into the same layout and returns `message_id`, `type`, `path` and `size` (resolves [#17](https://github.com/PsychQuant/che-msg/issues/17)). It returns `tdlib_in_use` while another process holds TDLib.
+
+### Changed
+- Message JSON (`get_chat_history`, `search_messages`, …) carries `file` (`id`, `size`, `name` when there is one) for messages with a downloadable file; photos give their largest size. Audio messages now have `type: "audio"` (they were `"other"`), and voice notes, animations and audio carry their `caption`.
+
 ## [0.7.0] - 2026-10-10
 
 TDLib can stay logged in while Telegram has invalidated its session; reads then returned old data with no warning. telegram-all now says when TDLib is not synced, and `logout` becomes a local reset that never deletes the local database ([#63](https://github.com/PsychQuant/che-msg/issues/63)). Use with plugin `che-telegram-mcp` 1.6.0.

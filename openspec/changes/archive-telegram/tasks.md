@@ -21,7 +21,7 @@
 
 ## 5. 文件與驗收
 
-- [ ] 5.1 `che-telegram-all-mcp/README.md` 與 `plugins/che-telegram-mcp/README.md` 說明 `archive_chat_to_markdown`、`download_message_media`、`/archive-telegram` 的設定範例（含 `max_media_mb`）、媒體目錄與重試、書籤規則、超級群組遷移後要更新 `chat_id`，以及歸檔與媒體都是第三方內容、不得 commit 到公開 repo；兩份 CHANGELOG 的 `[Unreleased]` 記錄新功能並註明解決 #17。驗證：內容審閱，`grep` 兩份 README 都有 `archive_chat_to_markdown`、`download_message_media` 與隱私提醒。[after: 3.2, 4.2, 6.5, 6.6]
+- [x] 5.1 `che-telegram-all-mcp/README.md` 與 `plugins/che-telegram-mcp/README.md` 說明 `archive_chat_to_markdown`、`download_message_media`、`/archive-telegram` 的設定範例（含 `max_media_mb`）、媒體目錄與重試、書籤規則、超級群組遷移後要更新 `chat_id`，以及歸檔與媒體都是第三方內容、不得 commit 到公開 repo；兩份 CHANGELOG 的 `[Unreleased]` 記錄新功能並註明解決 #17。驗證：內容審閱，`grep` 兩份 README 都有 `archive_chat_to_markdown`、`download_message_media` 與隱私提醒。[after: 3.2, 4.2, 6.5, 6.6]
 - [ ] 5.2 全部測試與檢查通過：`swift test --skip E2ETests`（che-telegram-all-mcp）、`tests/che-telegram-mcp/*.sh`、`tests/che-archive-lines/*.sh`、`claude plugin validate .` 與 `claude plugin validate plugins/che-telegram-mcp`、`spectra analyze archive-telegram` 無 Critical。驗證：上述命令的輸出。[after: 5.1]
 - [ ] 5.3 端對端驗收：以本機建置的 binary 對維護者自己的「Saved Messages」聊天（不含第三方內容）在暫存目錄跑兩次歸檔，確認第一次寫出日檔、媒體與清單，第二次 `new_messages` 與 `media_downloaded` 皆為 0 且檔案位元相同；另以 `download_message_media` 下載其中一則媒體並確認檔案存在；跑完刪除暫存目錄；結果只記錄檔數、訊息數與媒體數。驗證：兩次的清單 JSON 與 `shasum` 比對，記錄在 #69。[after: 5.2]
 
