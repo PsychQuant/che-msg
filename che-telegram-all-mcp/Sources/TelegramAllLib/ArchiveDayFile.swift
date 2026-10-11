@@ -27,8 +27,8 @@ public enum ArchiveDayFile {
         public var errorDescription: String? {
             switch self {
             case .unreadableOffset(let day):
-                return "day file \(day).md has no readable utc_offset in its frontmatter; this archive cannot be "
-                    + "merged into safely (move the file aside or restore its frontmatter)"
+                return "day file \(day).md has no readable utc_offset in its frontmatter (or cannot be read, or uses "
+                    + "CRLF line endings); this archive cannot be merged into safely (move the file aside or restore it)"
             case .offsetMismatch(let existing, let requested):
                 return "utc_offset \(requested) differs from \(existing), the offset this archive's day files were "
                     + "written with; archive this chat with utc_offset \(existing)"
@@ -105,10 +105,15 @@ public enum ArchiveDayFile {
     /// Refuses when a day file in `directory` was written at another offset, or has no readable one.
     public static func checkOffsets(directory: URL, utcOffset: String) throws {
         let fm = FileManager.default
-        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
-        for name in names.sorted() where name.hasSuffix(".md") && !name.hasPrefix(".") {
+        guard fm.fileExists(atPath: directory.path) else { return }   // first run: nothing written yet
+        let names = try fm.contentsOfDirectory(atPath: directory.path)
+        // Only files named like a day are day files; anything else the user keeps there is left alone.
+        for name in names.sorted()
+        where name.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$"#, options: .regularExpression) != nil {
             let day = String(name.dropLast(3))
-            guard let handle = FileHandle(forReadingAtPath: directory.appendingPathComponent(name).path) else { continue }
+            guard let handle = FileHandle(forReadingAtPath: directory.appendingPathComponent(name).path) else {
+                throw WriteError.unreadableOffset(day: day)
+            }
             defer { try? handle.close() }
             let head = String(decoding: (try? handle.read(upToCount: 512)) ?? Data(), as: UTF8.self)
             try checkOffset(recordedIn: head, day: day, utcOffset: utcOffset)
@@ -129,8 +134,10 @@ public enum ArchiveDayFile {
     /// The `utc_offset` recorded in a day file's frontmatter, or nil.
     /// Only a well-formed offset inside the leading frontmatter is returned, so nothing else from
     /// the file can reach an error message.
+    /// Lines are split on LF only, as the tool writes them: a file with CRLF frontmatter was edited
+    /// elsewhere and the merge parser would not read its blocks, so it reads as unreadable.
     static func recordedOffset(_ text: String) -> String? {
-        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         guard lines.first == "---" else { return nil }
         for line in lines.dropFirst().prefix(8) {
             if line == "---" { break }
