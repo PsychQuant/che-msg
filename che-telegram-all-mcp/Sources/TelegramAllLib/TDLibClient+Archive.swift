@@ -2,7 +2,8 @@ import Foundation
 import TDLibKit
 
 /// Runs a TDLibKit call for the archive, turning TDLibKit's own errors into
-/// `TDError.tdlibError` so the archiver can read `FLOOD_WAIT_<n>` and the server reports
+/// `TDError.tdlibError` so the archiver can read rate limits (`429 "Too Many Requests: retry after
+/// <n>"`) and the server reports
 /// TDLib's message. A 406 message must not be shown, so it is dropped.
 internal func archiveTDLibCall<T>(_ body: () async throws -> T) async throws -> T {
     do {

@@ -34,13 +34,14 @@ public enum ArchiveMedia {
             // By scalar, not Character: "/" followed by a combining mark is one Character.
             var scalars = String.UnicodeScalarView(name.unicodeScalars.filter {
                 $0 != "/" && $0 != "\\" && !CharacterSet.controlCharacters.contains($0)
+                    && !CharacterSet.newlines.contains($0)
             })
             while scalars.first == "." { scalars.removeFirst() }
             let cleaned = capped(String(scalars))
             if !cleaned.isEmpty { return cleaned }
         }
         let ext = URL(fileURLWithPath: downloadedPath).pathExtension
-        return ext.isEmpty ? type : "\(type).\(ext)"
+        return capped(ext.isEmpty ? type : "\(type).\(ext)")
     }
 
     /// `name` shortened to the 255 bytes a file name may have, keeping a short extension.

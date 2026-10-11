@@ -329,4 +329,11 @@ final class ArchiveMediaTests: XCTestCase {
         let file = mediaDir.appendingPathComponent("photo.jpg").path
         XCTAssertEqual((try fm.attributesOfItem(atPath: file)[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
+
+    func testLineSeparatorsAreDroppedAndFallbackNamesAreCapped() {
+        XCTAssertEqual(ArchiveMedia.fileName(type: "document", name: "a\u{2028}b\u{2029}c.pdf", downloadedPath: "/c/x"), "abc.pdf")
+        let fallback = ArchiveMedia.fileName(type: "document", name: nil,
+                                             downloadedPath: "/c/x." + String(repeating: "e", count: 300))
+        XCTAssertLessThanOrEqual(fallback.utf8.count, 255)
+    }
 }

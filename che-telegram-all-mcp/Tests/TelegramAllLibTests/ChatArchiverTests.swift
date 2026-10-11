@@ -331,4 +331,104 @@ final class ChatArchiverTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: chatDir.appendingPathComponent("2026-10-11.md").path))
     }
+
+    // MARK: - Verify round 2 (#69)
+
+    /// The skill's end-of-run check: when there is a newest id, `newest_message_file` exists
+    /// and holds its anchor (round 2: `files` may not list that file on a re-run).
+    private func assertNewestIsCheckable(_ result: ChatArchiver.Result, in dir: URL,
+                                         file: StaticString = #filePath, line: UInt = #line) throws {
+        guard let newest = result.newestMessageId else {
+            XCTAssertNil(result.newestMessageFile, file: file, line: line); return
+        }
+        let relative = try XCTUnwrap(result.newestMessageFile, file: file, line: line)
+        XCTAssertTrue(try ids(in: dir, relative).contains(newest), relative, file: file, line: line)
+    }
+
+    /// Fails page fetch number `failOn` (1-based) with `error`, otherwise delegates.
+    final class FailOnCall: ArchiveHistorySource, @unchecked Sendable {
+        let inner: FakeSource; let failOn: Int; let error: Error; var calls = 0
+        init(_ inner: FakeSource, failOn: Int, _ error: Error) { self.inner = inner; self.failOn = failOn; self.error = error }
+        func page(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [[String: Any]] {
+            calls += 1
+            if calls == failOn { throw error }
+            return try await inner.page(chatId: chatId, fromMessageId: fromMessageId, limit: limit)
+        }
+    }
+
+    func testReRunReportsTheNewestMessageFile() async throws {
+        let dir = try outputDir()
+        let source = FakeSource([Self.msg(30, 2), Self.msg(20, 1)])
+        let first = try await archiver(source).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertEqual(first.newestMessageFile, "777/2026-10-11.md")
+        try assertNewestIsCheckable(first, in: dir)
+        let second = try await archiver(source).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertEqual(second.files, [])
+        XCTAssertEqual(second.newestMessageId, 30)
+        XCTAssertEqual(second.newestMessageFile, "777/2026-10-11.md")
+        try assertNewestIsCheckable(second, in: dir)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(second.manifestJSON().utf8)) as? [String: Any])
+        XCTAssertEqual(object["newest_message_file"] as? String, "777/2026-10-11.md")
+        let empty = try await archiver(FakeSource([])).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        let emptyObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(empty.manifestJSON().utf8)) as? [String: Any])
+        XCTAssertTrue(emptyObject["newest_message_file"] is NSNull)
+    }
+
+    /// A long first archive stopped by a rate limit, then completed: the second run's `files`
+    /// holds only older days, and the newest message is still checkable.
+    func testResumedLongArchiveStaysCheckable() async throws {
+        let dir = try outputDir()
+        let messages = [Self.msg(30, 2), Self.msg(20, 1), Self.msg(10, -600)]   // 10 falls on 2026-10-10 at +08:00
+        let failing = FailOnCall(FakeSource(messages), failOn: 3,
+                                 TDLibClient.TDError.tdlibError(code: 429, message: "Too Many Requests: retry after 420"))
+        let first = try await ChatArchiver(source: failing, sourceKind: .tdlib, isSynced: { true }, pageSize: 1)
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertEqual(first.stoppedReason, "flood_wait")
+        let second = try await ChatArchiver(source: FakeSource(messages), sourceKind: .tdlib, isSynced: { true }, pageSize: 1)
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertTrue(second.complete)
+        XCTAssertTrue(second.bookmarkSafe)
+        XCTAssertEqual(second.files, ["777/2026-10-10.md"])
+        XCTAssertEqual(second.newestMessageFile, "777/2026-10-11.md")
+        try assertNewestIsCheckable(second, in: dir)
+    }
+
+    /// A day file at another offset anywhere in the chat directory refuses the call before any write.
+    func testOffsetMismatchIsRefusedBeforeWriting() async throws {
+        let dir = try outputDir()
+        _ = try await archiver(FakeSource([Self.msg(10, -600)]))
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))            // writes 2026-10-10.md at +08:00
+        let source = FakeSource([Self.msg(30, 2), Self.msg(10, -600)])
+        do {
+            _ = try await archiver(source).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+09:00"))
+            XCTFail("expected the offset to be refused")
+        } catch let error as ArchiveDayFile.WriteError {
+            XCTAssertEqual(error, .offsetMismatch(existing: "+08:00", requested: "+09:00"))
+        }
+        XCTAssertEqual(source.calls, 0, "refused before reading any page")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("777/2026-10-11.md").path))
+    }
+
+    func testRateLimitParsingEdges() {
+        func e(_ m: String) -> Error { TDLibClient.TDError.tdlibError(code: 429, message: m) }
+        XCTAssertEqual(ChatArchiver.floodWaitSeconds(e("Too Many Requests: retry after 99999999999999999999")), 1_209_600)
+        XCTAssertNil(ChatArchiver.floodWaitSeconds(e("Too Many Requests: retry after")))
+        XCTAssertEqual(ChatArchiver.floodWaitSeconds(e("retry after x; FLOOD_WAIT_5")), 5)
+    }
+
+    /// The lock file is opened without following a symbolic link.
+    func testLockDoesNotFollowASymlink() async throws {
+        let dir = try outputDir()
+        let chatDir = dir.appendingPathComponent("777")
+        try FileManager.default.createDirectory(at: chatDir, withIntermediateDirectories: true)
+        let elsewhere = dir.appendingPathComponent("elsewhere-lock")
+        try FileManager.default.createSymbolicLink(at: chatDir.appendingPathComponent(".archive.lock"), withDestinationURL: elsewhere)
+        do {
+            _ = try await archiver(FakeSource([Self.msg(30, 2)])).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+            XCTFail("expected an error")
+        } catch let error as ChatArchiver.ArchiveError {
+            XCTFail("a symlinked lock is not another archive: \(error)")
+        } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: elsewhere.path))
+    }
 }

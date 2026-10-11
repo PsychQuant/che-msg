@@ -44,14 +44,16 @@ chats:
 
 `chat_id` 不是整數、`since` 不是 `YYYY-MM-DD`、`max_media_mb` 不是正數、`output_dir` 含有 `..` 這個路徑元件時，指出是哪一項並停止。同一個 `chat_id` 列了兩次只歸檔一次。
 
-設定檔的值一律當作資料：不要把它們拼進 shell 指令。下面需要用 shell 的地方（`git`）只在 `output_dir` 不含 `'`、`` ` ``、`$`、`\`、換行時進行，並用單引號整個包住；含有這些字元時跳過該檢查並在報告中說明。
+設定檔的值一律當作資料。凡是放進 shell 指令的路徑（`git`、`mkdir`、`mv`，包括由 `output_dir`、slug 或 workspace 路徑組成的路徑）都用**單引號**整個包住，並把其中每個 `'` 寫成 `'\''`；單引號內的 `$`、`` ` ``、`\` 與換行都只是字面字元。不符合這條規則就不要執行那個指令。
 
 ## Step 2：路徑與索引
 
 - **slug**：由你直接計算，不經 shell（和 /archive-mail 相同的規則）：把設定檔裡原樣的 `output_dir` 每個 `/` 換成 `-`，再去掉開頭與結尾的 `-` 和 `.`；結果是空的就用 `root`。
 - `INDEX_FILE` = `.claude/.telegram/state/archives/<slug>/index.json`。
 - `OUTPUT_ABS`：`output_dir` 是相對路徑時接在 workspace 根目錄（`pwd`）後面；工具只接受絕對路徑。
-- **git 檢查**：workspace 是 git repo（`git rev-parse --is-inside-work-tree` 成功）且 `OUTPUT_ABS` 在這個 repo 裡時，執行 `git check-ignore -q '<OUTPUT_ABS>'`；**沒有被 ignore 就停止**，請使用者先把 `output_dir` 加進 `.gitignore`（建議一併加 `.claude/.telegram/`），不呼叫任何工具。
+- **git 檢查**：找出 `OUTPUT_ABS` 最近一個已存在的上層目錄 `PARENT`（`OUTPUT_ABS` 本身存在時就是它）。`git -C '<PARENT>' rev-parse --show-toplevel` 成功表示歸檔會落在一個 git repo 裡（不一定是 workspace 這個 repo）；這時對目錄**底下的兩個檔案路徑**檢查，而不是目錄本身（目錄還不存在時，`archives/telegram/` 這類只比對目錄的寫法會判成沒被 ignore）：
+  `git -C '<PARENT>' check-ignore -q '<OUTPUT_ABS>/0/2000-01-01.md'` 與 `git -C '<PARENT>' check-ignore -q '<OUTPUT_ABS>/0/media/0/file'`。
+  兩個都回 0 才繼續；任一回 1 或其他非 0 值，**停止**，請使用者把 `output_dir` 加進那個 repo 的 `.gitignore`（建議一併加 `.claude/.telegram/`），不呼叫任何工具。
 - 讀 `INDEX_FILE`；不存在時從空的索引開始。**索引裡的 `output_dir` 和設定檔不同時停止**：兩個不同的 `output_dir` 算出同一個 slug（例如 `a/b` 與 `a-b`），共用書籤會漏抓訊息；請使用者改用不會碰撞的目錄名稱。索引的格式：
 
 ```json
@@ -89,7 +91,9 @@ chats:
 
 ## Step 4：逐一歸檔
 
-決定每個聊天的 `utc_offset`：用索引記錄的值；沒有記錄時用執行當下的本機時區（`date +%z` 的 `+0800` 寫成 `+08:00`），並**在呼叫工具之前**就記進索引（寫法同 Step 6）——呼叫中途出錯時，已寫出的日檔用的就是這個值。之後這個聊天一律用同一個值；工具也會拒絕用不同的 offset 合併既有日檔（錯誤訊息會寫出原本的 offset）。
+決定每個聊天的 `utc_offset`：用索引記錄的值；沒有記錄時用執行當下的本機時區（`date +%z` 的 `+0800` 寫成 `+08:00`），並**在呼叫工具之前**就記進索引（寫法同 Step 6）——呼叫中途出錯時，已寫出的日檔用的就是這個值。之後這個聊天一律用同一個值。
+
+工具在讀任何訊息之前會檢查聊天目錄裡的日檔：有日檔用了別的 offset 時回錯誤「utc_offset X differs from Y, the offset this archive's day files were written with」。這時取出 Y，確認它符合 `+HH:MM` / `-HH:MM`，寫回索引的 `utc_offset`，再用 Y 重新呼叫一次；Y 不符合格式、或錯誤寫著「has no readable utc_offset」時，停止這個聊天並在報告中說明（需要人工處理那個日檔）。
 
 一次一個聊天呼叫 `archive_chat_to_markdown`：
 
@@ -107,11 +111,11 @@ chats:
 
 ## Step 5：結尾核對
 
-每份 manifest 都要通過三項：
+要核對的檔案是 `files` 加上 `newest_message_file`（不是 null 時）——重跑時最新訊息早已寫入，它所在的日檔不一定在 `files` 裡。每份 manifest 都要通過三項，所有 Grep 一律用**只列檔名**的輸出（`files_with_matches`），**不要用 Read 讀日檔**，也不要用會印出比對內容的模式，那會把訊息內容帶進對話：
 
-1. `files` 列出的每個檔案（相對於 `OUTPUT_ABS`）都存在。
-2. 每個檔案的 frontmatter 有 `chat_id: <這個聊天的 chat_id>`。用 Grep 搜尋 `^chat_id: ` 並只取那一行；**不要用 Read 讀日檔**，那會把訊息內容帶進對話。
-3. `newest_message_id` 不是 null 時，`<!-- msg:<newest_message_id> -->` 出現在列出的某個檔案裡。用 Grep 以固定字串搜尋並**只列檔名**，不要印出比對到的內容。
+1. 要核對的每個檔案（相對於 `OUTPUT_ABS`）都存在。
+2. 每個檔案開頭的 frontmatter 是這個聊天的：以多行模式搜尋 `\A---\nchat_id: <chat_id>\n`，該檔案要出現在結果裡。
+3. `newest_message_id` 不是 null 時，`newest_message_file` 裡有一整行 `<!-- msg:<newest_message_id> -->`：搜尋 `^<!-- msg:<newest_message_id> -->$`，該檔案要出現在結果裡。內文開頭是 `<!--` 的行都被加了反斜線，所以這一行只能是工具寫的錨點。
 
 任一項不通過，這個聊天就是核對失敗：報告寫出缺少的檔案、`chat_id` 不符的檔案或找不到的錨點，書籤不前進。
 
@@ -123,7 +127,7 @@ chats:
 - 書籤：**只有** `bookmark_safe` 是 true、Step 5 通過、而且 `newest_message_id` 不是 null，才把 `last_message_id` 設成 `newest_message_id`。其餘情況保持原值（原本沒有就繼續沒有）。
 - 記下 `utc_offset` 與 `last_run`（欄位見 Step 2；`media_skipped` 與 `media_failed` 記數量；`reason` 是 `bookmark_unsafe_reason`，核對失敗時寫 `check-failed`；`at` 用 `date +%Y-%m-%dT%H:%M:%S%z`）。
 
-寫入時先用 Write 寫到同目錄下一個這次才用的暫存檔（例如 `index.json.<隨機字串>.tmp`），再 `mv -f` 成 `index.json`，中途失敗不會留下寫一半的索引，兩個 session 也不會共用暫存檔。索引所在的目錄不存在時先建立。
+寫入時先用 Write 寫到同目錄下一個這次才用的暫存檔（例如 `index.json.<隨機字串>.tmp`），再 `mv -f '<暫存檔>' '<INDEX_FILE>'`（依 Step 1 的引號規則），中途失敗不會留下寫一半的索引，兩個 session 也不會共用暫存檔。索引所在的目錄不存在時先建立（同樣用單引號）。不要同時在同一個 workspace 跑兩個 `/archive-telegram`：兩邊各自讀寫索引，後寫的會蓋掉先寫的書籤。
 
 ## Step 7：報告
 

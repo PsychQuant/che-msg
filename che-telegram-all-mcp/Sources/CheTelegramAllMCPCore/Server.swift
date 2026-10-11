@@ -381,7 +381,7 @@ public final class CheTelegramAllMCPServer {
                  Archive a chat incrementally into per-day Markdown files <output_dir>/<chat_id>/YYYY-MM-DD.md \
                  (one block per message, anchored by <!-- msg:<id> -->) and download each message's media into \
                  <output_dir>/<chat_id>/media/<message_id>/. Re-runs merge into the existing files. Returns a \
-                 manifest (files, counts, newest_message_id, complete, bookmark_safe, media results) and never \
+                 manifest (files, counts, newest_message_id and newest_message_file, complete, bookmark_safe, media results) and never \
                  message text. Advance a stored bookmark to newest_message_id only when bookmark_safe is true. \
                  While another session holds TDLib it archives from the local cache without media, sender \
                  names or captions, and later calls never rewrite those blocks. Day files are owner-only; one \
@@ -392,7 +392,7 @@ public final class CheTelegramAllMCPServer {
                     "output_dir": prop("string", "Absolute path of the archive root; <chat_id>/ is created under it"),
                     "after_message_id": prop("integer", "Bookmark: archive only messages with a larger id (takes precedence over since_date)"),
                     "since_date": prop("string", "First day to archive, YYYY-MM-DD at utc_offset (default: the whole history)"),
-                    "utc_offset": prop("string", "Offset that decides each message's day, +HH:MM or -HH:MM (default: the server's current offset)"),
+                    "utc_offset": prop("string", "Offset that decides each message's day, +HH:MM or -HH:MM, at most 18:00 either way (default: the server's current offset)"),
                     "max_media_bytes": prop("integer", "Skip media files larger than this many bytes (default: no limit)"),
                     "retry_media_message_ids": arrayOfIntsProp("Ids of messages whose media download failed before; downloaded again without rewriting day files"),
                  ],
