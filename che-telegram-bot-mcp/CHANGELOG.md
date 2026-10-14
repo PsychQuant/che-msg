@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-14
+
+### Changed
+- Reports the shared release version `0.8.0`; the bot itself is unchanged (this release adds telegram-all's archive tools).
+
 ## [0.7.0] - 2026-10-10
 
 ### Fixed
