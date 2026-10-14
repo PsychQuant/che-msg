@@ -309,9 +309,14 @@ This plugin requires:
 
 ## Version
 
-Plugin version: 1.6.0 (currently pins `che-telegram-all-mcp` v0.7.0 + `che-telegram-bot-mcp` v0.7.0 binaries; wrapper auto-upgrades on version mismatch)
+Plugin version: 1.7.0 (currently pins `che-telegram-all-mcp` v0.8.0 + `che-telegram-bot-mcp` v0.8.0 binaries; wrapper auto-upgrades on version mismatch)
 
 ### Changelog
+
+**1.7.0** (2026-10-14)
+
+- **`/che-telegram-mcp:archive-telegram`** ([#69](https://github.com/PsychQuant/che-msg/issues/69)): archive the chats listed in `.claude/.telegram/config.yaml` into per-day Markdown files with their media, keeping a bookmark per chat; see [Archiving chats](#archiving-chats-archive-telegram).
+- telegram-all gains `archive_chat_to_markdown` and `download_message_media` ([#17](https://github.com/PsychQuant/che-msg/issues/17)). Binaries 0.8.0 (`DESIRED_VERSION`).
 
 **1.6.0** (2026-10-10)
 
