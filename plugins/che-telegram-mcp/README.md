@@ -120,12 +120,12 @@ It prints `⚠️` warnings with copy-pasteable fix commands when something is m
 
 ```bash
 mkdir -p ~/bin
-curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.7.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
-curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.7.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.8.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.8.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
 chmod +x ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
 xattr -dr com.apple.quarantine ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
-echo 0.7.0 > ~/bin/.CheTelegramAllMCP.version
-echo 0.7.0 > ~/bin/.CheTelegramBotMCP.version
+echo 0.8.0 > ~/bin/.CheTelegramAllMCP.version
+echo 0.8.0 > ~/bin/.CheTelegramBotMCP.version
 ```
 
 The last two lines record the installed version. Without them the wrapper still sees the old version and downloads the binary again on the next start.
