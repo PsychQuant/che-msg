@@ -339,7 +339,7 @@ code:
 ---
 ### Requirement: Tool routing while TDLib is held by another process
 
-While another process holds TDLib, the server SHALL route each tool as follows: `get_chats`, `search_chats`, `get_chat_history`, `search_messages` and `dump_chat_to_markdown` SHALL be answered by the local reader; `get_me`, `get_user`, `get_contacts`, `get_chat` and `get_chat_members` SHALL return a `local_reader_unsupported` error; every other tool, including `send_message`, `auth_run` and `logout`, SHALL return a `tdlib_in_use` error. Each error SHALL be an MCP tool result with `isError: true` whose single content item is a JSON object with a `type` field.
+While another process holds TDLib, the server SHALL route each tool as follows: `get_chats`, `search_chats`, `get_chat_history`, `search_messages` and `dump_chat_to_markdown` SHALL be answered by the local reader; `archive_chat_to_markdown` SHALL write its day files from the local reader's messages as the `telegram-chat-archive` capability defines, reporting `source: "local-cache"` and `bookmark_safe: false`; `download_message_media` SHALL return a `tdlib_in_use` error because the local cache holds no media files; `get_me`, `get_user`, `get_contacts`, `get_chat` and `get_chat_members` SHALL return a `local_reader_unsupported` error; every other tool, including `send_message`, `auth_run` and `logout`, SHALL return a `tdlib_in_use` error. Each error SHALL be an MCP tool result with `isError: true` whose single content item is a JSON object with a `type` field.
 
 #### Scenario: Write tool while TDLib is held elsewhere
 
@@ -356,6 +356,11 @@ While another process holds TDLib, the server SHALL route each tool as follows: 
 - **WHEN** `get_chat_history` is called while another process holds TDLib
 - **THEN** the local reader answers the call and no TDLib client is created in the server process
 
+#### Scenario: Archive tool while TDLib is held elsewhere
+
+- **WHEN** `archive_chat_to_markdown` is called while another process holds TDLib
+- **THEN** day files are written from the local reader's messages, the manifest reports `source: "local-cache"` and `bookmark_safe: false`, and no TDLib client is created in the server process
+
 ##### Example: routing table
 
 | Tool | TDLib free | TDLib held elsewhere |
@@ -365,85 +370,67 @@ While another process holds TDLib, the server SHALL route each tool as follows: 
 | `get_chat_history` | TDLib | local reader |
 | `search_messages` | TDLib | local reader |
 | `dump_chat_to_markdown` | TDLib | local reader |
+| `archive_chat_to_markdown` | TDLib | local reader (`bookmark_safe: false`) |
+| `download_message_media` | TDLib | `tdlib_in_use` |
 | `get_me`, `get_user`, `get_contacts`, `get_chat`, `get_chat_members` | TDLib | `local_reader_unsupported` |
 | `send_message`, `edit_message`, `delete_messages`, `forward_messages`, `pin_message`, `unpin_message`, `set_chat_title`, `set_chat_description`, `mark_as_read`, `create_group`, `add_chat_member` | TDLib | `tdlib_in_use` |
 | `auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password`, `auth_status`, `auth_run`, `logout` | TDLib | `tdlib_in_use` |
 
 
 <!-- @trace
-source: telegram-all-sqlite-reader
-updated: 2026-10-10
+source: archive-telegram
+updated: 2026-10-14
 code:
-  - che-msg.code-workspace
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderChatListTests.swift
-  - che-telegram-all-mcp/Sources/TelegramAllLib/TDLibClient.swift
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/LocalTDLibReader.swift
-  - plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh
-  - .agents/skills/spectra-review/SKILL.md
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/LocalMessage.swift
-  - .agents/skills/spectra-verify/SKILL.md
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/LocalReaderError.swift
+  - README.md
   - CLAUDE.md
-  - che-telegram-all-mcp/Sources/TelegramAllLib/TDLibProcessLock.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderChatDecodingTests.swift
-  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/ToolRoutingTests.swift
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/LocalChat.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/Fixtures/tdlib-1.8.60-test-dc/db.sqlite
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderMessageDecodingTests.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderToolTests.swift
-  - .agents/skills/spectra-ingest/SKILL.md
-  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Server.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/TDLibProcessLockTests.swift
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/TDLibMessageDecoder.swift
-  - .agents/skills/spectra-debug/SKILL.md
-  - che-telegram-all-mcp/Sources/TelegramAllLib/AutoFire.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/TDLibLifecycleTests.swift
-  - .agents/skills/spectra-archive/SKILL.md
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/TDLibCacheDatabase+Messages.swift
-  - plugins/che-telegram-mcp/CHANGELOG.md
-  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/LocalReaderResponses.swift
-  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/CheTelegramAllMCPTests.swift
-  - .agents/skills/spectra-apply/SKILL.md
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/Fixtures/tdlib-1.8.60-test-dc/td.binlog.no-sqlite-key
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/Fixtures/tdlib-1.8.60-test-dc/td.binlog
-  - plugins/che-telegram-mcp/bin/che-telegram-bot-mcp-wrapper.sh
-  - .agents/skills/spectra-audit/SKILL.md
-  - che-telegram-all-mcp/mcpb/manifest.json
-  - .agents/skills/spectra-discuss/SKILL.md
-  - che-telegram-all-mcp/CHANGELOG.md
-  - .agents/skills/spectra-propose/SKILL.md
-  - tests/che-telegram-mcp/test-wrapper-mcp-error.sh
-  - .agents/skills/spectra-analyze/SKILL.md
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderDatabaseTests.swift
-  - che-telegram-all-mcp/Tools/reader-fixtures/generate.sh
-  - che-telegram-all-mcp/Package.swift
+  - .agents/skills/spectra-verify/SKILL.md
   - .agents/skills/spectra-drift/SKILL.md
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/DialogKind.swift
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/TDLibCacheDatabase.swift
-  - AGENTS.md
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderTestSupport.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/AuthorizationSettleTests.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/Fixtures/tdlib-1.8.60-test-dc/td.binlog.truncated
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderBinlogTests.swift
-  - tests/lib/wrapper_harness.sh
-  - plugins/che-telegram-mcp/.claude-plugin/plugin.json
-  - che-telegram-all-mcp/Sources/CheTelegramAllMCP/main.swift
-  - .claude-plugin/marketplace.json
-  - tests/che-telegram-mcp/test-plugin-layout-mutations.sh
-  - che-telegram-all-mcp/Sources/TelegramAllLib/TDLibLifecycle.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderRealDataComparisonTests.swift
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/TDLibCacheDatabase+Chats.swift
-  - che-telegram-all-mcp/Tools/reader-fixtures/generate.swift
-  - che-telegram-all-mcp/Tests/TelegramAllLibTests/Fixtures/tdlib-1.8.60-test-dc/expected.json
-  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/CLIBootstrapTests.swift
-  - tests/che-telegram-mcp/test-wrapper-pid.sh
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/TDLibRecordDecoder.swift
-  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/CLIBootstrap.swift
-  - che-telegram-all-mcp/Sources/CTDLibSQLite/shim.c
-  - plugins/che-telegram-mcp/README.md
+  - .agents/skills/spectra-debug/SKILL.md
+  - che-msg.code-workspace
+  - .agents/skills/spectra-apply/SKILL.md
+  - che-telegram-bot-mcp/README.md
+  - che-telegram-all-mcp/Sources/TelegramAllLib/TDLibClient+Archive.swift
+  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/ArchiveToolTests.swift
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/MessageMediaFileTests.swift
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalCacheArchiveTests.swift
+  - plugins/che-telegram-mcp/bin/che-telegram-bot-mcp-wrapper.sh
+  - .agents/skills/spectra-archive/SKILL.md
   - .agents/skills/spectra-commit/SKILL.md
-  - che-telegram-all-mcp/Sources/CTDLibSQLite/include/CTDLibSQLite.h
-  - che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/TDLibBinlogReader.swift
+  - .agents/skills/spectra-audit/SKILL.md
+  - che-telegram-all-mcp/CHANGELOG.md
+  - .claude-plugin/marketplace.json
+  - AGENTS.md
+  - che-telegram-all-mcp/README.md
+  - plugins/che-telegram-mcp/CHANGELOG.md
+  - plugins/che-telegram-mcp/skills/telegram-messaging/SKILL.md
+  - tests/che-telegram-mcp/test-plugin-layout.sh
+  - .agents/skills/spectra-analyze/SKILL.md
+  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/ArchiveToolArgs.swift
+  - che-telegram-all-mcp/Sources/TelegramAllLib/ChatArchiver.swift
+  - plugins/che-telegram-mcp/README.md
+  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/ToolRoutingTests.swift
+  - che-telegram-all-mcp/Sources/TelegramAllLib/ArchiveDayFile.swift
+  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/CLIBootstrap.swift
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/ArchiveDayFileTests.swift
+  - che-telegram-bot-mcp/CHANGELOG.md
+  - plugins/che-telegram-mcp/skills/archive-telegram/SKILL.md
+  - plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh
+  - che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/CheTelegramAllMCPTests.swift
+  - .agents/skills/spectra-ingest/SKILL.md
+  - che-telegram-all-mcp/Sources/TelegramAllLib/ArchiveMedia.swift
+  - che-telegram-bot-mcp/mcpb/manifest.json
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/ArchiveTDLibErrorTests.swift
+  - che-telegram-all-mcp/Sources/TelegramAllLib/TDLibClient.swift
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/ArchiveMediaTests.swift
+  - .agents/skills/spectra-discuss/SKILL.md
+  - che-telegram-all-mcp/Tests/TelegramAllLibTests/ChatArchiverTests.swift
+  - .agents/skills/spectra-propose/SKILL.md
+  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Server.swift
+  - che-telegram-bot-mcp/Sources/CheTelegramBotMCPCore/Server.swift
+  - che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/LocalReaderResponses.swift
+  - plugins/che-telegram-mcp/.claude-plugin/plugin.json
+  - che-telegram-all-mcp/mcpb/manifest.json
+  - .agents/skills/spectra-review/SKILL.md
 -->
 
 ---
