@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-14
+
+Pins binaries v0.8.0 (`DESIRED_VERSION`); the telegram-all minimum stays 0.7.0.
+
 ### Added
 - `/che-telegram-mcp:archive-telegram` ([#69](https://github.com/PsychQuant/che-msg/issues/69)): archives the chats listed by `chat_id` in `.claude/.telegram/config.yaml` (`output_dir`, optional `since` and `max_media_mb`) into per-day Markdown files and media, keeps each chat's bookmark, `utc_offset` and failed media in `.claude/.telegram/state/archives/<slug>/index.json`, advances a bookmark only when the run is `bookmark_safe` and the end-of-run check passes, and reports counts and reasons without quoting messages. It stops while another session holds TDLib (blocks written from the local cache are never rewritten, [#72](https://github.com/PsychQuant/che-msg/issues/72)), while `output_dir` is inside a git repository without being ignored, and when two output directories would share one index. It runs only when typed and pre-approves only `auth_status`.
 - `telegram-messaging` lists the two new tools; the plugin and marketplace descriptions say telegram-all has 30 tools.
