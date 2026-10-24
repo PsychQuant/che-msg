@@ -118,7 +118,7 @@ If none are found on first invocation, the wrapper **lazy-downloads** the binary
 
 The wrapper pins a **`DESIRED_VERSION`** matching the binary the plugin expects and writes a `~/bin/.${BINARY_NAME}.version` sidecar each time it installs.
 
-When the plugin is updated and the desired version is newer than the sidecar, the wrapper re-downloads on the next MCP server spawn and replaces the binary atomically (`.tmp` → `mv`) — falling back to the last installed binary if the network fails. It also re-downloads when the sidecar is missing or is not a plain `x.y.z`. A binary **newer** than the desired version is kept: while sessions on an older and a newer plugin are both open, the older one no longer puts its binary back over the newer one. To go back from a newer binary to the desired version, install that version by hand (below). Going below the desired version does not stick, because the wrapper upgrades it again on the next start; a fix for a bad release ships as a release with a higher version number. For telegram-all that fallback holds only for a binary of 0.6.0 or later: the wrapper does not run an older one (see [When telegram-all does not start](#when-telegram-all-does-not-start)). Source builds under `~/Developer/...` are never auto-replaced.
+When the plugin is updated and the desired version is newer than the sidecar, the wrapper re-downloads on the next MCP server spawn and replaces the binary atomically (`.tmp` → `mv`) — falling back to the last installed binary if the network fails. It also downloads when no binary is installed, and re-downloads when the sidecar is missing or is not a plain `x.y.z`. A binary **newer** than the desired version is kept, so a session on an older plugin does not put its binary back over a newer one — as long as that session's wrapper has this check. Sessions started on plugin 1.7.0 or earlier still run the old wrapper, which re-downloads whenever the two versions differ; restart them after updating the plugin. The download decision reads only the sidecar, never the binary, so replace the two together. To go back from a newer binary to the desired version, install that version by hand (below), which writes both. Going below the desired version does not stick: once the sidecar says something older, the wrapper downloads the desired version again on the next start, so a fix for a bad release ships as a release with a higher version number. For telegram-all, falling back to the last installed binary works only for a binary of 0.7.0 or later: the wrapper does not run an older one (see [When telegram-all does not start](#when-telegram-all-does-not-start)). Source builds under `~/Developer/...` are never auto-replaced.
 
 A **SessionStart hook** (`hooks/check-mcp.sh`) verifies on every session that:
 
@@ -140,7 +140,7 @@ echo 0.9.0 > ~/bin/.CheTelegramAllMCP.version
 echo 0.9.0 > ~/bin/.CheTelegramBotMCP.version
 ```
 
-The last two lines record the installed version. Without them the wrapper still sees the old version and downloads the binary again on the next start.
+The last two lines record the installed version. Without them the wrapper keeps reading the old record, which no longer describes the binary: an older record makes it download again on the next start, and a newer one hides the version you installed.
 
 > **Universal binary**: prebuilt binaries are Mach-O universal (arm64 + x86_64), so they run on both Apple Silicon and Intel Macs. Building from source: `git clone https://github.com/PsychQuant/che-msg.git && cd che-msg/che-telegram-all-mcp && swift build -c release`.
 
@@ -325,7 +325,7 @@ This plugin requires:
 
 ## Version
 
-Plugin version: 1.8.0 (currently pins `che-telegram-all-mcp` v0.9.0 + `che-telegram-bot-mcp` v0.9.0 binaries; wrapper auto-upgrades on version mismatch)
+Plugin version: 1.8.0 (currently pins `che-telegram-all-mcp` v0.9.0 + `che-telegram-bot-mcp` v0.9.0 binaries; the wrapper upgrades a binary whose version record is older than the pin)
 
 ### Changelog
 
