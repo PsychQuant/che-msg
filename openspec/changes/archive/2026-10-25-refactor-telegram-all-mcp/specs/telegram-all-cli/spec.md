@@ -1,3 +1,7 @@
+## Purpose
+
+Defines the `telegram-all` command-line tool: a way to use the personal Telegram account from a terminal through `TelegramAllLib`, without the MCP server or the MCP SDK.
+
 ## ADDED Requirements
 
 ### Requirement: CLI executable for personal Telegram operations
