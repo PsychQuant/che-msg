@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - README: a Requirements section: macOS 26 or later ([#91](https://github.com/PsychQuant/che-msg/issues/91)). The binaries after v0.8.0 are built for macOS 26; the v0.8.0 binaries most likely do not start on macOS 13–15 either unless Xcode 26 or later is installed.
+- Both wrappers download a binary only when its version record (`~/bin/.<Binary>.version`) is older than `DESIRED_VERSION` or is not a plain `x.y.z`; a binary newer than the pin is kept ([#83](https://github.com/PsychQuant/che-msg/issues/83)). Before, any difference triggered a download, so a session still running an older plugin put its older binary back over a newer one. Going back below the pin by hand does not stick, because the wrapper upgrades again; README "Auto-upgrade" explains.
 - `/che-telegram-mcp:auth` logs in with `auth_run` and follows `auth_status.next_step` (it may now call `auth_run` without a prompt in the turn you invoke it); it no longer walks through the step tools first, never calls `logout` without asking, and says when a typed 2FA password stays in the transcript ([#48](https://github.com/PsychQuant/che-msg/issues/48)). The step tools stay as a fallback.
 
 ### Fixed
