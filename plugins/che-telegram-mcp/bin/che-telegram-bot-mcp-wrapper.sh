@@ -5,7 +5,9 @@
 # Auto-upgrade design (v1.3.0+):
 # - DESIRED_VERSION below pins the binary version this plugin expects.
 # - ~/bin/.CheTelegramBotMCP.version sidecar tracks what's installed.
-# - On mismatch, re-downloads from GitHub Release (atomic .tmp + mv).
+# - When the sidecar is older than the pin, or is not a plain x.y.z,
+#   re-downloads from GitHub Release (atomic .tmp + mv). A binary newer than
+#   the pin is kept (PsychQuant/che-msg#83).
 # - Source builds in $HOME/Developer/... are NEVER auto-replaced.
 
 BINARY_NAME="CheTelegramBotMCP"
@@ -22,16 +24,24 @@ for loc in "$INSTALLED_BINARY" "/usr/local/bin/$BINARY_NAME" "$HOME/.local/bin/$
     [[ -x "$loc" ]] && BINARY="$loc" && break
 done
 
-# Decide whether to download.
+# Decide whether to download. Only an older or unreadable sidecar triggers it:
+# a session still running an older plugin must not put its older binary back
+# over a newer one (PsychQuant/che-msg#83).
 NEED_DOWNLOAD=false
 REASON=""
 INSTALLED_VERSION=""
 [[ -f "$VERSION_FILE" ]] && INSTALLED_VERSION=$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null || true)
 
+# version_at_least <version> <minimum>: true when <version> is x.y.z and not older.
+version_at_least() {
+    [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+    [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]]
+}
+
 if [[ -z "$BINARY" ]]; then
     NEED_DOWNLOAD=true
     REASON="binary not installed"
-elif [[ "$BINARY" == "$INSTALLED_BINARY" ]] && [[ "$INSTALLED_VERSION" != "$DESIRED_VERSION" ]]; then
+elif [[ "$BINARY" == "$INSTALLED_BINARY" ]] && ! version_at_least "$INSTALLED_VERSION" "$DESIRED_VERSION"; then
     NEED_DOWNLOAD=true
     REASON="plugin wants v${DESIRED_VERSION}, installed is v${INSTALLED_VERSION:-unknown}"
 fi
