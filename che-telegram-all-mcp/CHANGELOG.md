@@ -84,6 +84,8 @@ Observable on the wire for existing MCP clients (surfaced by PR #32 verify — d
 
 ## [0.5.5] - 2026-05-09
 
+Not released on its own: there is no `v0.5.5` tag or GitHub Release. These changes first shipped in `v0.6.0` (2026-10-09).
+
 CLI fast-exit dispatcher + startup observability for `/mcp` reconnect diagnostics.
 
 Health-check entry point + per-phase timing instrumentation. Does **not** directly fix Claude Code's `/mcp` "Failed to reconnect" symptom — the root cause is the interaction of wrapper-side cold-start latency, Claude Code's reconnect timeout, and 233MB universal Mach-O dynamic linking. This release equips wrappers and humans to diagnose which contributor dominates in their environment, and gives `psychquant-claude-plugins/che-telegram-mcp-wrapper.sh` a sub-second `--version` probe to replace its GitHub API curl on every spawn.
@@ -115,6 +117,8 @@ This release alone does not change end-user experience. Real leverage requires t
 This PR is **observability + a fast health-check entry point**, not a direct fix for the reported `/mcp` reconnect timeout. Verifying `--version` exits 0, `[startup]` lines emit when env is set, and `--versoin` typos exit 2 — does **not** prove the original "Failed to reconnect" message goes away in production. That requires the wrapper-side change above plus deploy + multi-session reproduction, neither of which this repo can deliver alone. The honest scope is "build the diagnostic and integration surface that future fixes will plug into".
 
 ## [0.5.4] - 2026-04-27
+
+Not released on its own: there is no `v0.5.4` tag or GitHub Release. These changes first shipped in `v0.6.0` (2026-10-09).
 
 Input hardening + handler glue testability + log-format polish.
 

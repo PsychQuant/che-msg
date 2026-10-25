@@ -9,6 +9,8 @@
 
 ## [0.7.0] - 2026-10-10
 
+The bot has no sections between `[0.1.0]` and this one: it was published in the repo's shared releases up to `v0.6.0` while still reporting `0.1.0`. From this release on it uses the shared version number.
+
 ### Fixed
 - The mcpb manifest and the version the MCP server reports said `0.1.0`, although the bot ships in the repo's shared releases (latest `v0.6.0`). Both now say the release version (`0.7.0`); the bot itself is unchanged.
 
