@@ -9,9 +9,13 @@
 #
 # Usage:
 #   scripts/release/sign-and-notarize.sh [--sign-only] <path/to/binary>
+#   scripts/release/sign-and-notarize.sh --preflight [--sign-only]
 #
 #   --sign-only   sign and verify locally; NOTARY_PROFILE is not needed and
 #                 nothing is sent to Apple
+#   --preflight   only check that signing (and, without --sign-only,
+#                 notarizing) is set up; build-release.sh runs this before
+#                 building anything
 #
 # Environment (no defaults, so nothing about one maintainer is baked in):
 #   DEVELOPER_ID    codesigning identity: its name, e.g. "Developer ID Application:
@@ -22,8 +26,20 @@
 set -euo pipefail
 
 SIGN_ONLY=0
-if [[ "${1:-}" == --sign-only ]]; then SIGN_ONLY=1; shift; fi
-BINARY="${1:?Usage: $0 [--sign-only] <path/to/binary>}"
+PREFLIGHT=0
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --sign-only) SIGN_ONLY=1 ;;
+        --preflight) PREFLIGHT=1 ;;
+        *) echo "Error: unknown option $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+if [[ "$PREFLIGHT" == 1 ]]; then
+    BINARY=""
+else
+    BINARY="${1:?Usage: $0 [--sign-only] <path/to/binary> | $0 --preflight [--sign-only]}"
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENTITLEMENTS="${ENTITLEMENTS:-$SCRIPT_DIR/Entitlements.plist}"
 
@@ -46,11 +62,11 @@ if [[ "$SIGN_ONLY" == 0 && -z "${NOTARY_PROFILE:-}" ]]; then
     echo "       (notarytool prompts for the app-specific password; never pass it on the command line)" >&2
     exit 1
 fi
-if [[ ! -f "$BINARY" ]]; then
+if [[ "$PREFLIGHT" == 0 && ! -f "$BINARY" ]]; then
     echo "Error: binary not found at $BINARY" >&2
     exit 1
 fi
-if ! file "$BINARY" 2>/dev/null | grep -q "Mach-O"; then
+if [[ "$PREFLIGHT" == 0 ]] && ! file "$BINARY" 2>/dev/null | grep -q "Mach-O"; then
     echo "Error: $BINARY is not a Mach-O binary ($(file -b "$BINARY" 2>&1))." >&2
     exit 1
 fi
@@ -71,6 +87,10 @@ if [[ "$SIGN_ONLY" == 0 ]] && ! xcrun notarytool history --keychain-profile "$NO
     echo "Error: notarytool keychain profile '$NOTARY_PROFILE' is not configured or cannot be used." >&2
     echo "       Set up with: xcrun notarytool store-credentials $NOTARY_PROFILE --apple-id <id> --team-id <team-id>" >&2
     exit 1
+fi
+if [[ "$PREFLIGHT" == 1 ]]; then
+    [[ "$SIGN_ONLY" == 1 ]] && echo "Signing is set up (identity found)." || echo "Signing and notarizing are set up (identity and notarytool profile found)."
+    exit 0
 fi
 
 ZIP_PATH=""

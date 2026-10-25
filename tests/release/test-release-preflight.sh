@@ -21,6 +21,8 @@
 #   7. Full mode: signs, submits the zipped binary with --wait, and checks the
 #      result with spctl.
 #   8. Full mode when spctl does not see a notarized binary: fails.
+#   9. --preflight: checks the prerequisites only, with no binary; with
+#      --sign-only it does not need NOTARY_PROFILE and never calls notarytool.
 #
 # Usage:
 #   bash tests/release/test-release-preflight.sh
@@ -30,8 +32,9 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SIGN="${SIGN_UNDER_TEST:-$ROOT/scripts/release/sign-and-notarize.sh}"
-IDENTITY="Developer ID Application: Test Maintainer (TEAMID1234)"
-IDENTITY_SHA1="0123456789ABCDEF0123456789ABCDEF01234567"
+source "$ROOT/tests/release/lib/fake_signing_tools.sh"
+IDENTITY=$FAKE_IDENTITY
+IDENTITY_SHA1=$FAKE_IDENTITY_SHA1
 
 FAIL=0
 TOTAL=0
@@ -46,51 +49,10 @@ trap 'rm -rf "$SCRATCH"' EXIT
 # make_env <dir> [no-identity|no-runtime|not-notarized]: fake tools in <dir>/fakebin
 # that append "<tool> <args>" to <dir>/calls, and a Mach-O file <dir>/Bin.
 make_env() {
-    local dir=$1 mode=${2:-}
-    mkdir -p "$dir/fakebin"
-    cp /usr/bin/true "$dir/Bin"
-    local log="$dir/calls"
-    : > "$log"
-    cat > "$dir/fakebin/security" <<EOF
-#!/bin/bash
-echo "security \$*" >> "$log"
-[ "$mode" = no-identity ] && { echo "     0 valid identities found"; exit 0; }
-echo '  1) $IDENTITY_SHA1 "$IDENTITY"'
-echo "     1 valid identities found"
-EOF
-    cat > "$dir/fakebin/codesign" <<EOF
-#!/bin/bash
-echo "codesign \$*" >> "$log"
-case " \$* " in
-    *" -dv "*|*" -d "*)
-        echo "Authority=$IDENTITY" >&2
-        echo "TeamIdentifier=TEAMID1234" >&2
-        if [ "$mode" = no-runtime ]; then echo "CodeDirectory v=20500 flags=0x0(none)" >&2
-        else echo "CodeDirectory v=20500 flags=0x10000(runtime)" >&2; fi ;;
-esac
-exit 0
-EOF
-    cat > "$dir/fakebin/xcrun" <<EOF
-#!/bin/bash
-echo "xcrun \$*" >> "$log"
-case "\$1 \$2" in
-    "notarytool submit") echo "  id: 11111111-2222-3333-4444-555555555555"; echo "  status: Accepted" ;;
-esac
-exit 0
-EOF
-    cat > "$dir/fakebin/spctl" <<EOF
-#!/bin/bash
-echo "spctl \$*" >> "$log"
-if [ "$mode" = not-notarized ]; then echo "\$4: rejected"; echo "source=Unnotarized Developer ID"; exit 3; fi
-echo "\$4: accepted"; echo "source=Notarized Developer ID"
-EOF
-    cat > "$dir/fakebin/ditto" <<EOF
-#!/bin/bash
-echo "ditto \$*" >> "$log"
-for last; do :; done
-: > "\$last"
-EOF
-    chmod +x "$dir/fakebin/"*
+    mkdir -p "$1"
+    cp /usr/bin/true "$1/Bin"
+    : > "$1/calls"
+    make_fake_signing_tools "$1/fakebin" "$1/calls" "${2:-}"
 }
 
 # run_sign <dir> [env assignments...] -- [script args...]: sets OUT and RC.
@@ -176,6 +138,21 @@ test_case "full mode, spctl does not see a notarized binary"
 D="$SCRATCH/not-notarized"; make_env "$D" not-notarized
 run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile -- "$D/Bin"
 if [ "$RC" -ne 0 ]; then pass "fails (exit $RC)"; else fail "exit 0"; fi
+
+test_case "--preflight"
+D="$SCRATCH/preflight"; make_env "$D"
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile -- --preflight
+if [ "$RC" -eq 0 ]; then pass "all set: exit 0"; else fail "all set: exit $RC: $OUT"; fi
+if called "$D" "codesign"; then fail "codesign ran"; else pass "codesign never ran"; fi
+if called "$D" "xcrun notarytool submit"; then fail "something was submitted"; else pass "nothing was submitted"; fi
+if called "$D" "xcrun notarytool history"; then pass "checked the notarytool profile"; else fail "did not check the notarytool profile"; fi
+D="$SCRATCH/preflight-no-profile"; make_env "$D"
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" -- --preflight
+if [ "$RC" -ne 0 ]; then pass "NOTARY_PROFILE unset: refused (exit $RC)"; else fail "NOTARY_PROFILE unset: exit 0"; fi
+D="$SCRATCH/preflight-sign-only"; make_env "$D"
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" -- --preflight --sign-only
+if [ "$RC" -eq 0 ]; then pass "--sign-only without NOTARY_PROFILE: exit 0"; else fail "--sign-only: exit $RC: $OUT"; fi
+if called "$D" "xcrun notarytool"; then fail "notarytool ran"; else pass "notarytool never ran"; fi
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."
