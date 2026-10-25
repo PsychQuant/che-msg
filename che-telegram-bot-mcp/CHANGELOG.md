@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Distribution
+- From the next release on, the binary is signed with a Developer ID and notarized by Apple, and every release asset comes with a `.sha256` file holding its SHA-256 hash ([#40](https://github.com/PsychQuant/che-msg/issues/40)). The releases are built by `make release-signed` ([RELEASING.md](../RELEASING.md)). Releases up to `v0.8.0` stay as they were: ad-hoc signed, without `.sha256` files.
+
 ## [0.8.0] - 2026-10-14
 
 ### Changed
