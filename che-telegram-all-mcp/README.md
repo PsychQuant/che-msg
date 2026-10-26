@@ -315,7 +315,12 @@ Output Markdown format (excerpt):
 
 **14:35 小明 王**：
 [photo]
+
+**14:36 小明 王**：
+[photo] 今天的菜單
 ```
+
+A media message renders as its placeholder, followed by its caption when it has one. A dump answered from the local cache (while another process holds TDLib) has no captions, and audio there reads `[other]`.
 
 ### Archive a chat incrementally
 

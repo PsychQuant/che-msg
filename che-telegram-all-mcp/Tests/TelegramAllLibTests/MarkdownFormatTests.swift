@@ -152,6 +152,9 @@ final class MarkdownFormatTests: XCTestCase {
             ("document", "[document]"),
             ("location", "[location]"),
             ("animation", "[animation]"),
+            ("video_note", "[video_note]"),
+            ("poll", "[poll]"),
+            ("audio", "[audio]"),
             ("unknown_type", "[other]"),
         ]
         for (type, expectedPlaceholder) in mediaCases {

@@ -337,7 +337,7 @@ The Markdown file produced by `dump_chat_to_markdown` SHALL conform to the follo
 - Level-2 headings per calendar day in local timezone, formatted `## YYYY-MM-DD`, in chronological order (oldest day first within the exported range).
 - Each message rendered as `**HH:mm <sender>**：` followed by a newline and the message body on the next line(s).
 - Outgoing messages MUST use the configured `self_label` value as `<sender>`.
-- Non-text message types MUST render as bracketed placeholders: `[photo]`, `[voice]`, `[video]`, `[video_note]`, `[sticker]`, `[document]`, `[location]`, `[animation]`, `[poll]`, `[audio]`, `[other]`. When the message has a non-empty caption (photo, video, voice note, document, animation, audio), the placeholder MUST be followed by a space and the caption, with the caption's own line breaks kept; an empty caption MUST be treated as no caption.
+- Non-text message types MUST render as bracketed placeholders: `[photo]`, `[voice]`, `[video]`, `[video_note]`, `[sticker]`, `[document]`, `[location]`, `[animation]`, `[poll]`, `[audio]`, `[other]`. When the message has a non-empty caption (photo, video, voice note, document, animation, audio), the placeholder MUST be followed by a space and the caption, with the caption's own line breaks kept; an empty caption MUST be treated as no caption. A dump answered from TDLib's local cache has no captions, because that reader does not decode them (the `telegram-local-reader` capability omits a field it cannot determine).
 - Consecutive messages from the same sender MUST each retain their own timestamp line; the implementation MUST NOT merge them into a single block.
 
 #### Scenario: Text message formatting
