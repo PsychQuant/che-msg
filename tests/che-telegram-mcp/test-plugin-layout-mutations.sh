@@ -227,6 +227,19 @@ for v in '1.0' '1e0'; do
 done
 P=$(fresh); perl -0pi -e 's/^(description: [^\n]*\n)/$1disable-model-invocation: false\n/m' "$P/skills/telegram-messaging/SKILL.md"
 expect_pass "router with disable-model-invocation: false is accepted"
+# archive-telegram-search (#80): slash-only, and pre-approves nothing a check forbids
+P=$(fresh); rm -r "$P/skills/archive-telegram-search"
+expect_fail "archive-telegram-search deleted" "skills/archive-telegram-search/SKILL.md is missing"
+P=$(fresh); perl -ni -e 'print unless /^disable-model-invocation:/' "$P/skills/archive-telegram-search/SKILL.md"
+expect_fail "archive-telegram-search loses disable-model-invocation" "FAIL \(h\)"
+P=$(fresh); perl -pi -e 's/^disable-model-invocation:.*$/disable-model-invocation: "true"/' "$P/skills/archive-telegram-search/SKILL.md"
+expect_fail "archive-telegram-search with disable-model-invocation: \"true\"" "FAIL \(h\)"
+P=$(fresh); perl -0pi -e 's/^(description: [^\n]*\n)/$1allowed-tools:\n  - Bash(python3 *)\n/m' "$P/skills/archive-telegram-search/SKILL.md"
+expect_fail "archive-telegram-search pre-approves Bash" "FAIL \(d\)"
+P=$(fresh); perl -0pi -e 's/^(description: [^\n]*\n)/$1allowed-tools:\n  - Write\n/m' "$P/skills/archive-telegram-search/SKILL.md"
+expect_fail "archive-telegram-search pre-approves Write" "FAIL \(d\)"
+P=$(fresh); perl -0pi -e 's/^(description: [^\n]*\n)/$1allowed-tools:\n  - '"${ALL}"'archive_chat_to_markdown\n/m' "$P/skills/archive-telegram-search/SKILL.md"
+expect_fail "archive-telegram-search pre-approves archive_chat_to_markdown" "FAIL \(f\)"
 # (i): no hooks and no !`command` / ```! blocks (they run when the skill is invoked)
 P=$(fresh); perl -0pi -e 's/^(description: [^\n]*\n)/$1hooks:\n  PreToolUse:\n    - hooks:\n        - type: command\n          command: "true"\n/m' "$P/skills/chats/SKILL.md"
 expect_fail "skill registers hooks" "FAIL \(i\)"

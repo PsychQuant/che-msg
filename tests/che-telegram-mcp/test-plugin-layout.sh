@@ -16,9 +16,9 @@
 #        the files the wrappers source (download.sh, #56; startup-error.sh,
 #        #67); hooks/ only
 #        check-mcp.sh and hooks.json, whose only hook is the SessionStart
-#        command; skills/ exactly the six skills, each with only SKILL.md, and
-#        archive-telegram-search's scripts/ only search_archive.py (#80; a new
-#        skill must be added here and to (h) on purpose). plugin.json and the
+#        command; skills/ exactly the seven skills, each with only SKILL.md
+#        (archive-telegram-search also scripts/, holding only search_archive.py,
+#        #80; a new skill must be added here and to (h) on purpose). plugin.json and the
 #        repository marketplace entry carry metadata keys only (no hooks,
 #        skills, mcpServers, …); the entry is the only one for this plugin and
 #        its source is ./plugins/che-telegram-mcp.
@@ -55,10 +55,12 @@
 #        disable-model-invocation to it along with the four slash skills. The
 #        key must be absent or the literal false: Claude Code also reads yes/on/
 #        1 — and numbers such as 1.0 — as true, so anything else fails.
-#   (h)  the five slash skills (auth, chats, search, send, archive-telegram)
-#        set disable-model-invocation to the literal, unquoted `true` — they run
-#        only when the user types them (archive-telegram writes archives and an
-#        index, PsychQuant/che-msg#69). Claude Code before 2.1.218 recognises
+#   (h)  the six slash skills (auth, chats, search, send, archive-telegram,
+#        archive-telegram-search) set disable-model-invocation to the literal,
+#        unquoted `true` — they run only when the user types them
+#        (archive-telegram writes archives and an index, PsychQuant/che-msg#69;
+#        archive-telegram-search brings archived message text into the
+#        conversation, #80). Claude Code before 2.1.218 recognises
 #        only true, so yes/on/1/"true" fail here. (g) and (h) each fail in
 #        their own safe direction.
 #   (i)  no skill registers `hooks` (they stay registered for the rest of the
@@ -185,7 +187,7 @@ if os.path.isdir(bindir):
 IGNORED = {".DS_Store"}
 def listing(path):
     return sorted(set(os.listdir(path)) - IGNORED) if os.path.isdir(path) else None
-SKILLS = ["archive-telegram", "auth", "chats", "search", "send", "telegram-messaging"]
+SKILLS = ["archive-telegram", "archive-telegram-search", "auth", "chats", "search", "send", "telegram-messaging"]
 expected = {
     "": [".claude-plugin", ".mcp.json", "CHANGELOG.md", "README.md", "bin", "hooks", "lib", "skills"],
     ".claude-plugin": ["plugin.json"],
@@ -196,9 +198,7 @@ expected = {
 }
 for name in SKILLS:
     expected[f"skills/{name}"] = ["SKILL.md"]
-# #80's search script, ahead of its SKILL.md
-expected["skills"] = sorted(SKILLS + ["archive-telegram-search"])
-expected["skills/archive-telegram-search"] = ["scripts"]
+expected["skills/archive-telegram-search"] = ["SKILL.md", "scripts"]
 expected["skills/archive-telegram-search/scripts"] = ["search_archive.py"]
 for rel, want in expected.items():
     got = listing(os.path.join(root, rel))
@@ -487,7 +487,7 @@ elif "telegram-messaging" in meta and not router_invocable("telegram-messaging")
     bad("g", "skills/telegram-messaging/SKILL.md sets disable-model-invocation")
 
 # ---------- (h) slash skills ----------
-for name in ("auth", "chats", "search", "send", "archive-telegram"):
+for name in ("auth", "chats", "search", "send", "archive-telegram", "archive-telegram-search"):
     if not os.path.isfile(os.path.join(root, "skills", name, "SKILL.md")):
         bad("h", f"skills/{name}/SKILL.md is missing")
     elif name in unreadable:
@@ -641,7 +641,7 @@ else
 fi
 report f  "skills pre-approve only allowlisted read-only tools (auth steps only in auth)"
 report g  "telegram-messaging exists and stays model-invocable"
-report h  "auth/chats/search/send/archive-telegram set disable-model-invocation: true"
+report h  "auth/chats/search/send/archive-telegram/archive-telegram-search set disable-model-invocation: true"
 report i  "no skill sets hooks or runs !\`command\` blocks"
 report j  "the plugin and the repository README name the marketplace this repository publishes"
 report k  "Keychain commands end with a bare -w (the secret is prompted for, not passed)"

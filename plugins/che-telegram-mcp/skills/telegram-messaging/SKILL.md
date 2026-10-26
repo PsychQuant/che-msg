@@ -67,6 +67,7 @@ Answers from read tools may carry a second text item starting `sync: not-synced`
 | `dump_chat_to_markdown` | One-shot export with date range / cap |
 | `archive_chat_to_markdown` | Incremental per-day archive with media (writes files; the `/che-telegram-mcp:archive-telegram` skill drives it from a config) |
 | `download_message_media` | Save one message's media into `<output_dir>/<chat_id>/media/<message_id>/` (writes a file) |
+| (no tool) | Messages already archived: ask the user to run `/che-telegram-mcp:archive-telegram-search` (it runs only when typed; one-line snippets and `telegram:<chat_id>/<message_id>` citations). Do not Read or Grep the archive directory yourself — it bypasses the skill's caps and git check, and a workspace Grep skips the git-ignored archive anyway |
 
 #### Sending / modifying messages
 | Tool | Purpose |
