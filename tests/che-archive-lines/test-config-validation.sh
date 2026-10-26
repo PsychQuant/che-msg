@@ -246,6 +246,22 @@ reset; write_config -40 30 240; cp "$CONFIG" "$SCRATCH/before.json"
 run_pty $'\n' calibrate; rc=$?
 if [ "$rc" -ne 0 ] && unchanged && grep -q '輸入已結束，沒有讀到選單位移' "$SCRATCH/out.log"; then ok "calibrate: input ends at the menu offset prompt: says so, config unchanged"
 else bad "calibrate, end of input at the menu offset (exit $rc, config unchanged: $(unchanged && echo yes || echo no))"; fi
+# The cursor must be inside the LINE window (stub: x 100..899, y 100..699).
+# 5,5 is the position the diagnosis reproduced the overwrite with; the others
+# are one pixel outside each edge.
+for pos in 5,5 99,300 900,300 500,99 500,700; do
+    reset; write_config -40 30 240; cp "$CONFIG" "$SCRATCH/before.json"
+    export STUB_POS="$pos"; run_pty $'\n250\n' calibrate; rc=$?; unset STUB_POS
+    if [ "$rc" -ne 0 ] && unchanged && grep -q '不在 LINE 視窗內' "$SCRATCH/out.log"; then ok "calibrate: cursor at $pos is outside the window: says so, config unchanged"
+    else bad "calibrate, cursor at $pos (exit $rc, config unchanged: $(unchanged && echo yes || echo no)): $(tr '\n' ' ' < "$CONFIG")"; fi
+done
+# The window's own corner pixels are inside.
+reset; export STUB_POS="100,100"; run_pty $'\n\n' calibrate; rc=$?; unset STUB_POS
+if [ "$rc" -eq 0 ] && grep -q '"offset_x": -800,' "$CONFIG" && grep -q '"offset_y": 0,' "$CONFIG"; then ok "calibrate: cursor on the window's top-left pixel is accepted"
+else bad "calibrate, cursor at 100,100 (exit $rc): $(tr '\n' ' ' < "$CONFIG" 2>/dev/null)"; fi
+reset; export STUB_POS="899,699"; run_pty $'\n\n' calibrate; rc=$?; unset STUB_POS
+if [ "$rc" -eq 0 ] && grep -q '"offset_x": -1,' "$CONFIG" && grep -q '"offset_y": 599,' "$CONFIG"; then ok "calibrate: cursor on the window's bottom-right pixel is accepted"
+else bad "calibrate, cursor at 899,699 (exit $rc): $(tr '\n' ' ' < "$CONFIG" 2>/dev/null)"; fi
 
 echo
 echo "Results: $PASSED passed, $FAILED failed"

@@ -170,6 +170,14 @@ calibrate() {
         echo -e "${RED}錯誤：無法取得滑鼠位置（cliclick 回傳的不是整數），設定檔沒有寫入${NC}"
         exit 1
     fi
+    # 游標不在 LINE 視窗內，算出來的偏移就點不到「⋮」；不寫入，免得蓋掉原本正確的校準 (#52)。
+    # 視窗佔 x = WIN_X … WIN_X+WIN_W-1、y = WIN_Y … WIN_Y+WIN_H-1。
+    if [ "$mouse_x" -lt "$WIN_X" ] || [ "$mouse_x" -ge $((WIN_X + WIN_W)) ] \
+        || [ "$mouse_y" -lt "$WIN_Y" ] || [ "$mouse_y" -ge $((WIN_Y + WIN_H)) ]; then
+        echo -e "${RED}錯誤：滑鼠位置 ($mouse_x, $mouse_y) 不在 LINE 視窗內（位置($WIN_X, $WIN_Y) 大小(${WIN_W}x${WIN_H})），設定檔沒有寫入${NC}"
+        echo "請把滑鼠移到 LINE 聊天視窗右上角的「⋮」按鈕上，再執行一次 calibrate"
+        exit 1
+    fi
 
     # 計算相對偏移（從視窗右上角）
     local offset_x offset_y
