@@ -73,6 +73,54 @@ final class TDLibRequestTests: XCTestCase {
         XCTAssertGreaterThan(requests, 20, "the chat, message, contact, group and archive requests")
     }
 
+    /// The methods the spec lists as taking a chat id ("A chat TDLib has not loaded is loaded
+    /// by its id"); `page` and `message` are the archive's history source and single read.
+    private let methodsWithAChatId: Set<String> = [
+        "getChat", "getChatHistory", "searchMessages", "sendMessage", "editMessage", "deleteMessages",
+        "forwardMessages", "getChatMembers", "pinMessage", "unpinMessage", "setChatTitle",
+        "setChatDescription", "addChatMember", "markAsRead", "page", "message",
+    ]
+
+    /// Each method in the TDLib client's files that takes a chat id and sends a request makes
+    /// every chat id parameter known (`knownChat`) on a line before its first request (#71).
+    /// The signature runs to the line that opens the body; the body ends at the next
+    /// declaration or comment at the method's indentation.
+    func testEveryMethodWithAChatIdLoadsTheChatFirst() throws {
+        let declaration = try NSRegularExpression(pattern: #"^    (?:public |private |internal )?func (\w+)\("#)
+        let member = try NSRegularExpression(
+            pattern: #"^    (?:public |private |internal |static |@\w+ )*(?:func|var|let|init|case|enum|struct|class|//)|^\}"#)
+        var checked: Set<String> = []
+        for file in ["TDLibClient.swift", "TDLibClient+Archive.swift"] {
+            let lines = try String(contentsOf: Self.sources.appendingPathComponent(file), encoding: .utf8)
+                .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            for (index, line) in lines.enumerated() {
+                guard let match = declaration.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                      let name = Range(match.range(at: 1), in: line).map({ String(line[$0]) }),
+                      name != "knownChat",
+                      let opening = lines[index...].firstIndex(where: { $0.hasSuffix("{") }) else { continue }
+                let signature = lines[index...opening].joined(separator: " ")
+                let chatIds = ["chatId", "fromChatId"].filter { signature.contains("\($0): Int64") }
+                guard !chatIds.isEmpty else { continue }
+                var body: [String] = []
+                for next in lines[(opening + 1)...] {
+                    if member.firstMatch(in: next, range: NSRange(next.startIndex..., in: next)) != nil { break }
+                    body.append(next)
+                }
+                // A method that reads elsewhere (the local cache's `page`) sends no TDLib request.
+                guard body.contains(where: { $0.contains("openClient.") || $0.contains("knownChat(") }) else { continue }
+                let firstRequest = body.firstIndex(where: { $0.contains("openClient.") }) ?? body.count
+                checked.insert(name)
+                for chatId in chatIds {
+                    let loaded = body.firstIndex(where: { $0.contains("knownChat(\(chatId))") })
+                    XCTAssertNotNil(loaded, "\(file): \(name) never makes \(chatId) known")
+                    if let loaded { XCTAssertLessThan(loaded, firstRequest, "\(file): \(name) sends a request before knownChat(\(chatId))") }
+                }
+            }
+        }
+        XCTAssertTrue(checked.isSuperset(of: methodsWithAChatId),
+                      "not checked: \(methodsWithAChatId.subtracting(checked).sorted())")
+    }
+
     /// What the `telegram-all` CLI prints for it (ArgumentParser prints `errorDescription`).
     func testTheCLIShowsTheCodeAndTheMessage() {
         XCTAssertEqual(TDLibClient.TDError.tdlibError(code: 400, message: "User not found").errorDescription,

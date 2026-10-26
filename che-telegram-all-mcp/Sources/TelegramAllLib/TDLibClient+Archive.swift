@@ -10,39 +10,12 @@ internal enum ArchiveCursor {
     }
 }
 
-/// What a TDLib chat id names, by TDLib's id ranges (td/telegram/DialogId.cpp).
-internal enum ArchiveChatID: Equatable {
-    case user(Int64)
-    case basicGroup(Int64)
-    case supergroup(Int64)
-    /// Secret chats and ids TDLib does not use: nothing to create them from.
-    case other
-
-    private static let maxUserId: Int64 = (1 << 40) - 1
-    private static let maxBasicGroupId: Int64 = 999_999_999_999
-    private static let zeroChannelId: Int64 = -1_000_000_000_000
-    private static let maxChannelId: Int64 = 1_000_000_000_000 - (1 << 31)
-
-    // Compared without negating `chatId`: `-Int64.min` traps and would end the server process.
-    init(_ chatId: Int64) {
-        if (1...Self.maxUserId).contains(chatId) {
-            self = .user(chatId)
-        } else if (-Self.maxBasicGroupId ... -1).contains(chatId) {
-            self = .basicGroup(-chatId)
-        } else if (Self.zeroChannelId - Self.maxChannelId ... Self.zeroChannelId - 1).contains(chatId) {
-            self = .supergroup(Self.zeroChannelId - chatId)
-        } else {
-            self = .other
-        }
-    }
-}
-
 /// TDLib as the archive's history source and media downloader (PsychQuant/che-msg#69).
 extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
     /// One page of `getChatHistory`, newest first, as message JSON objects.
     public func page(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [[String: Any]] {
         try requireOpen(authorized: true)
-        if fromMessageId == 0 { try await loadChatForArchive(chatId) }
+        if fromMessageId == 0 { try await knownChat(chatId) }
         let result = try await tdlibCall { try await openClient.getChatHistory(
             chatId: chatId, fromMessageId: fromMessageId, limit: limit, offset: 0, onlyLocal: false) }
         // TDLib excludes the cursor at offset 0 (OrderedMessages::get_history); filtering keeps
@@ -64,30 +37,8 @@ extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
 
     public func message(chatId: Int64, messageId: Int64) async throws -> [String: Any] {
         try requireOpen(authorized: true)
-        try await loadChatForArchive(chatId)
+        try await knownChat(chatId)
         return messageToDict(try await tdlibCall { try await openClient.getMessage(chatId: chatId, messageId: messageId) })
-    }
-}
-
-extension TDLibClient {
-    /// Makes `chatId` known to this TDLib before reading it. `getChat` answers for chats TDLib
-    /// has seen (its chat database keeps them), but a fresh login has seen few, and reading an
-    /// unseen chat fails with "Chat not found"; such a chat is created from its id.
-    func loadChatForArchive(_ chatId: Int64) async throws {
-        do {
-            _ = try await tdlibCall { try await openClient.getChat(chatId: chatId) }
-        } catch TDError.tdlibError(code: 400, message: _) {
-            switch ArchiveChatID(chatId) {
-            case .user(let userId):
-                _ = try await tdlibCall { try await openClient.createPrivateChat(force: false, userId: userId) }
-            case .basicGroup(let groupId):
-                _ = try await tdlibCall { try await openClient.createBasicGroupChat(basicGroupId: groupId, force: false) }
-            case .supergroup(let supergroupId):
-                _ = try await tdlibCall { try await openClient.createSupergroupChat(force: false, supergroupId: supergroupId) }
-            case .other:
-                throw TDError.tdlibError(code: 400, message: "Chat not found")
-            }
-        }
     }
 }
 

@@ -46,25 +46,26 @@ final class ArchiveTDLibErrorTests: XCTestCase {
     }
 
     /// A chat TDLib has not seen yet is created from its id (the end-to-end run got
-    /// "Chat not found" for Saved Messages in a freshly opened TDLib).
+    /// "Chat not found" for Saved Messages in a freshly opened TDLib), by every tool since #71.
+    /// An id no chat can be created from has no kind.
     func testChatIdRanges() {
-        XCTAssertEqual(ArchiveChatID(123_456_789), .user(123_456_789))
-        XCTAssertEqual(ArchiveChatID(1_099_511_627_775), .user(1_099_511_627_775))
-        XCTAssertEqual(ArchiveChatID(1_099_511_627_776), .other)
-        XCTAssertEqual(ArchiveChatID(-123_456_789), .basicGroup(123_456_789))
-        XCTAssertEqual(ArchiveChatID(-999_999_999_999), .basicGroup(999_999_999_999))
-        XCTAssertEqual(ArchiveChatID(-1_000_000_000_000), .other)
-        XCTAssertEqual(ArchiveChatID(-1_001_234_567_890), .supergroup(1_234_567_890))
-        XCTAssertEqual(ArchiveChatID(-1_997_852_516_352), .supergroup(997_852_516_352))
-        XCTAssertEqual(ArchiveChatID(-1_997_852_516_353), .other)   // secret chats start here
-        XCTAssertEqual(ArchiveChatID(-2_000_000_000_001), .other)
-        XCTAssertEqual(ArchiveChatID(0), .other)
+        XCTAssertEqual(TDLibChatID(123_456_789), .user(123_456_789))
+        XCTAssertEqual(TDLibChatID(1_099_511_627_775), .user(1_099_511_627_775))
+        XCTAssertEqual(TDLibChatID(1_099_511_627_776), nil)
+        XCTAssertEqual(TDLibChatID(-123_456_789), .basicGroup(123_456_789))
+        XCTAssertEqual(TDLibChatID(-999_999_999_999), .basicGroup(999_999_999_999))
+        XCTAssertEqual(TDLibChatID(-1_000_000_000_000), nil)
+        XCTAssertEqual(TDLibChatID(-1_001_234_567_890), .supergroup(1_234_567_890))
+        XCTAssertEqual(TDLibChatID(-1_997_852_516_352), .supergroup(997_852_516_352))
+        XCTAssertEqual(TDLibChatID(-1_997_852_516_353), nil)   // secret chats start here
+        XCTAssertEqual(TDLibChatID(-2_000_000_000_001), nil)
+        XCTAssertEqual(TDLibChatID(0), nil)
     }
 
     /// Negating Int64.min traps; the classifier must not (it would kill the MCP server).
     func testMostNegativeIdDoesNotTrap() {
-        XCTAssertEqual(ArchiveChatID(Int64.min), .other)
-        XCTAssertEqual(ArchiveChatID(Int64.max), .other)
+        XCTAssertEqual(TDLibChatID(Int64.min), nil)
+        XCTAssertEqual(TDLibChatID(Int64.max), nil)
     }
 
     /// Both archive sources page strictly below the cursor, whatever the underlying call returns.

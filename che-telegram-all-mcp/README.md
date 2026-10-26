@@ -174,6 +174,19 @@ To recover (a new login sends a code to your account, so it is always your actio
 2. **Then** open Telegram → Settings → Devices on your phone and end the stalled session and any session you do not recognise, so the new login is not invalidated the same way. Do this only after step 1: once a session is ended, TDLib still running on its directory can lose its authorization and clear that directory itself, and the backup would be empty.
 3. Log in again with `auth_run`. `telegram-all auth-phone` / `auth-code` work only while no session holds TDLib: any telegram-all tool call after `logout` opens TDLib again and holds it until that session's idle close (600 seconds by default, never when `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` is 0) or until the session ends, and meanwhile the CLI exits with status 1, naming the holder. To log in with the CLI, end those sessions first or wait for their idle close.
 
+## Errors from TDLib, and chats TDLib has not loaded
+
+When TDLib answers a tool with an error, the tool returns `{"type": "tdlib_error", "code": <int>, "message": <string>}` with `isError: true`, for example `{"type":"tdlib_error","code":400,"message":"User not found"}`; the `telegram-all` CLI prints `TDLib error <code>: <message>` ([#71](https://github.com/PsychQuant/che-msg/issues/71)). A 406 comes with an empty message: TDLib asks that it never be shown.
+
+TDLib reads only chats it has loaded, and after a new login it has loaded few. A tool given a `chat_id` (`get_chat`, `get_chat_history`, `search_messages`, `dump_chat_to_markdown`, the message, group and read-state tools, and the archive tools) first makes that chat known: when TDLib does not know it, the chat is created from its id as a user, basic group, supergroup or channel chat. That changes only TDLib's local state; nothing is sent to the chat. When the chat cannot be created (a secret chat, or TDLib cannot create it from the id), the result keeps TDLib's original error and adds a `hint`:
+
+```json
+{"type": "tdlib_error", "code": 400, "message": "Chat not found",
+ "hint": "TDLib has not loaded chat -1001234567890 and could not load it by its id. Call get_chats (CLI: telegram-all chats) with a limit large enough to reach this chat, so that TDLib loads it, then try again."}
+```
+
+Whether TDLib can create a chat with a user or group it has never seen, on a database fresh from a new login, has not been checked on a live account yet; until it is, a chat id kept from an earlier session or a config file may still need that `get_chats` call first.
+
 ## Tools (30)
 
 ### Authentication (7)
@@ -365,6 +378,7 @@ Sources/
 │   └── ArchiveToolArgs.swift   # archive / download_message_media argument checks
 ├── TelegramAllLib/
 │   ├── TDLibClient.swift       # TDLib wrapper (auth + all operations)
+│   ├── TDLibRequests.swift     # TDLib errors with code and message; loading a chat by its id
 │   ├── TDLibClient+Archive.swift # TDLib and local cache as archive sources
 │   ├── MessageFilters.swift    # Pagination + date-filter pure helpers
 │   ├── MarkdownExporter.swift  # dump_chat_to_markdown orchestrator

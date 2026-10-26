@@ -5,12 +5,12 @@
 
 ## 2. 用 id 載入沒見過的聊天（原因 2）
 
-- [ ] 2.1 先寫失敗的測試（Requirement: A chat TDLib has not loaded is loaded by its id）：`loadChat` 的六種情況（`getChat` 成功不建立；400 時依種類建立；建立回 400 丟 `unknownChat` 帶原錯誤；id 不可建立時不送建立請求；`getChat` 的非 400 錯誤與建立請求的 429 原樣丟出）；`TDLibChatID` 的 id 範圍；原始碼：每個接受聊天 id 的公開方法與封存的 `page`、`message` 都呼叫 `knownChat`；`TDError.unknownChat` 的 `errorDescription` 與 `hint`；server 的 `tdlibErrorResult(for:)` 對 `tdlibError`、`unknownChat`（含 `hint`）、其他錯誤（nil）。驗證：`swift build --build-tests` 先失敗 [after: 1.2]
-- [ ] 2.2 依設計「載入聊天：抽成可測的純函式，失敗時回報原錯誤」與「`unknownChat` 是 `TDError` 的新 case，server 加 `hint` 欄位」實作 `TDLibChatID`、`loadChat`、`knownChat`、`TDError.unknownChat`／`hint`、`tdlibErrorResult(for:)`，各方法在第一個請求前呼叫 `knownChat`，`loadChatForArchive` 移除，`handleWithTDLib` 的 catch 改用 `tdlibErrorResult(for:)`。驗證：2.1 的測試通過，`swift test --skip E2ETests` 全過 [after: 2.1]
+- [x] 2.1 先寫失敗的測試（Requirement: A chat TDLib has not loaded is loaded by its id）：`loadChat` 的六種情況（`getChat` 成功不建立；400 時依種類建立；建立回 400 丟 `unknownChat` 帶原錯誤；id 不可建立時不送建立請求；`getChat` 的非 400 錯誤與建立請求的 429 原樣丟出）；`TDLibChatID` 的 id 範圍；原始碼：每個接受聊天 id 的公開方法與封存的 `page`、`message` 都呼叫 `knownChat`；`TDError.unknownChat` 的 `errorDescription` 與 `hint`；server 的 `tdlibErrorResult(for:)` 對 `tdlibError`、`unknownChat`（含 `hint`）、其他錯誤（nil）。驗證：`swift build --build-tests` 先失敗 [after: 1.2]
+- [x] 2.2 依設計「載入聊天：抽成可測的純函式，失敗時回報原錯誤」與「`unknownChat` 是 `TDError` 的新 case，server 加 `hint` 欄位」實作 `TDLibChatID`、`loadChat`、`knownChat`、`TDError.unknownChat`／`hint`、`tdlibErrorResult(for:)`，各方法在第一個請求前呼叫 `knownChat`，`loadChatForArchive` 移除，`handleWithTDLib` 的 catch 改用 `tdlibErrorResult(for:)`。驗證：2.1 的測試通過，`swift test --skip E2ETests` 全過 [after: 2.1]
 
 ## 3. 文件
 
-- [ ] 3.1 CHANGELOG `[Unreleased]` 記錄 #71 兩個原因；all-mcp README 說明 `tdlib_error` 的欄位（含 `hint`）與 TDLib 沒載入的聊天 id。驗證：人工核對 README 的欄位名與 `tdlibErrorResult` 的 JSON 鍵名一致 [after: 2.2]
+- [x] 3.1 CHANGELOG `[Unreleased]` 記錄 #71 兩個原因；all-mcp README 說明 `tdlib_error` 的欄位（含 `hint`）與 TDLib 沒載入的聊天 id。驗證：人工核對 README 的欄位名與 `tdlibErrorResult` 的 JSON 鍵名一致 [after: 2.2]
 
 ## 4. 實測（需要維護者的帳號）
 

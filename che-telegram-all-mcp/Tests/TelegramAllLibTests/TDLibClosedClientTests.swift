@@ -21,6 +21,7 @@ final class TDLibClosedClientTests: XCTestCase {
         case .notAuthenticated: return "notAuthenticated"
         case .missingCredentials: return "missingCredentials"
         case .tdlibError: return "tdlibError"
+        case .unknownChat: return "unknownChat"
         }
     }
 

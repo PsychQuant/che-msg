@@ -747,9 +747,9 @@ public final class CheTelegramAllMCPServer {
 
             return CallTool.Result(content: [.text(text: result, annotations: nil, _meta: nil)], isError: false)
 
-        } catch TDLibClient.TDError.tdlibError(let code, let message) {
-            return tdlibErrorResult(code: code, message: message)
         } catch {
+            // A TDLib error from any tool, with its code and message (#71).
+            if let structured = tdlibErrorResult(for: error) { return structured }
             // Use errorResultFromParse so HandlerArgError / DateParseError
             // thrown by parseLimit / parseGetChatHistoryArgs / etc. surface
             // their `description` (user-friendly message) rather than the

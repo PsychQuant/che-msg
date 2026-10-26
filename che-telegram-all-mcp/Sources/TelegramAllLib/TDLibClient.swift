@@ -125,12 +125,24 @@ public final class TDLibClient {
         /// restarts, and the message says so. It must stay within
         /// `errorResultFromParse`'s 256-character cap.
         case sessionClosed
+        /// TDLib has not loaded the chat and it could not be created from its id; `code` and
+        /// `message` are those of TDLib's `getChat` error (#71, see `loadChat`).
+        case unknownChat(chatId: Int64, code: Int, message: String)
+
+        /// What the caller can do next, for the errors that have a next step: only `unknownChat`.
+        public var hint: String? {
+            guard case .unknownChat(let chatId, _, _) = self else { return nil }
+            return "TDLib has not loaded chat \(chatId) and could not load it by its id. "
+                + "Call get_chats (CLI: telegram-all chats) with a limit large enough to reach this chat, "
+                + "so that TDLib loads it, then try again."
+        }
 
         public var errorDescription: String? {
             switch self {
             case .notAuthenticated: return "Not authenticated. Use auth_set_parameters, auth_send_phone, and auth_send_code first."
             case .missingCredentials(let msg): return "Missing: \(msg)"
             case .tdlibError(let code, let message): return "TDLib error \(code): \(message)"
+            case .unknownChat(_, let code, let message): return "TDLib error \(code): \(message). " + (hint ?? "")
             case .sessionClosed:
                 // The idle close happens only when the timeout is not 0 and no call is
                 // running (TDLibLifecycle.checkIdle); the whole text stays under the
@@ -449,6 +461,22 @@ public final class TDLibClient {
         }
     }
 
+    /// The chat `chatId`, made known to TDLib first (#71): see `loadChat`. Every method that
+    /// takes a chat id calls this before its first request on the chat (`TDLibRequestTests`).
+    @discardableResult
+    func knownChat(_ chatId: Int64) async throws -> Chat {
+        try await loadChat(chatId, get: { try await tdlibCall { try await openClient.getChat(chatId: chatId) } }) { kind in
+            switch kind {
+            case .user(let userId):
+                return try await tdlibCall { try await openClient.createPrivateChat(force: false, userId: userId) }
+            case .basicGroup(let groupId):
+                return try await tdlibCall { try await openClient.createBasicGroupChat(basicGroupId: groupId, force: false) }
+            case .supergroup(let supergroupId):
+                return try await tdlibCall { try await openClient.createSupergroupChat(force: false, supergroupId: supergroupId) }
+            }
+        }
+    }
+
     // MARK: - Authentication
 
     public func setParameters(apiId: Int, apiHash: String) async throws {
@@ -533,7 +561,7 @@ public final class TDLibClient {
 
     public func getChat(chatId: Int64) async throws -> String {
         try requireOpen(authorized: true)
-        let chat = try await tdlibCall { try await openClient.getChat(chatId: chatId) }
+        let chat = try await knownChat(chatId)
         return toJSON(chatToDict(chat))
     }
 
@@ -546,6 +574,7 @@ public final class TDLibClient {
         untilDate: Foundation.Date? = nil
     ) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
 
         // Backward-compatible single-page path: when no bulk/filter params are given,
         // behave exactly as the prior implementation (one TDLib call, raw batch, no filtering).
@@ -633,6 +662,7 @@ public final class TDLibClient {
 
     public func sendMessage(chatId: Int64, text: String, replyToMessageId: Int64? = nil) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         let content = InputMessageContent.inputMessageText(
             InputMessageText(
                 clearDraft: true,
@@ -659,6 +689,7 @@ public final class TDLibClient {
 
     public func editMessage(chatId: Int64, messageId: Int64, text: String) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         let content = InputMessageContent.inputMessageText(
             InputMessageText(
                 clearDraft: true,
@@ -677,12 +708,15 @@ public final class TDLibClient {
 
     public func deleteMessages(chatId: Int64, messageIds: [Int64], revoke: Bool = true) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         _ = try await tdlibCall { try await openClient.deleteMessages(chatId: chatId, messageIds: messageIds, revoke: revoke) }
         return "{\"ok\": true}"
     }
 
     public func forwardMessages(chatId: Int64, fromChatId: Int64, messageIds: [Int64]) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(fromChatId)
+        try await knownChat(chatId)
         let result = try await tdlibCall { try await openClient.forwardMessages(
             chatId: chatId,
             fromChatId: fromChatId,
@@ -698,6 +732,7 @@ public final class TDLibClient {
 
     public func searchMessages(chatId: Int64, query: String, limit: Int = 50) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         let result = try await tdlibCall { try await openClient.searchChatMessages(
             chatId: chatId,
             filter: nil,
@@ -744,7 +779,7 @@ public final class TDLibClient {
 
     public func getChatMembers(chatId: Int64, limit: Int = 200) async throws -> String {
         try requireOpen(authorized: true)
-        let chat = try await tdlibCall { try await openClient.getChat(chatId: chatId) }
+        let chat = try await knownChat(chatId)
         switch chat.type {
         case .chatTypeSupergroup(let sg):
             let result = try await tdlibCall { try await openClient.getSupergroupMembers(
@@ -766,6 +801,7 @@ public final class TDLibClient {
 
     public func pinMessage(chatId: Int64, messageId: Int64, disableNotification: Bool = false) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         _ = try await tdlibCall { try await openClient.pinChatMessage(
             chatId: chatId,
             disableNotification: disableNotification,
@@ -777,18 +813,21 @@ public final class TDLibClient {
 
     public func unpinMessage(chatId: Int64, messageId: Int64) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         _ = try await tdlibCall { try await openClient.unpinChatMessage(chatId: chatId, messageId: messageId) }
         return "{\"ok\": true}"
     }
 
     public func setChatTitle(chatId: Int64, title: String) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         _ = try await tdlibCall { try await openClient.setChatTitle(chatId: chatId, title: title) }
         return "{\"ok\": true}"
     }
 
     public func setChatDescription(chatId: Int64, description: String) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         _ = try await tdlibCall { try await openClient.setChatDescription(chatId: chatId, description: description) }
         return "{\"ok\": true}"
     }
@@ -808,6 +847,7 @@ public final class TDLibClient {
 
     public func addChatMember(chatId: Int64, userId: Int64) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         _ = try await tdlibCall { try await openClient.addChatMember(chatId: chatId, forwardLimit: 0, userId: userId) }
         return "{\"ok\": true}"
     }
@@ -816,6 +856,7 @@ public final class TDLibClient {
 
     public func markAsRead(chatId: Int64, messageIds: [Int64]) async throws -> String {
         try requireOpen(authorized: true)
+        try await knownChat(chatId)
         _ = try await tdlibCall { try await openClient.viewMessages(
             chatId: chatId,
             forceRead: true,

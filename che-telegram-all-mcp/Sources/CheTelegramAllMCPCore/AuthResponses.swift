@@ -137,7 +137,7 @@ private func authStatusNextStep(state: TDLibClient.AuthState, miss: KeychainMiss
 private func authStatusLastError(_ error: TDLibClient.TDError?) -> [String: Any]? {
     guard let error else { return nil }
     switch error {
-    case .tdlibError(let code, let message):
+    case .tdlibError(let code, let message), .unknownChat(_, let code, let message):
         return [
             "type": "tdlib_error",
             "code": code,
