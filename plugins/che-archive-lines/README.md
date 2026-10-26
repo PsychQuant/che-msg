@@ -56,9 +56,11 @@ brew install cliclick
 /che-archive-lines:archive-lines calibrate
 ```
 
-3. 校準要在終端機裡等你按 Enter，Claude 的 Bash 工具沒有互動式終端，做不到這件事（[#52](https://github.com/PsychQuant/che-msg/issues/52)）。所以 Claude 不會自己執行校準，而是顯示一行含完整路徑的指令，請貼到你自己的終端機（Terminal.app、iTerm）執行
-4. 腳本會先把 LINE 叫到前景，這時鍵盤輸入會進 LINE：直接按 Enter 可能把 LINE 輸入框裡的草稿送出去。先用 Cmd-Tab 切回終端機（不要用滑鼠點），確認終端機視窗沒有蓋住 LINE 右上角的「⋮」，再把滑鼠移到「⋮」按鈕上，在終端機按 Enter
+3. 校準要在終端機裡等你按 Enter，Claude 的 Bash 工具沒有互動式終端，做不到這件事。腳本發現標準輸入不是終端機，就會在叫出 LINE 之前報錯退出，不寫入任何東西（[#52](https://github.com/PsychQuant/che-msg/issues/52)）。所以 Claude 不會自己執行校準，而是顯示一行含完整路徑的指令，請貼到你自己的終端機（Terminal.app、iTerm）執行
+4. 腳本會先把 LINE 叫到前景，這時鍵盤輸入會進 LINE：直接按 Enter 可能把 LINE 輸入框裡的草稿送出去。先用 Cmd-Tab 切回終端機（不要用滑鼠點），確認終端機視窗沒有蓋住 LINE 右上角的「⋮」，再把滑鼠移到「⋮」按鈕上，在終端機按 Enter。按 Enter 時滑鼠不在 LINE 視窗內，腳本會報錯、不寫入
 5. 接著回答「儲存聊天」選項在「⋮」下方幾個像素：直接按 Enter 用預設值 240；要輸入的話必須是整數（例如 270），否則不會寫入設定檔
+
+校準在寫入設定檔之前停下來時（例如不是在終端機執行、滑鼠不在視窗內、在提示時按了 Ctrl-D、選單位移不是整數），腳本會說明原因，原本的設定檔不會被改動。
 
 ### 儲存聊天
 
