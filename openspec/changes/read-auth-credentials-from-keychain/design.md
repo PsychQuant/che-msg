@@ -36,7 +36,7 @@ plugin 的 wrapper 只把 `TELEGRAM_API_ID`、`TELEGRAM_API_HASH` 從 Keychain �
 
 用 `-g` 而不是 `-w`（verify 第 1 輪改的）：`-w` 遇到值裡有任何非 ASCII 或控制字元，就把整個值印成小寫 hex，而一個本來就由 hex 字元組成的 ASCII 值印出來一模一樣，所以無法還原。存 `密碼` 這種 2FA 密碼時，送出去的是它的 hex，每次都錯。`-g` 把屬性印到 stdout、把值印到 stderr 的一行 `password:`，可列印的值寫成 `password: "<值>"`，其他寫成 `password: 0x<HEX>  "<跳脫>"`，兩種形式分得開。改用 Security.framework 也能解決這個問題，但規格的 Requirement 寫明了 `/usr/bin/security` 與 `-g`，換的時候要一起改。
 
-替代方案 Security.framework（`SecItemCopyMatching`）：較「正規」，但對 binary 而言是「另一個應用程式第一次讀這個項目」，預期會跳授權視窗，而且 ad-hoc 簽章下每次升級 cdhash 都變、可能每次都要重新授權。這個預期沒有實測（會在畫面上留下授權視窗，而實測時維護者不在）。**這是待維護者確認的假設**（#49 comment 6411790341）；憑證來源放在介面後面，換成 Security.framework 只動正式版那一個型別。
+替代方案 Security.framework（`SecItemCopyMatching`）：較「正規」，但對 binary 而言是「另一個應用程式第一次讀這個項目」，預期會跳授權視窗，而且 ad-hoc 簽章下每次升級 cdhash 都變、可能每次都要重新授權。這個預期沒有實測（會在畫面上留下授權視窗，而實測時維護者不在）。**這是待維護者確認的假設**（#49 comment 6411790341）；憑證來源放在介面後面，換成 Security.framework 時程式碼只動正式版那一個型別（spec 也要一起改，見下段）。
 
 ### 憑證來源是注入 TDLibClient 的介面
 
@@ -175,7 +175,7 @@ internal func decideAuthRunAction(state:phone:code:password:envApiId:envApiHash:
 - [`TDLibClient` 的接線沒有單元測試] → verify 第 1 輪之後，背景那一段抽成 `runCredentialPlan(plan, generation:, tracker:, lookup:, submit:)` 並有 `CredentialPlanRunnerTests`；`TDLibClient` 只傳入 Keychain 來源與送出函式。E2E 測試的 setUp 要求已經登入的帳號，所以**沒有任何測試、也沒有人手動跑過從 Keychain 讀到值、送給 TDLib 的完整登入流程**；第一次發版前要用測試帳號手動登入一次（見 #40 的發版檢查）。
 - [`auth_run` 在查詢期間狀態改變] → 查詢不持鎖，回來後重讀狀態，只有狀態仍在等同一個憑證才用這個值（`authRunKeychainValues`）。查詢回來到 TDLib 收到之間仍有一個很短的窗口，與環境變數路徑相同。
 - [`auth_run` 剛把驗證碼送出、背景正從 Keychain 讀 2FA 密碼] → `auth_run` 等最多 15 秒讓它送完再回答，免得回一個「請提供 password」的提示。
-- [Security.framework 的假設被推翻] → 只換 `SecurityCLICredentialSource` 一個型別。
+- [Security.framework 的假設被推翻] → 程式碼只換 `SecurityCLICredentialSource` 一個型別；spec 的 Keychain Requirement 寫明了 `/usr/bin/security` 與 `-g`，要一起改。
 
 ## Migration Plan
 

@@ -22,7 +22,7 @@ plugin README 的 Track A 叫使用者把電話號碼（`TELEGRAM_PHONE`）與 2
 - spec `telegram-auth-coordination` 以 delta 修改 auto-fire 的來源表、更正「wrapper-injected variable」一句，並新增「Keychain 查詢有時限、不留副本」的 Requirement。
 - 文件：plugin README Track A、`che-telegram-all-mcp/README.md`、`--help` 的電話與 2FA 兩行、兩份 CHANGELOG 的 `[Unreleased]`。
 
-**待確認的假設**（不是維護者的決定，見 #49 comment 6411790341）：讀取用 `security` 子程序而不是 Security.framework。2026-10-26 在暫存 Keychain 實測：讀取 exit 0、項目不存在 exit 44、不跳授權視窗；從 ad-hoc 簽章 binary 用 Security.framework 讀的實測沒有跑（預期會跳視窗）。憑證來源放在介面後面，改用 Security.framework 只需要換正式版那一個型別。
+**待確認的假設**（不是維護者的決定，見 #49 comment 6411790341）：讀取用 `security` 子程序而不是 Security.framework。2026-10-26 在暫存 Keychain 實測：讀取 exit 0、項目不存在 exit 44、不跳授權視窗；從 ad-hoc 簽章 binary 用 Security.framework 讀的實測沒有跑（預期會跳視窗）。憑證來源放在介面後面，改用 Security.framework 時，程式碼只需要換正式版那一個型別，但 spec 的 Keychain Requirement 也要一起改（它寫明了 `/usr/bin/security` 與 `-g`）。
 
 ## Non-Goals (optional)
 
