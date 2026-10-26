@@ -119,6 +119,30 @@ final class KeychainCredentialsTests: XCTestCase {
         }
     }
 
+    func testAPasswordLineInNeitherFormIsUnavailable() async throws {
+        for line in ["password: secret", #"password: "unterminated"#, "password:secret"] {
+            let (result, _) = try await lookup(dashG(line), .password)
+            XCTAssertEqual(result, .unavailable(exitStatus: 0), line)
+        }
+    }
+
+    func testACutShortPasswordLineIsUnavailable() async throws {
+        let (result, _) = try await lookup("printf 'password: 0x636166' >&2", .password)
+        XCTAssertEqual(result, .unavailable(exitStatus: 0), "a line without its newline may have been cut short")
+    }
+
+    /// The real tool prints no quoted tail when the value has no printable ASCII character.
+    func testHexWithoutTheQuotedTailIsDecoded() async throws {
+        let (result, _) = try await lookup(dashG("password: 0xE5AF86E7A2BC "), .password)
+        XCTAssertEqual(result, .found("密碼"))
+    }
+
+    func testALeadingByteOrderMarkIsKept() async throws {
+        let (result, _) = try await lookup(dashG("password: 0xEFBBBF626F6D "), .password)
+        XCTAssertEqual(result.value?.unicodeScalars.first, "\u{FEFF}")
+        XCTAssertEqual(result.value?.unicodeScalars.count, 4)
+    }
+
     func testLowercaseHexIsDecoded() async throws {
         let (result, _) = try await lookup(dashG(#"password: 0x636166c3a9  "caf\303\251""#), .password)
         XCTAssertEqual(result, .found("café"))

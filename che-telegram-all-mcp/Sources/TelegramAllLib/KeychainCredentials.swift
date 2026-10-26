@@ -163,10 +163,14 @@ public struct SecurityCLICredentialSource: KeychainCredentialSource {
     /// between the quotes, or the hex after `0x` decoded as UTF-8.
     static func parsePasswordLine(_ stderr: Data) -> PasswordLine {
         let text = String(decoding: stderr, as: UTF8.self)
-        guard let line = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .first(where: { $0.hasPrefix("password:") }) else {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let index = lines.firstIndex(where: { $0.hasPrefix("password:") }) else {
             return .unreadable("printed no password line")
         }
+        // `security` ends the line with a newline; without one the output may
+        // have been cut short (stderr held open past the grace, or a cancel).
+        guard index < lines.count - 1 else { return .unreadable("printed a password line without its end") }
+        let line = lines[index]
         let rest = line.dropFirst("password:".count).drop(while: { $0 == " " })
         if rest.isEmpty { return .value("") }
         if rest.hasPrefix("0x") {
@@ -188,10 +192,12 @@ public struct SecurityCLICredentialSource: KeychainCredentialSource {
                 bytes.append(byte)
                 index = next
             }
-            guard let value = String(bytes: bytes, encoding: .utf8) else {
+            // Validate first, then decode with String(decoding:), which keeps a
+            // leading U+FEFF that String(bytes:encoding:) would drop.
+            guard String(bytes: bytes, encoding: .utf8) != nil else {
                 return .unreadable("holds a value that is not UTF-8")
             }
-            return .value(value)
+            return .value(String(decoding: bytes, as: UTF8.self))
         }
         if rest.count >= 2, rest.hasPrefix("\""), rest.hasSuffix("\"") {
             return .value(String(rest.dropFirst().dropLast()))
