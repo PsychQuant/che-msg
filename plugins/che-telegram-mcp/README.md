@@ -33,17 +33,22 @@ You want to read/send messages as **yourself**.
 security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_ID" -U -w
 security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_HASH" -U -w
 
-# Optional: 2FA password (read by the server when Telegram asks for it, so you never type it into the conversation)
+# Optional (0.9.0+): 2FA password (read by the server when Telegram asks for it, so you never type it into the conversation)
 security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_2FA_PASSWORD" -U -w
 
-# Optional: phone number (read the same way, to skip the prompt)
+# Optional (0.9.0+): phone number (read the same way, to skip the prompt)
 security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_PHONE" -U -w
 
-# 3. Authenticate (one-time; SMS code is the only thing you must enter live)
+# 3. Authenticate (one-time; with 0.9.0+ and both optional items stored, the login code is the only value you type)
 /che-telegram-mcp:auth
 ```
 
-From che-telegram-all-mcp 0.9.0, the server reads the phone number and the 2FA password from these Keychain items itself, only while Telegram is waiting for them, and keeps no copy. The wrapper never passes them on. An environment variable of the same name takes precedence; `auth_run`'s own arguments take precedence over both. If the stored 2FA password is wrong, every `auth_run` sends it again, so update the Keychain item instead of retrying. Before 0.9.0 these two items were not read at all, and the phone number and the password had to be typed into the conversation.
+From che-telegram-all-mcp 0.9.0, the server reads the phone number and the 2FA password from these Keychain items itself, only while Telegram is waiting for them, and keeps no copy. The wrapper never passes them on. An environment variable of the same name takes precedence; `auth_run`'s own arguments take precedence over both. If the stored 2FA password is wrong, every `auth_run` sends it again, so update the Keychain item instead of retrying. Before 0.9.0 these two items were not read at all, and the phone number and the password had to be typed into the conversation; items you stored back then are used from 0.9.0 on, so check that they are still current.
+
+Two things to expect once the phone number is stored:
+
+- While the account is logged out, the first tool call (or any `telegram-all` CLI command) that opens TDLib sends the stored phone number, and Telegram sends you a login code. That is the same as having `TELEGRAM_PHONE` in the environment.
+- If the Keychain is locked, macOS may ask you to unlock it. The server waits up to 10 seconds for the value, so that first call can be slow; after that it carries on without the value.
 
 Don't want the bot server spawning at startup? Add this to `.claude/settings.json` in your project (or `~/.claude/settings.json` for user-wide):
 

@@ -36,9 +36,9 @@ Auth state persists in `~/Library/Application Support/che-telegram-all-mcp/tdlib
 - Otherwise, prefer `auth_run` (v0.5.0+) which drives the state machine in one tool:
   ```
   auth_run                         → fires auto-set params (if env present)
-  auth_run                         → fires auto-send phone (if env present)
+  auth_run                         → fires auto-send phone (env, or the Keychain from 0.9.0)
   auth_run(code: "12345")          → caller MUST supply SMS code (never auto-fired)
-  auth_run                         → fires auto-send 2FA password (if env present)
+  auth_run                         → fires auto-send 2FA password (env, or the Keychain from 0.9.0)
   auth_run                         → state == "ready"
   ```
 - Legacy per-step tools (`auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password`) are still available as escape hatches.

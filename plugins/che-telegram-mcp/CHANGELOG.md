@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- The Keychain commands no longer put the secret on the command line ([#51](https://github.com/PsychQuant/che-msg/issues/51)): the README, the SessionStart hook's fix-it hint and both wrappers' error hints end with a bare `-w`, so `security` prompts for the value instead of keeping it in the shell history and the process list. The README says to run them in your own terminal. A layout check fails on any `add-generic-password` command with a value after `-w`.
-- The Keychain items `TELEGRAM_PHONE` and `TELEGRAM_2FA_PASSWORD` that Track A sets up are read, by che-telegram-all-mcp 0.9.0 and later, while Telegram waits for them ([#49](https://github.com/PsychQuant/che-msg/issues/49)); the README describes this. The wrapper still passes only the API ID and hash, and a test now checks that it never exports or reads the other two.
+- The Keychain commands no longer put the secret on the command line ([#51](https://github.com/PsychQuant/che-msg/issues/51)): the README, the SessionStart hook's fix-it hint and both wrappers' error hints end with a bare `-w`, so `security` prompts for the value instead of keeping it in the shell history and the process list. The README and the hints say to run them in your own terminal. A layout check fails on any `add-generic-password` or `add-internet-password` command anywhere in the plugin that passes the value after `-w`, with `-p` or `-X`, or through a pipe.
+- The Keychain items `TELEGRAM_PHONE` and `TELEGRAM_2FA_PASSWORD` that Track A sets up are read, by che-telegram-all-mcp 0.9.0 and later, while Telegram waits for them ([#49](https://github.com/PsychQuant/che-msg/issues/49)); the README describes this. The wrapper still passes only the API ID and hash, and a test now checks that it never exports or reads the other two. The SessionStart hook checks that each item exists without reading its value (it used to read the 2FA password at every start).
 
 ## [1.7.0] - 2026-10-14
 
