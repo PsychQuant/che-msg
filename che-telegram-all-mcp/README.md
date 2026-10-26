@@ -41,6 +41,15 @@ Binary location: `.build/release/CheTelegramAllMCP`
 
 ## Installation
 
+> **Prefer the plugin.** The [`che-telegram-mcp` plugin](../plugins/che-telegram-mcp/README.md)'s wrapper reads `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from the Keychain at launch, and from 0.9.0 the server reads `TELEGRAM_PHONE` and `TELEGRAM_2FA_PASSWORD` from the Keychain itself, only while Telegram waits for them. The options below run the server on its own. Keep the phone number and the 2FA password in the Keychain (the plugin README has the commands) rather than in the environment: a process's environment can be read by other processes of the same user (`ps -E`), and a value in `~/.claude.json` or the Claude Desktop config sits there in plain text. The API credentials can be read from the Keychain at launch too ([#97](https://github.com/PsychQuant/che-msg/issues/97)):
+>
+> ```bash
+> claude mcp add che-telegram-all-mcp -s user -- /bin/sh -c \
+>   'TELEGRAM_API_ID="$(security find-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_ID -w)" TELEGRAM_API_HASH="$(security find-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_HASH -w)" exec /path/to/che-telegram-all-mcp/.build/release/CheTelegramAllMCP'
+> ```
+>
+> `find-generic-password … -w` prints the stored value for the launcher to read; it never takes a value. The values are still in the server's environment while it runs.
+
 ### Option A: Claude Code CLI
 
 ```bash
@@ -112,7 +121,7 @@ Authentication is a **one-time process**. After the first login, TDLib stores th
 
 ### Recommended: `auth_run` (single tool, repeat until ready)
 
-Set env vars for the steps you want auto-fired (`TELEGRAM_API_ID` / `TELEGRAM_API_HASH` / `TELEGRAM_PHONE` / `TELEGRAM_2FA_PASSWORD`; the phone number and the 2FA password can instead be Keychain items), then call `auth_run` repeatedly. Each value comes from the call's argument, then the environment, then the Keychain:
+Store the phone number and the 2FA password as Keychain items (`TELEGRAM_PHONE`, `TELEGRAM_2FA_PASSWORD`, account `che-telegram-all-mcp`; 0.9.0 and later) and give the API credentials as above, then call `auth_run` repeatedly. Each value comes from the call's argument, then the environment, then the Keychain; environment values work too, but other processes of the same user can read them:
 
 ```
 auth_run                 →  fires auto-set params (if env present)
