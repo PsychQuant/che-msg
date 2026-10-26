@@ -115,6 +115,9 @@ internal final class CredentialLookupTracker: @unchecked Sendable {
     private let lock = NSLock()
     private var generation: UInt64 = 0
     private var status: CredentialLookupStatus = .notNeeded
+    /// Why the current state's last lookup produced no value (#95); kept apart
+    /// from `status`, which `authorizationIsSettled` reads.
+    private var miss: KeychainMiss?
 
     /// Records a state change; `lookingUp` when a lookup starts for the new
     /// state. Returns the generation that lookup must finish with.
@@ -122,19 +125,39 @@ internal final class CredentialLookupTracker: @unchecked Sendable {
         lock.withLock {
             generation &+= 1
             status = lookingUp ? .pending : .notNeeded
+            miss = nil
             return generation
         }
     }
 
-    /// Records a lookup's outcome. Returns false, changing nothing, when the
-    /// state has changed since the lookup started.
-    func finish(_ lookupGeneration: UInt64, found: Bool) -> Bool {
+    /// Records a lookup's outcome: `miss` is nil when it found a value.
+    /// Returns false, changing nothing, when the state has changed since the
+    /// lookup started.
+    func finish(_ lookupGeneration: UInt64, miss: KeychainMiss?) -> Bool {
         lock.withLock {
             guard lookupGeneration == generation else { return false }
-            status = found ? .found : .absent
+            status = miss == nil ? .found : .absent
+            self.miss = miss
             return true
         }
     }
+
+    /// The current state's generation, for a lookup made outside the
+    /// auto-fire (`auth_run`'s) to `note` its outcome against.
+    var generationNow: UInt64 { lock.withLock { generation } }
+
+    /// Records the outcome of a lookup made outside the auto-fire, for the
+    /// state it started in. The settle status is unchanged: that lookup's
+    /// caller sends what it finds itself.
+    func note(_ lookupGeneration: UInt64, miss: KeychainMiss?) {
+        lock.withLock {
+            if lookupGeneration == generation { self.miss = miss }
+        }
+    }
+
+    /// Why the current state's last lookup produced no value; nil when none
+    /// did or none ran.
+    var lastMiss: KeychainMiss? { lock.withLock { miss } }
 
     /// Whether no state change has happened since `lookupGeneration` began.
     func isCurrent(_ lookupGeneration: UInt64) -> Bool {
@@ -176,8 +199,8 @@ internal func runCredentialPlan(_ plan: CredentialPlan, generation: UInt64, trac
     case .fire(let value):
         do { try await submit(value) } catch { recordFailure(error) }
     case .lookUp(let credential):
-        let value = await lookup(credential).value
-        guard tracker.finish(generation, found: value != nil), let value else { return }
+        let result = await lookup(credential)
+        guard tracker.finish(generation, miss: KeychainMiss(result)), let value = result.value else { return }
         do {
             try await submit(value)
         } catch {

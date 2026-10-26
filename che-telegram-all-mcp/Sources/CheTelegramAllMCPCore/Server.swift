@@ -493,7 +493,8 @@ public final class CheTelegramAllMCPServer {
                 return authStatusResult(
                     state: tdlib.getAuthState(),
                     lastError: tdlib.getLastAutoFireError(),
-                    sync: syncState.snapshot
+                    sync: syncState.snapshot,
+                    keychainMiss: tdlib.lastKeychainMiss
                 )
 
             case "auth_run":
@@ -541,7 +542,8 @@ public final class CheTelegramAllMCPServer {
                 return authStatusResult(
                     state: tdlib.getAuthState(),
                     lastError: tdlib.getLastAutoFireError(),
-                    sync: syncState.snapshot
+                    sync: syncState.snapshot,
+                    keychainMiss: tdlib.lastKeychainMiss
                 )
 
             case "logout":

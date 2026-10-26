@@ -160,7 +160,7 @@ final class AuthStatusNextStepTests: XCTestCase {
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? NSDictionary)
         let expected: NSDictionary = ["state": "ready", "next_step": NSNull(), "last_error": NSNull(),
                                       "connection_state": "connectionStateReady", "unsynced_seconds": 0,
-                                      "sync_stalled": false]
+                                      "sync_stalled": false, "keychain_lookup": NSNull()]
         XCTAssertEqual(payload, expected)
     }
 
@@ -247,5 +247,56 @@ final class AuthStatusNextStepTests: XCTestCase {
         XCTAssertTrue(json.contains("PHONE_NUMBER_INVALID"), json)
         XCTAssertFalse(json.contains("886900000417"), json)
     }
-}
 
+    // MARK: - Keychain lookup outcome (#95)
+
+    func testNoLookupOutcomeIsNull() throws {
+        let payload = try parsePayload(authStatusResult(state: .waitingForPassword, lastError: nil))
+        XCTAssertTrue(payload["keychain_lookup"] is NSNull)
+    }
+
+    func testEachPasswordLookupOutcomeIsReported() throws {
+        for (miss, name) in [(KeychainMiss.notStored, "not_stored"), (.timedOut, "timed_out"), (.unavailable, "unavailable")] {
+            let payload = try parsePayload(authStatusResult(state: .waitingForPassword, lastError: nil, keychainMiss: miss))
+            XCTAssertEqual(payload["keychain_lookup"] as? [String: String], ["credential": "password", "outcome": name])
+        }
+    }
+
+    func testAPhoneLookupOutcomeNamesThePhone() throws {
+        let payload = try parsePayload(authStatusResult(state: .waitingForPhoneNumber, lastError: nil, keychainMiss: .notStored))
+        XCTAssertEqual(payload["keychain_lookup"] as? [String: String], ["credential": "phone", "outcome": "not_stored"])
+        let hint = try XCTUnwrap((payload["next_step"] as? [String: Any])?["hint"] as? String)
+        XCTAssertTrue(hint.hasPrefix("No phone number is stored in the Keychain."), hint)
+    }
+
+    func testAnOutcomeIsNotReportedOutsideTheCredentialStates() throws {
+        for state in [TDLibClient.AuthState.waitingForCode, .waitingForParameters, .ready, .closed] {
+            let payload = try parsePayload(authStatusResult(state: state, lastError: nil, keychainMiss: .timedOut))
+            XCTAssertTrue(payload["keychain_lookup"] is NSNull, "\(state)")
+        }
+    }
+
+    func testThePasswordHintPutsTheKeychainBeforeTheArgument() throws {
+        let payload = try parsePayload(authStatusResult(state: .waitingForPassword, lastError: nil))
+        let nextStep = try XCTUnwrap(payload["next_step"] as? [String: Any])
+        XCTAssertEqual(nextStep["required_args"] as? [String], ["password"])
+        let hint = try XCTUnwrap(nextStep["hint"] as? String)
+        let keychain = try XCTUnwrap(hint.range(of: "TELEGRAM_2FA_PASSWORD"), hint)
+        let argument = try XCTUnwrap(hint.range(of: "Pass password"), hint)
+        XCTAssertLessThan(keychain.lowerBound, argument.lowerBound, hint)
+        XCTAssertTrue(hint.contains("conversation"), hint)
+    }
+
+    func testAnOutcomeStartsThePasswordHint() throws {
+        let starts: [(KeychainMiss, String)] = [
+            (.notStored, "No 2FA password is stored in the Keychain."),
+            (.timedOut, "The Keychain did not answer within 10 seconds"),
+            (.unavailable, "Reading the Keychain failed"),
+        ]
+        for (miss, start) in starts {
+            let payload = try parsePayload(authStatusResult(state: .waitingForPassword, lastError: nil, keychainMiss: miss))
+            let hint = try XCTUnwrap((payload["next_step"] as? [String: Any])?["hint"] as? String)
+            XCTAssertTrue(hint.hasPrefix(start), hint)
+        }
+    }
+}

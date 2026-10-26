@@ -382,9 +382,19 @@ public final class TDLibClient {
 
     /// Reads the phone number or the 2FA password from the Keychain source, for
     /// `auth_run` when neither the caller nor the environment supplies it.
-    /// Returns nil when there is no value.
+    /// Returns nil when there is no value, and records why for the state the
+    /// lookup started in (#95).
     public func lookUpKeychainCredential(_ credential: KeychainCredential) async -> String? {
-        await credentials.lookup(credential).value
+        let generation = credentialLookups.generationNow
+        let result = await credentials.lookup(credential)
+        credentialLookups.note(generation, miss: KeychainMiss(result))
+        return result.value
+    }
+
+    /// Why the current state's last Keychain lookup produced no value, for
+    /// `auth_status` (#95); nil when none did or none ran.
+    public var lastKeychainMiss: KeychainMiss? {
+        lock.withLock { credentialLookups.lastMiss }
     }
 
     /// Persist auto-fire failure for surfacing via `auth_status`.

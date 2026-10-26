@@ -122,7 +122,7 @@ auth_run                 →  fires auto-send 2FA password (if env or Keychain h
 auth_run                 →  state == "ready"
 ```
 
-Each call returns `{state, next_step, last_error, connection_state, unsynced_seconds, sync_stalled}` (the last three: see [When telegram-all stops syncing](#when-telegram-all-stops-syncing)). `next_step.required_args` tells you exactly which arg the next call needs. `last_error` surfaces auto-fire failures (e.g., `FLOOD_WAIT_30`).
+Each call returns `{state, next_step, last_error, keychain_lookup, connection_state, unsynced_seconds, sync_stalled}` (the last three: see [When telegram-all stops syncing](#when-telegram-all-stops-syncing)). `next_step.required_args` tells you exactly which arg the next call needs. `last_error` surfaces auto-fire failures (e.g., `FLOOD_WAIT_30`). `keychain_lookup` is null unless TDLib waits for the phone number or the 2FA password and the last Keychain lookup for that step found nothing; it then says which item and why: `{"credential": "password", "outcome": "not_stored" | "timed_out" | "unavailable"}` (`timed_out` usually means a locked Keychain). It never contains the value. While TDLib waits for the 2FA password, `next_step.hint` asks for the Keychain item first and mentions the `password` argument last, because an argument passes through the conversation.
 
 ### Legacy: per-step manual flow
 

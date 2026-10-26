@@ -14,6 +14,9 @@ import TelegramAllLib
 ///   - `connection_state`, `unsynced_seconds`, `sync_stalled`: whether TDLib is
 ///     synced with Telegram (#63). A session Telegram has invalidated stays
 ///     `ready` and never syncs; once stalled, `next_step` points to `logout`.
+///   - `keychain_lookup`: while TDLib waits for the phone number or the 2FA
+///     password, why the last Keychain lookup for that state produced no
+///     value (#95), `{credential, outcome}`; otherwise null. Never the value.
 ///
 /// All three fields are deterministic given (state, lastError) — no env var
 /// inspection. The caller is told what arguments to provide; auto-fire (if env
@@ -21,12 +24,17 @@ import TelegramAllLib
 internal func authStatusResult(
     state: TDLibClient.AuthState,
     lastError: TDLibClient.TDError?,
-    sync: TDLibSyncState.Snapshot = .init(connectionState: nil, isSynced: false, unsyncedSeconds: 0)
+    sync: TDLibSyncState.Snapshot = .init(connectionState: nil, isSynced: false, unsyncedSeconds: 0),
+    keychainMiss: KeychainMiss? = nil
 ) -> CallTool.Result {
     // Only time spent updating makes a session stalled; offline never does.
     let stalled = state == .ready && sync.isStalled()
-    let nextStep = stalled ? stalledNextStep(updatingSeconds: sync.updatingSeconds) : authStatusNextStep(state: state)
+    let lookup = keychainLookupPayload(state: state, miss: keychainMiss)
+    let nextStep = stalled
+        ? stalledNextStep(updatingSeconds: sync.updatingSeconds)
+        : authStatusNextStep(state: state, miss: lookup == nil ? nil : keychainMiss)
     let payload: [String: Any] = [
+        "keychain_lookup": lookup ?? NSNull(),
         "state": state.rawValue,
         "next_step": nextStep ?? NSNull(),
         "last_error": authStatusLastError(lastError) ?? NSNull(),
@@ -35,7 +43,7 @@ internal func authStatusResult(
         "sync_stalled": stalled,
     ]
     let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
-        ?? Data(#"{"state":"unknown","next_step":null,"last_error":null,"connection_state":null,"unsynced_seconds":0,"sync_stalled":false}"#.utf8)
+        ?? Data(#"{"state":"unknown","next_step":null,"last_error":null,"connection_state":null,"unsynced_seconds":0,"sync_stalled":false,"keychain_lookup":null}"#.utf8)
     let json = String(data: data, encoding: .utf8) ?? ""
     return CallTool.Result(
         content: [.text(text: json, annotations: nil, _meta: nil)],
@@ -57,7 +65,27 @@ private func stalledNextStep(updatingSeconds: Int) -> [String: Any] {
     ]
 }
 
-private func authStatusNextStep(state: TDLibClient.AuthState) -> [String: Any]? {
+/// `keychain_lookup`: which credential TDLib waits for and why its last
+/// Keychain lookup produced no value; nil outside those two states (#95).
+private func keychainLookupPayload(state: TDLibClient.AuthState, miss: KeychainMiss?) -> [String: String]? {
+    guard let miss else { return nil }
+    switch state {
+    case .waitingForPhoneNumber: return ["credential": "phone", "outcome": miss.rawValue]
+    case .waitingForPassword: return ["credential": "password", "outcome": miss.rawValue]
+    case .waitingForParameters, .waitingForCode, .ready, .closed: return nil
+    }
+}
+
+/// The opening sentence of a hint after a Keychain lookup produced no value.
+private func keychainMissSentence(_ miss: KeychainMiss, credential: String) -> String {
+    switch miss {
+    case .notStored: return "No \(credential) is stored in the Keychain. "
+    case .timedOut: return "The Keychain did not answer within 10 seconds; it is probably locked. "
+    case .unavailable: return "Reading the Keychain failed (the server log has the details). "
+    }
+}
+
+private func authStatusNextStep(state: TDLibClient.AuthState, miss: KeychainMiss? = nil) -> [String: Any]? {
     switch state {
     case .ready, .closed:
         return nil
@@ -71,7 +99,8 @@ private func authStatusNextStep(state: TDLibClient.AuthState) -> [String: Any]? 
         return [
             "tool": "auth_run",
             "required_args": ["phone"],
-            "hint": "Provide your Telegram phone number in international format (e.g., +886912345678).",
+            "hint": (miss.map { keychainMissSentence($0, credential: "phone number") } ?? "")
+                + "Provide your Telegram phone number in international format (e.g., +886912345678).",
         ]
     case .waitingForCode:
         return [
@@ -83,7 +112,14 @@ private func authStatusNextStep(state: TDLibClient.AuthState) -> [String: Any]? 
         return [
             "tool": "auth_run",
             "required_args": ["password"],
-            "hint": "Enter your two-factor authentication password.",
+            // The Keychain comes first: an argument passes through the
+            // conversation, which is what #49 keeps the password out of (#95).
+            "hint": (miss.map { keychainMissSentence($0, credential: "2FA password") } ?? "")
+                + "The 2FA password is read from the Keychain item TELEGRAM_2FA_PASSWORD (account che-telegram-all-mcp) "
+                + "when it is stored there. Ask the user to store it in their own terminal "
+                + "(security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_2FA_PASSWORD -U -w, which prompts for it) "
+                + "or to unlock the Keychain, then call auth_run with no arguments. "
+                + "Pass password only if the user chooses to type it here: it then passes through this conversation.",
         ]
     }
 }

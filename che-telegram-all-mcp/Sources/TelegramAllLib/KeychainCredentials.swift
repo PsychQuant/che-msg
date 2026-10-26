@@ -31,6 +31,26 @@ public enum KeychainLookup: Equatable, Sendable, CustomStringConvertible {
     }
 }
 
+/// Why a Keychain lookup produced no value (PsychQuant/che-msg#95). A reason
+/// class only, never the value or what `security` printed: `auth_status` and
+/// `auth_run` report it so the caller can tell "not stored" from "the Keychain
+/// did not answer" instead of asking the user to type the value.
+public enum KeychainMiss: String, Equatable, Sendable {
+    case notStored = "not_stored"
+    case timedOut = "timed_out"
+    case unavailable
+
+    /// The reason for a lookup's result; nil when it found a value.
+    public init?(_ lookup: KeychainLookup) {
+        switch lookup {
+        case .found: return nil
+        case .absent: self = .notStored
+        case .timedOut: self = .timedOut
+        case .unavailable: self = .unavailable
+        }
+    }
+}
+
 /// Where Keychain credentials come from. Injected into `TDLibClient` so the
 /// auto-fire and `auth_run` paths can be tested without a Keychain.
 public protocol KeychainCredentialSource: Sendable {

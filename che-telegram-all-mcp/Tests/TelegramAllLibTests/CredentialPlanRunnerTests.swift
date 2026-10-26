@@ -113,4 +113,21 @@ final class CredentialPlanRunnerTests: XCTestCase {
         XCTAssertEqual(tracker.current, .notNeeded)
         XCTAssertNil(error)
     }
+
+    // MARK: - The reason a lookup found nothing (#95)
+
+    func testEachLookupResultRecordsItsReason() async {
+        let cases: [(KeychainLookup, KeychainMiss?)] = [
+            (.absent, .notStored), (.timedOut, .timedOut), (.unavailable(exitStatus: 36), .unavailable), (.found("v"), nil),
+        ]
+        for (result, expected) in cases {
+            let (_, tracker, _) = await run(.lookUp(.password), lookupResult: result)
+            XCTAssertEqual(tracker.lastMiss, expected, "\(result)")
+        }
+    }
+
+    func testAnEnvironmentValueRecordsNoReason() async {
+        let (_, tracker, _) = await run(.fire("+886912345678"))
+        XCTAssertNil(tracker.lastMiss)
+    }
 }
