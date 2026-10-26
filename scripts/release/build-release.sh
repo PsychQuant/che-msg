@@ -80,20 +80,26 @@ echo ""
 echo "[2/4] Checking the commit and the signing setup..."
 COMMIT=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null) || { echo "Error: $ROOT has no commit to build from." >&2; exit 1; }
 SOURCE_PATHS=()
-for entry in "${PACKAGES[@]}"; do SOURCE_PATHS+=("${entry%%:*}/Sources" "${entry%%:*}/Package.swift"); done
-# uncommitted_changes: one line per change to a tracked file, then per
-# untracked file in a package's Sources or Package.swift; nothing when the
-# tree is what the commit holds. The full mode checks this at the start and
-# again before the release files appear.
+for entry in "${PACKAGES[@]}"; do SOURCE_PATHS+=("${entry%%:*}/Sources" ":(glob)${entry%%:*}/Package*.swift"); done
+# uncommitted_changes: one line per change to a tracked file, then per file
+# git does not track in a package's Sources or among its Package*.swift
+# manifests, ignored ones included: SwiftPM compiles those whatever git
+# ignores, and reads a Package@swift-6.swift instead of Package.swift.
+# .DS_Store is left out; SwiftPM does not compile it. Nothing when the tree is
+# what the commit holds. The full mode checks this at the start and again
+# before the release files appear.
 uncommitted_changes() {
+    local ignored
     git -C "$ROOT" status --porcelain --untracked-files=no || return
-    git -C "$ROOT" ls-files --others --exclude-standard -- "${SOURCE_PATHS[@]}"
+    git -C "$ROOT" ls-files --others --exclude-standard -- "${SOURCE_PATHS[@]}" || return
+    ignored=$(git -C "$ROOT" ls-files --others --ignored --exclude-standard -- "${SOURCE_PATHS[@]}") || return
+    awk '!/(^|\/)\.DS_Store$/' <<<"$ignored"
 }
 CHANGES=$(uncommitted_changes)
 if [[ -n "$CHANGES" ]]; then
     if [[ "$MODE" == full ]]; then
         echo "Error: the working tree has uncommitted changes. A release is built from commit ${COMMIT:0:12}," >&2
-        echo "       and its tag will point at that commit, so commit or stash these first:" >&2
+        echo "       and its tag will point at that commit, so commit, stash or remove these first:" >&2
         sed 's/^/         /' <<<"$CHANGES" >&2
         exit 1
     fi

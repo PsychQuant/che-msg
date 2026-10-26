@@ -355,6 +355,32 @@ R=$(make_repo untracked); echo "// local" > "$R/che-telegram-all-mcp/Sources/Ext
 build "$R" "${SIGN_ENV[@]}" --
 expect_no_build "$R"
 
+test_case "an untracked or ignored Package@swift-*.swift (#94)"
+R=$(make_repo untracked-manifest)
+echo "// swift-tools-version: 6.0" > "$R/che-telegram-bot-mcp/Package@swift-6.swift"
+build "$R" "${SIGN_ENV[@]}" --
+expect_no_build "$R"
+if printf '%s' "$OUT" | grep -qF 'che-telegram-bot-mcp/Package@swift-6.swift'; then pass "names the untracked manifest"; else fail "no message: $(printf '%s' "$OUT" | tail -3)"; fi
+rm "$R/che-telegram-bot-mcp/Package@swift-6.swift"
+printf 'Package@swift-*.swift\n' > "$R/che-telegram-bot-mcp/.gitignore"
+git -C "$R" add che-telegram-bot-mcp/.gitignore && commit_in "$R" -m "ignore version-specific manifests"
+echo "// swift-tools-version: 6.4" > "$R/che-telegram-bot-mcp/Package@swift-6.4.swift"
+build "$R" "${SIGN_ENV[@]}" --
+expect_no_build "$R"
+if printf '%s' "$OUT" | grep -qF 'che-telegram-bot-mcp/Package@swift-6.4.swift'; then pass "names the ignored manifest"; else fail "no message: $(printf '%s' "$OUT" | tail -3)"; fi
+
+test_case "an ignored file in a package's Sources (#94)"
+R=$(make_repo ignored-source)
+printf 'Generated.swift\n.DS_Store\n' > "$R/che-telegram-all-mcp/Sources/.gitignore"
+git -C "$R" add che-telegram-all-mcp/Sources/.gitignore && commit_in "$R" -m "ignore generated files"
+echo "// generated" > "$R/che-telegram-all-mcp/Sources/Generated.swift"
+build "$R" "${SIGN_ENV[@]}" --
+expect_no_build "$R"
+if printf '%s' "$OUT" | grep -qF 'che-telegram-all-mcp/Sources/Generated.swift'; then pass "names the ignored file"; else fail "no message: $(printf '%s' "$OUT" | tail -3)"; fi
+rm "$R/che-telegram-all-mcp/Sources/Generated.swift"; : > "$R/che-telegram-all-mcp/Sources/.DS_Store"
+build "$R" "${SIGN_ENV[@]}" --
+if [ "$RC" -eq 0 ]; then pass "an ignored .DS_Store does not stop the release"; else fail "refused for .DS_Store: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+
 test_case "a symlink in a package's mcpb directory"
 R=$(make_repo symlink); echo "outside" > "$SCRATCH/symlink/outside.txt"
 ln -s ../../../outside.txt "$R/che-telegram-all-mcp/mcpb/EXTRA.md"
