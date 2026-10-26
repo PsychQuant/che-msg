@@ -13,6 +13,8 @@ import TelegramAllLib
 final class ToolRoutingTests: XCTestCase {
     private final class FakeReader: LocalCacheReading {
         var calls: [String] = []
+        /// The `exportRoot` each `dump_chat_to_markdown` call received (#21).
+        var dumpExportRoots: [String?] = []
         var error: Error?
         var result = LocalTDLibReader.Result(
             json: #"[{"id":777}]"#, undecodableCount: 1,
@@ -30,8 +32,9 @@ final class ToolRoutingTests: XCTestCase {
                             sinceDate: Date?, untilDate: Date?) throws -> LocalTDLibReader.Result { try answer("get_chat_history") }
         func searchMessages(chatId: Int64, query: String, limit: Int) throws -> LocalTDLibReader.Result { try answer("search_messages") }
         func dumpChatToMarkdown(chatId: Int64, outputPath: String, maxMessages: Int, sinceDate: Date?,
-                                untilDate: Date?, selfLabel: String) async throws -> LocalTDLibReader.Result {
-            try answer("dump_chat_to_markdown")
+                                untilDate: Date?, selfLabel: String, exportRoot: String?) async throws -> LocalTDLibReader.Result {
+            dumpExportRoots.append(exportRoot)
+            return try answer("dump_chat_to_markdown")
         }
     }
 
@@ -59,9 +62,9 @@ final class ToolRoutingTests: XCTestCase {
         }
     }
 
-    private func makeServer() async throws -> CheTelegramAllMCPServer {
+    private func makeServer(reader: LocalCacheReading? = nil, exportRoot: String? = nil) async throws -> CheTelegramAllMCPServer {
         try await CheTelegramAllMCPServer(lock: TDLibProcessLock(cacheDirectory: cache, pid: getpid()),
-                                          idleTimeout: 600, reader: reader)
+                                          idleTimeout: 600, reader: reader ?? self.reader, exportRoot: exportRoot)
     }
 
     /// Arguments that pass each tool's argument checks.
@@ -311,6 +314,65 @@ final class ToolRoutingTests: XCTestCase {
     private actor OpenCounter {
         private(set) var value = 0
         func increment() { value += 1 }
+    }
+
+    // MARK: - dump_chat_to_markdown output_path (#21)
+
+    /// The root the server was given is the one the reader's dump receives.
+    func testDumpPassesTheServersExportRootToTheReader() async throws {
+        try holdTDLib(asPid: 4242)
+        let root = cache.path
+        for configured in [root, nil] as [String?] {
+            let server = try await makeServer(exportRoot: configured)
+            let result = await server.handleToolCall(name: "dump_chat_to_markdown", arguments: arguments(for: "dump_chat_to_markdown"))
+            XCTAssertEqual(result.isError, false, "\(texts(result))")
+        }
+        XCTAssertEqual(reader.dumpExportRoots, [root, nil])
+    }
+
+    /// Scenarios "Relative path refused", "Traversal component refused" and
+    /// "Non-Markdown target refused" while another process holds TDLib: the
+    /// reader is never called.
+    func testDumpOutputPathRulesApplyWhileTDLibIsHeld() async throws {
+        try holdTDLib(asPid: 4242)
+        let server = try await makeServer()
+        let cases = [
+            ("chat.md", "Error: output_path must be an absolute path; got \"chat.md\""),
+            ("/tmp/../x.md", "Error: output_path must not contain '..' components; got \"/tmp/../x.md\""),
+            ("/Users/me/.zshrc", "Error: output_path must end in .md; got \"/Users/me/.zshrc\""),
+        ]
+        for (path, expected) in cases {
+            let result = await server.handleToolCall(name: "dump_chat_to_markdown",
+                                                     arguments: ["chat_id": .int(777), "output_path": .string(path)])
+            XCTAssertEqual(result.isError, true, path)
+            XCTAssertEqual(texts(result), [expected])
+        }
+        XCTAssertTrue(reader.calls.isEmpty, "\(reader.calls)")
+    }
+
+    /// Scenario "Local-cache dump honours the export root", through the real
+    /// reader: the error names the path and the root, and comes before the
+    /// cache (here one that cannot be opened) is read.
+    func testLocalCacheDumpOutsideTheExportRootIsAnError() async throws {
+        try holdTDLib(asPid: 4242)
+        let root = cache.appendingPathComponent("exports")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let server = try await makeServer(reader: LocalTDLibReader(directory: "/nonexistent"), exportRoot: root.path)
+        let outside = cache.appendingPathComponent("chat.md").path
+        let result = await server.handleToolCall(name: "dump_chat_to_markdown",
+                                                 arguments: ["chat_id": .int(777), "output_path": .string(outside)])
+        XCTAssertEqual(result.isError, true)
+        // The temporary paths are long enough that errorResultFromParse's
+        // 256-character cap cuts the path at the end; the full text is pinned
+        // in MarkdownExporterContractTests.
+        let items = texts(result)
+        XCTAssertEqual(items.count, 1)
+        let expected = "Error: Output path is outside CHE_TELEGRAM_ALL_EXPORT_ROOT (\(root.path)) or could not be resolved: \(outside)"
+        let shown = items.first ?? ""
+        XCTAssertTrue(shown == expected || (shown.hasSuffix("...(truncated)")
+                                            && expected.hasPrefix(String(shown.dropLast("...(truncated)".count)))), shown)
+        XCTAssertTrue(shown.contains("(\(root.path))"), shown)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside))
     }
 
     // MARK: - Source note

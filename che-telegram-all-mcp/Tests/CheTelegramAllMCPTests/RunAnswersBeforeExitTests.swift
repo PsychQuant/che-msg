@@ -31,7 +31,7 @@ final class RunAnswersBeforeExitTests: XCTestCase {
                             sinceDate: Date?, untilDate: Date?) throws -> LocalTDLibReader.Result { throw unused() }
         func searchMessages(chatId: Int64, query: String, limit: Int) throws -> LocalTDLibReader.Result { throw unused() }
         func dumpChatToMarkdown(chatId: Int64, outputPath: String, maxMessages: Int, sinceDate: Date?,
-                                untilDate: Date?, selfLabel: String) async throws -> LocalTDLibReader.Result {
+                                untilDate: Date?, selfLabel: String, exportRoot: String?) async throws -> LocalTDLibReader.Result {
             if let delay {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             } else {

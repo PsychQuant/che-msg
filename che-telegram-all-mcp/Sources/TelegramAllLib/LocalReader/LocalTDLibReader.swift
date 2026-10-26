@@ -124,9 +124,11 @@ public struct LocalTDLibReader {
 
     /// Writes the chat to `outputPath` in the `telegram-history-export` format,
     /// using the same rendering as `MarkdownExporter`, and returns its summary.
+    /// `outputPath` is checked against `exportRoot` (#21) before the cache is opened.
     public func dumpChatToMarkdown(chatId: Int64, outputPath: String, maxMessages: Int = 5000, sinceDate: Date? = nil,
-                                   untilDate: Date? = nil, selfLabel: String = "我") async throws -> Result {
-        try validateOutputPath(outputPath)
+                                   untilDate: Date? = nil, selfLabel: String = "我",
+                                   exportRoot: String? = nil) async throws -> Result {
+        try validateOutputPath(outputPath, exportRoot: exportRoot)
         let cache = try TDLibCacheDatabase(directory: directory)
         let chat = try cache.chat(id: chatId)
         let messages = try history(in: cache, chatId: chatId, limit: 100, fromMessageId: 0,
@@ -209,8 +211,9 @@ public protocol LocalCacheReading {
     func getChatHistory(chatId: Int64, limit: Int, fromMessageId: Int64, maxMessages: Int?,
                         sinceDate: Date?, untilDate: Date?) throws -> LocalTDLibReader.Result
     func searchMessages(chatId: Int64, query: String, limit: Int) throws -> LocalTDLibReader.Result
+    /// `exportRoot`: `CHE_TELEGRAM_ALL_EXPORT_ROOT` as the server read it, or nil (#21).
     func dumpChatToMarkdown(chatId: Int64, outputPath: String, maxMessages: Int, sinceDate: Date?,
-                            untilDate: Date?, selfLabel: String) async throws -> LocalTDLibReader.Result
+                            untilDate: Date?, selfLabel: String, exportRoot: String?) async throws -> LocalTDLibReader.Result
 }
 
 extension LocalTDLibReader: LocalCacheReading {}

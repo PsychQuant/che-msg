@@ -181,6 +181,35 @@ final class LocalReaderToolTests: XCTestCase {
         XCTAssertEqual(result.undecodableCount, 1)
     }
 
+    /// Scenario "Local-cache dump honours the export root" (#21): a path
+    /// outside the root is refused before the cache is opened, and nothing is
+    /// written; a path inside it is written as before.
+    func testDumpRefusesAPathOutsideTheExportRoot() async throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("dump-root-\(UUID().uuidString)")
+        addTeardownBlock { try? fm.removeItem(at: base) }
+        let root = base.appendingPathComponent("exports"), outside = base.appendingPathComponent("outside")
+        for dir in [root, outside] { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
+        let refused = outside.appendingPathComponent("chat.md").path
+
+        // A reader whose cache cannot be opened: the root check must come first.
+        for reader in [try reader(), LocalTDLibReader(directory: "/nonexistent")] {
+            do {
+                _ = try await reader.dumpChatToMarkdown(chatId: 777, outputPath: refused, exportRoot: root.path)
+                XCTFail("a path outside the export root must be refused")
+            } catch MarkdownExporter.ExportError.outsideExportRoot(let path, let configured) {
+                XCTAssertEqual(path, refused)
+                XCTAssertEqual(configured, root.path)
+            }
+        }
+        XCTAssertFalse(fm.fileExists(atPath: refused))
+
+        let accepted = root.appendingPathComponent("chat.md")
+        let result = try await reader().dumpChatToMarkdown(chatId: 777, outputPath: accepted.path, exportRoot: root.path)
+        XCTAssertTrue(result.json.contains("\"message_count\":3"), result.json)
+        XCTAssertTrue(try String(contentsOf: accepted, encoding: .utf8).hasPrefix("# 對話：Bob Chen (chat_id=777)\n"))
+    }
+
     // MARK: - Key exposure
 
     /// Scenario "Key absent from outputs": every result, error message, the

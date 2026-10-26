@@ -45,6 +45,9 @@ public final class CheTelegramAllMCPServer {
     let logoutGate = LogoutGate()
 
     private let reader: LocalCacheReading
+    /// `CHE_TELEGRAM_ALL_EXPORT_ROOT`, read once at startup: both
+    /// `dump_chat_to_markdown` write paths keep `output_path` inside it (#21).
+    private let exportRoot: String?
     /// Whether TDLib is synced with Telegram (#63). Lives as long as the
     /// server, so unsynced time survives TDLib being closed and reopened.
     let syncState: TDLibSyncState
@@ -53,16 +56,18 @@ public final class CheTelegramAllMCPServer {
     static let syncWaitTimeout: TimeInterval = 10
 
     public convenience init() async throws {
-        try await self.init(lock: TDLibProcessLock(), idleTimeout: IdleTimeout.fromEnvironment())
+        try await self.init(lock: TDLibProcessLock(), idleTimeout: IdleTimeout.fromEnvironment(),
+                            exportRoot: ExportRoot.fromEnvironment())
     }
 
     init(lock: TDLibProcessLock, idleTimeout: TimeInterval?,
          reader: LocalCacheReading = LocalTDLibReader(directory: TDLibClient.databaseDirectory),
-         syncState: TDLibSyncState = TDLibSyncState(),
+         syncState: TDLibSyncState = TDLibSyncState(), exportRoot: String? = nil,
          openTDLib: (@Sendable () async throws -> TDLibClient)? = nil,
          transport: any Transport = StdioTransport(),
          answerTimeout: TimeInterval = defaultAnswerTimeout) async throws {
         self.reader = reader
+        self.exportRoot = exportRoot
         self.syncState = syncState
         // Diagnostic hook (#29): when CHE_TELEGRAM_LOG_STARTUP=1, print
         // per-phase wall-clock to stderr so we can attribute the ~10s cold
@@ -720,7 +725,7 @@ public final class CheTelegramAllMCPServer {
             // History Export
             case "dump_chat_to_markdown":
                 let parsed = try parseDumpChatToMarkdownArgs(args)
-                let exporter = MarkdownExporter(client: tdlib)
+                let exporter = MarkdownExporter(client: tdlib, exportRoot: exportRoot)
                 result = try await exporter.dumpChatToMarkdown(
                     chatId: parsed.chatId,
                     outputPath: parsed.outputPath,
@@ -793,7 +798,8 @@ public final class CheTelegramAllMCPServer {
                 let parsed = try parseDumpChatToMarkdownArgs(args)
                 answer = try await reader.dumpChatToMarkdown(chatId: parsed.chatId, outputPath: parsed.outputPath,
                                                              maxMessages: parsed.maxMessages, sinceDate: parsed.sinceDate,
-                                                             untilDate: parsed.untilDate, selfLabel: parsed.selfLabel)
+                                                             untilDate: parsed.untilDate, selfLabel: parsed.selfLabel,
+                                                             exportRoot: exportRoot)
             }
             return CallTool.Result(content: [
                 .text(text: answer.json, annotations: nil, _meta: nil),

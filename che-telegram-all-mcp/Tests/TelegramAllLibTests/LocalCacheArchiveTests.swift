@@ -25,7 +25,7 @@ final class LocalCacheArchiveTests: XCTestCase {
             throw LocalReaderError.keyNotFound
         }
         func dumpChatToMarkdown(chatId: Int64, outputPath: String, maxMessages: Int, sinceDate: Date?,
-                                untilDate: Date?, selfLabel: String) async throws -> LocalTDLibReader.Result {
+                                untilDate: Date?, selfLabel: String, exportRoot: String?) async throws -> LocalTDLibReader.Result {
             throw LocalReaderError.keyNotFound
         }
     }
