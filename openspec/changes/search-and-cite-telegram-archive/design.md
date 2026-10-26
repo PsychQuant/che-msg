@@ -70,11 +70,11 @@ Diagnosis 建議在「Day file format」加一句「錨點與跳脫規則是讀�
 
 ### 輸出是一個 JSON 物件，危險字元寫成跳脫
 
-JSON 讓 skill 不必解析自由文字，第三方文字也不會被誤認為輸出的結構。`json.dumps(ensure_ascii=False)` 不跳脫 C1 控制字元、U+2028／U+2029 與雙向格式字元，所以輸出後再把這些字元換成 `\uXXXX`：資訊不丟，但不會原樣送到終端機（例如 U+202E 讓檔名或內文倒過來顯示）。verify 之後再加上使用者看不見、模型卻讀得到的字元：U+00AD、U+200B 到 U+200F、U+2060 到 U+2064、U+FEFF、U+FFF9 到 U+FFFB，以及 tag 字元 U+E0000 到 U+E007F（BMP 之外，寫成 surrogate pair）。這些字元只會出現在 JSON 字串裡，替換不影響結構。第二輪再加上 variation selector U+FE00 到 U+FE0E 與 U+E0100 到 U+E01EF（可以用來藏資料，每個 selector 帶一個位元組），以及顯示為空白的 U+034F、U+115F、U+1160、U+180E、U+3164、U+FFA0、U+FFFC。U+FE0F 不跳脫：它選擇前一個符號的 emoji 外觀（例如 U+2764 U+FE0F），在訊息裡很常見；它只有一個值，一串 U+FE0F 能帶的只有長度。U+200D 被跳脫後，emoji 的 ZWJ 組合在輸出裡會拆開顯示，這是刻意的取捨。腳本原始碼本身只含 ASCII，這些字元一律以 `\u` 跳脫或 `chr()` 寫出。
+JSON 讓 skill 不必解析自由文字，第三方文字也不會被誤認為輸出的結構。`json.dumps(ensure_ascii=False)` 不跳脫 C1 控制字元、U+2028／U+2029 與雙向格式字元，所以輸出後再把這些字元換成 `\uXXXX`：資訊不丟，但不會原樣送到終端機（例如 U+202E 讓檔名或內文倒過來顯示）。verify 之後再加上使用者看不見、模型卻讀得到的字元：U+00AD、U+200B 到 U+200F、U+2060 到 U+2064、U+FEFF、U+FFF9 到 U+FFFB，以及 tag 字元 U+E0000 到 U+E007F（BMP 之外，寫成 surrogate pair）。這些字元只會出現在 JSON 字串裡，替換不影響結構。第二輪再加上 variation selector U+FE00 到 U+FE0E 與 U+E0100 到 U+E01EF（可以用來藏資料，每個 selector 帶一個位元組），以及顯示為空白的 U+034F、U+115F、U+1160、U+180E、U+3164、U+FFA0、U+FFFC。U+FE0F 不跳脫：它選擇前一個符號的 emoji 外觀（例如 U+2764 U+FE0F），在訊息裡很常見；它只有一個值，一串 U+FE0F 能帶的只有長度。U+200D 被跳脫後，emoji 的 ZWJ 組合在輸出裡會拆開顯示，這是刻意的取捨。孤立的 surrogate（路徑裡解不開的位元組經 surrogateescape 讀入，例如 0xFF 成為 U+DCFF）也寫成 `\uXXXX`，輸出不依賴編碼器的錯誤處理就是合法 UTF-8。腳本原始碼本身只含 ASCII，這些字元一律以 `\u` 跳脫或 `chr()` 寫出。
 
 ### 結果與上限
 
-- 結果由新到舊（日期、時間、message id）。截斷時使用者通常想看最近的，並看到總數以縮小日期範圍。不同聊天的 `utc_offset` 不同時，跨聊天的排序是近似的。
+- 結果由新到舊（日期、時間、message id），chat id 只在最後打破兩個聊天之間的平手（第三輪 verify：先前的 key 把 chat id 放在 message id 前面，同一分鐘裡另一個聊天的舊訊息會排在前面；heap 用的是同一個 key，所以兩處一起改）。截斷時使用者通常想看最近的，並看到總數以縮小日期範圍。不同聊天的 `utc_offset` 不同時，跨聊天的排序是近似的。
 - `max_results` 預設 20、最多 100；`snippet_chars` 預設 80、介於 20 到 200；超出範圍是 usage error，不默默夾回。
 - 每個上限都包含省略號：摘錄的 `snippet_chars`、寄件人的 64 字元、註記的 48 字元（第二輪 verify：第一版把 `…` 加在上限之外，多出一到兩個字元）。
 - 搜尋時只保留 `max_results` 筆最新的結果（heap），摘錄只替會進入 heap 的結果計算；區塊逐一產生。第二輪 verify 量到 60 萬筆符合時用掉 869 MB，現在同樣規模約 106 MiB，峰值取決於最大的日檔而不是符合的筆數。

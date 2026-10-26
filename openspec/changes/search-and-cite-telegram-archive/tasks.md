@@ -23,3 +23,8 @@
 - [x] 5.1 先寫失敗的測試（Requirement: Archive reader contract；Requirement: Search filters and bounded output）：`ulimit -n 64` 下 80 個聊天；12 萬筆符合的記憶體；省略號在上限之內；新增的隱形字元；mode 000 的歸檔與指名一般檔案的 `--chat`；white-box 測試在重新檢查之後換掉聊天目錄、在 git 檢查之後換掉歸檔目錄、換成另一個真目錄、在開啟前換成一般檔案、把日檔換成 link 或 FIFO；32 MiB 上限、10 個 200 字元的詞、20 筆 skipped、5 個被拒的檔案、整行錨點、一般的反斜線、前導零的 `chat_id`、重複的引用、超過 64K 的 case-fold 對應、經 link 給的歸檔路徑。驗證：舊腳本 398 個檢查有 54 個失敗
 - [x] 5.2 依設計「目錄以 descriptor 開啟，日檔相對於它讀」「結果與上限」「輸出是一個 JSON 物件，危險字元寫成跳脫」修正腳本：逐一開關聊天目錄、heap、上限含省略號、跳脫字元。驗證：398 個檢查在 `python3` 與 `/usr/bin/python3` 都通過，審查列出的存活 mutant 都被殺掉 [after: 5.1]
 
+## 6. verify 第三輪的修正
+
+- [x] 6.1 先寫測試（Requirement: Search filters and bounded output）：同一日期時間、兩個聊天的 message 999 與 1，`--max-results 1` 取 999；路徑含 0xFF 的錯誤輸出是合法 UTF-8。驗證：排序的案例在舊腳本失敗
+- [x] 6.2 依設計「結果與上限」「輸出是一個 JSON 物件，危險字元寫成跳脫」把排序 key 改成日期、時間、message id、chat id，並跳脫孤立的 surrogate。驗證：410 個檢查在 `python3` 與 `/usr/bin/python3` 都通過 [after: 6.1]
+
