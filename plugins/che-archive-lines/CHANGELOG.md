@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `line-save-chat.sh help` (and `--help`, `-h`, no argument, an unknown action) works without cliclick ([#53](https://github.com/PsychQuant/che-msg/issues/53)). The script checked for cliclick before reading the action, so `help`, which the skill pre-approves, failed with exit 1 and showed only the install hint. Only `calibrate`, `save` and `test` click; they still stop first with "brew install cliclick", before the config is read. New test `tests/che-archive-lines/test-missing-cliclick.sh` runs the script with a PATH that has no cliclick.
+
 ## [1.1.1] - 2026-10-08
 
 The plugin moved from PsychQuant/psychquant-claude-plugins to PsychQuant/che-msg, which now publishes it as the `che-msg` marketplace ([che-msg#42](https://github.com/PsychQuant/che-msg/issues/42)). No change to the skill or `scripts/line-save-chat.sh`.

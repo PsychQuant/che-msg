@@ -293,16 +293,19 @@ show_help() {
 }
 
 # 主程式
-check_dependencies
-
+# 只有會點擊的動作需要 cliclick；help 與未知動作只印說明，沒裝也要看得到 (#53)。
+# 依賴檢查放在各動作的第一步，所以缺 cliclick 仍比缺設定先報。
 case $ACTION in
     calibrate)
+        check_dependencies
         calibrate
         ;;
     save)
+        check_dependencies
         save_chat
         ;;
     test)
+        check_dependencies
         test_click
         ;;
     help|--help|-h)
