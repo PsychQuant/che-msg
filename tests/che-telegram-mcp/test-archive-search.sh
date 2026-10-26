@@ -57,11 +57,16 @@ def check(cond, what):
         failed += 1
         print(f"FAIL [{current}] {what}")
 
+HOME = os.path.join(SCRATCH, "home")
+XDG = os.path.join(SCRATCH, "xdg")
+os.makedirs(HOME)
+os.makedirs(XDG)
+
 def env():
+    # The user's own git configuration stays out of the cases: HOME and
+    # XDG_CONFIG_HOME point at empty scratch directories.
     e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    # Discovery stops below the scratch directory, so "outside a repository" does
-    # not depend on where TMPDIR happens to be.
-    e["GIT_CEILING_DIRECTORIES"] = SCRATCH
+    e["HOME"], e["XDG_CONFIG_HOME"] = HOME, XDG
     return e
 
 def run(args, extra_env=None, cwd=None, timeout=20):
@@ -114,6 +119,14 @@ hello
 [photo](media/5243904/) menu
 
 """
+
+# The script drops every GIT_* variable, so "outside a repository" holds only when
+# no directory above the scratch directory is a work tree.
+_top = subprocess.run(["git", "-C", SCRATCH, "rev-parse", "--show-toplevel"], capture_output=True, env=env())
+if _top.returncode == 0:
+    print(f"FAIL [setup] the scratch directory {SCRATCH} is inside the git work tree {_top.stdout.decode().strip()}; set TMPDIR outside any repository")
+    print("RESULT 0 1")
+    sys.exit(0)
 
 def cites(data, key="results"):
     return [r["citation"] for r in (data or {}).get(key, [])]
@@ -180,18 +193,38 @@ def _case_2():
     check(rc == 0 and d is not None and d["matched"] == 0, "marker text is not searched")
 
 def _case_3():
-    case("other HTML comment lines are annotations, wherever they are")
+    case("HTML comment lines are annotations only between the anchor and the header")
     A = archive()
-    text = ("<!-- msg:20 -->\n**11:00 Kim**：\nfirst line\n<!-- note by hand -->\nsecond line\n\n")
+    text = ("<!-- msg:20 -->\n<!-- a note -->\n**11:00 Kim**：\nfirst line\n<!-- in body -->\nsecond line\n\n"
+            "<!-- msg:21 -->\n<!-- lead -->\nno header here\n\n")
     day(A, 777, "2026-10-13", text)
-    rc, raw, d, err = run(["--archive", A, "--cite", "telegram:777/20"])
-    check(rc == 0 and d is not None and len(d.get("blocks", [])) == 1, f"block found (rc={rc}, {d})")
-    if d and d.get("blocks"):
-        b = d["blocks"][0]
-        check(b["text"] == "first line\nsecond line", f"comment line left out of text: {b['text']!r}")
-        check(b["annotations"] == ["note by hand"], f"annotation: {b['annotations']!r}")
-    rc, raw, d, err = run(["--archive", A, "--text", "by hand"])
-    check(rc == 0 and d is not None and d["matched"] == 0, "comment text is not searched")
+    rc, raw, d, err = run(["--archive", A, "--cite", "telegram:777/20", "--cite", "telegram:777/21"])
+    check(rc == 0 and d is not None and len(d.get("blocks", [])) == 2, f"blocks found (rc={rc}, {d})")
+    if d and len(d.get("blocks", [])) == 2:
+        b, c = d["blocks"]
+        check(b["annotations"] == ["a note"], f"annotation before the header: {b['annotations']!r}")
+        check(b["text"] == "first line\n<!-- in body -->\nsecond line", f"comment inside the body is text: {b['text']!r}")
+        check(c["annotations"] == [] and c["time"] is None and c["text"] == "<!-- lead -->\nno header here",
+              f"no header: no annotation, all text: {c}")
+    rc, raw, d, err = run(["--archive", A, "--text", "in body"])
+    check(rc == 0 and cites(d) == ["telegram:777/20"], f"comment inside the body is searchable: {cites(d)}")
+    rc, raw, d, err = run(["--archive", A, "--text", "a note"])
+    check(rc == 0 and d is not None and d["matched"] == 0, "an annotation is not searched")
+
+def _case_grapheme():
+    case("a body line of <!-- plus a combining mark stays message text")
+    # Swift's hasPrefix("<!--") compares grapheme clusters, so the archive does not
+    # escape these lines; they must not be taken for annotations.
+    A = archive()
+    marks = [chr(0x301), chr(0x200d), chr(0xfe0f)]
+    body = [f"<!--{m} line {i}" for i, m in enumerate(marks)]
+    day(A, 777, "2026-10-13", blk(22, "11:05", "Kim", "start", *body))
+    rc, raw, d, err = run(["--archive", A, "--cite", "telegram:777/22"])
+    b = (d or {}).get("blocks") or [{}]
+    check(b[0].get("text") == "\n".join(["start"] + body) and b[0].get("annotations") == [], f"kept as text: {b[0]}")
+    for i in range(3):
+        rc, raw, d, err = run(["--archive", A, "--text", f"line {i}"])
+        check(rc == 0 and cites(d) == ["telegram:777/22"], f"line {i} searchable: {cites(d)}")
 
 def _case_4():
     case("multi-line body: snippet joins lines, citation returns the whole text")
@@ -338,6 +371,40 @@ def _case_13():
     if d:
         check({s["file"]: s["reason"] for s in d["skipped"]} == {"888": "symlinked-chat-directory"}, f"skipped: {d['skipped']}")
 
+def _case_race():
+    case("a chat directory swapped for a symlink during the search is not followed")
+    # White-box: the script is imported and its guard wrapped, so the swap happens
+    # after discovery and before any day file is read.
+    A = archive()
+    day(A, 777, "2026-11-06", blk(120, "09:00", "Alex", "secret inside"))
+    outside = os.path.join(SCRATCH, "race-outside")
+    write(os.path.join(outside, "2026-11-06.md"), FM.format(chat=777, date="2026-11-06", off="+08:00") + blk(121, "09:00", "Mallory", "secret outside"))
+    snippet = """
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("search_archive", sys.argv[1])
+sa = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sa)
+real_guard = sa.guard
+def racing_guard(*args, **kwargs):
+    result = real_guard(*args, **kwargs)
+    chat = os.path.join(sys.argv[2], "777")
+    os.rename(chat, chat + ".moved")
+    os.symlink(sys.argv[3], chat)
+    return result
+sa.guard = racing_guard
+sys.exit(sa.main(["--archive", sys.argv[2], "--text", "secret"]))
+"""
+    p = subprocess.run([PY, "-I", "-c", snippet, SEARCH, A, outside], capture_output=True, timeout=20, cwd=SCRATCH, env=env())
+    try:
+        d = json.loads(p.stdout.decode("utf-8"))
+    except ValueError:
+        d = None
+    check(p.returncode == 0 and d is not None, f"search ran: rc={p.returncode} {p.stderr[-300:]!r}")
+    check(b"outside" not in p.stdout and b"Mallory" not in p.stdout, f"the symlink target was not read: {p.stdout[:300]!r}")
+    if d:
+        check(cites(d) == [] and {"file": "777", "reason": "changed-during-search"} in d.get("skipped", []),
+              f"the swapped chat is skipped: {d}")
+
 # ---------------------------------------------------------------- filters
 def _case_14():
     case("sender, date range and chat filters")
@@ -441,6 +508,60 @@ def _case_20():
         rc, raw, d, err = run(["--archive", bad, "--text", "hi"])
         check(rc == 4 and d and d["error"]["type"] == "archive_missing", f"{bad} is archive_missing: rc={rc}")
 
+def _case_annotation_cap():
+    case("annotations are capped in count and characters")
+    A = archive()
+    notes = [f"note {i} " + "n" * 100 for i in range(8)]
+    day(A, 777, "2026-07-06", blk(440, "09:00", "Alex", "capped", notes=notes), blk(441, "09:01", "Alex", "plain capped"))
+    rc, raw, d, err = run(["--archive", A, "--text", "capped"])
+    r = {x["citation"]: x for x in (d or {}).get("results", [])}
+    a = r.get("telegram:777/440", {})
+    check(len(a.get("annotations", [])) == 5 and all(len(x) <= 81 for x in a["annotations"])
+          and sum(len(x) for x in a["annotations"]) <= 245 and a.get("annotations_truncated") is True, f"capped: {a}")
+    check(r.get("telegram:777/441", {}).get("annotations_truncated") is False, "a block without notes is not truncated")
+
+def _case_rendered_width():
+    case("the snippet width counts the line-break markers")
+    A = archive()
+    day(A, 777, "2026-07-07", blk(450, "09:00", "Alex", *(["ab"] * 40)),
+        blk(451, "09:01", "Alex", *(["x"] * 50 + ["needle"] + ["y"] * 50)))
+    rc, raw, d, err = run(["--archive", A, "--sender", "Alex", "--snippet-chars", "20"])
+    r = {x["citation"]: x["snippet"] for x in (d or {}).get("results", [])}
+    s = r.get("telegram:777/450", "")
+    check(s.endswith("…") and len(s.rstrip("…")) <= 20 and s.startswith("ab ⏎ "), f"start of text: {s!r}")
+    rc, raw, d, err = run(["--archive", A, "--text", "needle", "--snippet-chars", "30"])
+    s = ((d or {}).get("results") or [{}])[0].get("snippet", "")
+    check("needle" in s and len(s.strip("…")) <= 30 and s.startswith("…") and s.endswith("…"), f"around the term: {s!r}")
+
+def _case_digits():
+    case("thousands of digits in an anchor or chat_id do not fail the search")
+    A = archive()
+    huge = "1" * 5000
+    day(A, 777, "2026-07-08", blk(460, "09:00", "Alex", "before", f"<!-- msg:{huge} -->", "after digits"))
+    day(A, 777, "2026-07-09", blk(461, "09:00", "Alex", "digits"), front=f'---\nchat_id: {huge}\ndate: 2026-07-09\nutc_offset: "+08:00"\n---\n\n')
+    day(A, 777, "2026-07-10", "<!-- msg:" + "0" * 30 + "7 -->\n**09:00 Alex**：\nleading zeros digits\n\n")
+    rc, raw, d, err = run(["--archive", A, "--text", "digits"])
+    check(rc == 0 and d and cites(d) == ["telegram:777/7", "telegram:777/460"], f"rc={rc} {cites(d)} {raw[:200]!r}")
+    check(d and {"file": "777/2026-07-09.md", "reason": "bad-frontmatter"} in d.get("skipped", []), "long chat_id is bad-frontmatter")
+    rc, raw, d, err = run(["--archive", A, "--cite", f"telegram:777/{huge}"])
+    check(rc == 2 and d and d.get("error", {}).get("type") == "usage", f"long citation is a usage error: rc={rc}")
+
+def _case_memory():
+    case("a 20 MiB message with a hit stays within bounded memory")
+    A = archive()
+    big = chr(0xdf) + "a" * (20 * 1024 * 1024) + " needle"
+    day(A, 777, "2026-07-11", blk(470, "09:00", "Alex", big))
+    probe = """
+import resource, subprocess, sys
+p = subprocess.run(sys.argv[1:], capture_output=True)
+rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+print(p.returncode, rss if sys.platform == "darwin" else rss * 1024, len(p.stdout))
+"""
+    out = subprocess.run([PY, "-I", "-c", probe, PY, "-I", SEARCH, "--archive", A, "--text", "needle"],
+                         capture_output=True, timeout=180, cwd=SCRATCH, env=env()).stdout.decode().split()
+    rc, rss = (int(out[0]), int(out[1])) if len(out) == 3 else (None, None)
+    check(rc == 0 and rss is not None and rss < 512 * 1024 * 1024, f"rc={rc} max RSS {rss and rss // (1024 * 1024)} MiB")
+
 def _case_21():
     case("output escapes control and bidirectional characters")
     A = archive()
@@ -449,6 +570,13 @@ def _case_21():
     check(rc == 0 and d and d["results"], f"found: rc={rc}")
     for ch in ("\u202e", "\x1b", "\u0085", "\u2028", "\u2066", "\u2069", "\u200f"):
         check(d is not None and ch.encode("utf-8") not in raw, f"U+{ord(ch):04X} not raw in output")
+    hidden = [0x200b, 0x200d, 0x2060, 0xfeff, 0xad, 0xfff9, 0xfffb, 0xe0041, 0xe007f]
+    day(A, 777, "2026-07-06", blk(431, "09:00", "Eve", "hidden " + "".join(chr(c) for c in hidden) + " end"))
+    rc, raw, d2, err = run(["--archive", A, "--text", "hidden"])
+    for c in hidden:
+        check(d2 is not None and chr(c).encode("utf-8") not in raw, f"U+{c:04X} not raw in output")
+    if d2 and d2.get("results"):
+        check("".join(chr(c) for c in hidden) in d2["results"][0]["snippet"], "decoded snippet keeps the invisible characters")
     if d and d["results"]:
         check("\u202egnp.exe" in d["results"][0]["snippet"] and "\x1b[31m" in d["results"][0]["snippet"], "decoded text keeps them")
         check(d["results"][0]["sender"] == "Eve\u202e", "sender keeps them")
@@ -495,6 +623,48 @@ def _case_26():
     rc, raw, d, err = run(["--archive", A, "--text", "hello"], extra_env={"GIT_DIR": os.path.join(elsewhere, ".git"), "GIT_WORK_TREE": elsewhere})
     check(rc == 3 and d and d["error"]["type"] == "not_ignored", f"still checked against the archive's repository: rc={rc} {d}")
 
+def _case_gitenv():
+    case("guard: no GIT_* variable from the caller weakens the check")
+    star = os.path.join(SCRATCH, "exclude-everything")
+    write(star, "*\n")
+    cfg = os.path.join(SCRATCH, "exclude-everything.gitconfig")
+    write(cfg, f"[core]\n\texcludesFile = {star}\n")
+    bypasses = {
+        "GIT_CEILING_DIRECTORIES": None,
+        "GIT_CONFIG_COUNT": {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.excludesFile", "GIT_CONFIG_VALUE_0": star},
+        "GIT_CONFIG_PARAMETERS": {"GIT_CONFIG_PARAMETERS": f"'core.excludesfile'='{star}'"},
+        "GIT_CONFIG_GLOBAL": {"GIT_CONFIG_GLOBAL": cfg},
+        "GIT_CONFIG_SYSTEM": {"GIT_CONFIG_SYSTEM": cfg},
+    }
+    for n, (name, extra) in enumerate(bypasses.items()):
+        repo, A = repo_archive(f"r-env-{n}", "*.log\n")
+        if extra is None:
+            extra = {"GIT_CEILING_DIRECTORIES": repo}
+        rc, raw, d, err = run(["--archive", A, "--text", "hello"], extra_env=extra)
+        check(rc == 3 and d and d.get("error", {}).get("type") == "not_ignored" and b"hello" not in raw,
+              f"{name} does not bypass the check: rc={rc} {d}")
+
+def _case_globalignore():
+    case("guard: the user's global excludes count, as git reads them")
+    # Decision (design.md): ignored means ignored for the user's own git add, so
+    # core.excludesFile in ~/.gitconfig and $XDG_CONFIG_HOME/git/ignore apply.
+    repo, A = repo_archive("r-home-excludes", "*.log\n")
+    excl = os.path.join(SCRATCH, "home-excludes")
+    write(excl, "archives/\n")
+    write(os.path.join(HOME, ".gitconfig"), f"[core]\n\texcludesFile = {excl}\n")
+    try:
+        rc, raw, d, err = run(["--archive", A, "--text", "hello"])
+        check(rc == 0 and cites(d) == ["telegram:777/5242880"], f"~/.gitconfig excludesFile honoured: rc={rc} {d}")
+    finally:
+        os.remove(os.path.join(HOME, ".gitconfig"))
+    repo, A = repo_archive("r-xdg-excludes", "*.log\n")
+    write(os.path.join(XDG, "git", "ignore"), "archives/\n")
+    try:
+        rc, raw, d, err = run(["--archive", A, "--text", "hello"])
+        check(rc == 0 and cites(d) == ["telegram:777/5242880"], f"XDG git/ignore honoured: rc={rc} {d}")
+    finally:
+        os.remove(os.path.join(XDG, "git", "ignore"))
+
 def _case_27():
     case("guard: git failure other than not-a-repository refuses")
     A = archive()
@@ -530,7 +700,7 @@ def _case_28():
     check(listing(os.path.dirname(A)) == before, "archive listing unchanged")
     check(listing(work) == before_cwd == [], "working directory still empty")
 
-CASES = [_case_82, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
+CASES = [_case_82, _case_grapheme, _case_race, _case_gitenv, _case_globalignore, _case_annotation_cap, _case_rendered_width, _case_digits, _case_memory, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
 for fn in CASES:
     try:
         fn()
