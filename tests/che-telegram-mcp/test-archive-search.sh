@@ -794,6 +794,27 @@ def _case_parse_more():
         check("Needle" in core and len(r["snippet"]) <= 80 and core in ("b" * 50 + "Needle" + "z" * 50), f"mapped snippet: {r['snippet']!r}")
     check(len((d or {}).get("results", [])) == 3, "three folded matches")
 
+def _case_heap_order():
+    case("the newest matches win even when older ones are read last")
+    # Chat 100 (read first) holds the newer days, chat 200 (read last) the older ones.
+    A = archive()
+    for i in range(3):
+        day(A, 100, f"2026-09-0{i + 1}", blk(600 + i, "09:00", "Alex", "order word"))
+        day(A, 200, f"2026-01-0{i + 1}", blk(700 + i, "09:00", "Alex", "order word"))
+    rc, raw, d, err = run(["--archive", A, "--text", "order", "--max-results", "2"])
+    check(rc == 0 and cites(d) == ["telegram:100/602", "telegram:100/601"] and d["matched"] == 6, f"newest two: {cites(d)}")
+
+def _case_fold_exact():
+    case("snippets are exact after characters whose case fold is longer")
+    A = archive()
+    E = ELL
+    for i, ch in enumerate([chr(0x130), chr(0xdf)]):
+        day(A, 779, f"2026-06-1{i}", blk(540 + i, "09:00", "Alex", ch * 30 + "x" * 40 + "Needle" + "y" * 40))
+    rc, raw, d, err = run(["--archive", A, "--text", "needle", "--chat", "779", "--snippet-chars", "20"])
+    got = [r["snippet"] for r in (d or {}).get("results", [])]
+    want = E + "x" * 6 + "Needle" + "y" * 6 + E
+    check(got == [want, want], f"exact snippets: {got}")
+
 def _case_nits():
     case("an unreadable archive says it cannot be listed; --chat naming a file is reported")
     A = archive()
@@ -956,7 +977,7 @@ def _case_28():
     check(listing(os.path.dirname(A)) == before, "archive listing unchanged")
     check(listing(work) == before_cwd == [], "working directory still empty")
 
-CASES = [_case_after_recheck, _case_archive_recheck, _case_inode_recheck, _case_dir_flag, _case_dayfile_swap, _case_fd_limit, _case_topn_memory, _case_budget, _case_caps_more, _case_parse_more, _case_nits, _case_82, _case_grapheme, _case_writer_agreement, _case_race, _case_gitenv, _case_globalignore, _case_annotation_cap, _case_rendered_width, _case_digits, _case_memory, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
+CASES = [_case_after_recheck, _case_archive_recheck, _case_inode_recheck, _case_dir_flag, _case_dayfile_swap, _case_fd_limit, _case_topn_memory, _case_budget, _case_caps_more, _case_parse_more, _case_heap_order, _case_fold_exact, _case_nits, _case_82, _case_grapheme, _case_writer_agreement, _case_race, _case_gitenv, _case_globalignore, _case_annotation_cap, _case_rendered_width, _case_digits, _case_memory, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
 for fn in CASES:
     try:
         fn()
