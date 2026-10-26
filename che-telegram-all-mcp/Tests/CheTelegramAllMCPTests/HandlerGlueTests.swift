@@ -5,7 +5,7 @@ import TelegramAllLib
 
 /// Handler-glue integration tests (#14, subsumes #18).
 ///
-/// `ServerHandlerLogicTests` covers the pure-function parser layer
+/// The `Parse*Tests` files cover the pure-function parser layer
 /// (`parseGetChatHistoryArgs` / `parseDumpChatToMarkdownArgs`). What was
 /// previously uncovered: the **catch chain** that converts parse-stage
 /// errors into `CallTool.Result` with `isError: true`. If someone changed

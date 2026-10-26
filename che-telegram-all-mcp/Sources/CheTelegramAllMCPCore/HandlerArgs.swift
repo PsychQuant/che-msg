@@ -82,7 +82,7 @@ internal func preflightArgumentError(name: String, arguments args: [String: Valu
 
 /// Parse and validate the args dictionary for `get_chat_history`.
 ///
-/// Rules encoded here (each has a corresponding test in `ServerHandlerLogicTests`):
+/// Rules encoded here (each has a corresponding test in the `Parse*Tests` files of CheTelegramAllMCPTests):
 /// - `chat_id` is required (#4)
 /// - `limit` defaults to 50
 /// - `from_message_id` defaults to 0
@@ -366,7 +366,7 @@ internal func parseLimit(_ args: [String: Value], default defaultValue: Int) thr
 /// only init boots a process-global TDLib receive loop — so they were NOT
 /// unit-testable in place. Routing each handler's scalar Int64 parsing through
 /// these module-level functions makes it falsifiable; mutation-resistant tests
-/// live in `ServerHandlerLogicTests.swift`.
+/// live in the `Parse*Tests.swift` files (split out of ServerHandlerLogicTests.swift in #26).
 internal func requiredInt64(_ args: [String: Value], _ key: String) throws -> Int64 {
     guard let value = try int64ArgValueStrict(args, key) else {
         throw HandlerArgError(message: "\(key) is required")
