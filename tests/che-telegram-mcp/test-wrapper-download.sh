@@ -54,6 +54,11 @@
 #      is refused too, not repaired, even with a genuine partial file in it,
 #      and once it is removed the next start creates it anew with mode 700.
 #      ~/bin holds no temporary file afterwards.
+#  11. A newer version installed while a download runs is kept: with 0.7.0
+#      installed and a slow download of the pinned version, a newer binary
+#      installed by hand meanwhile (binary and version record) is still there
+#      afterwards, and the download is not moved over it
+#      (PsychQuant/che-msg#83).
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-download.sh
@@ -412,6 +417,21 @@ for mode in 777 755; do
     expect_installed "$H" "$ALL" "$DESIRED_VERSION"
     if [ "$(stat -f %Lp "$(stage_of "$H")")" = 700 ]; then pass "removed, it is created anew with mode 700"; else fail "recreated with mode $(stat -f %Lp "$(stage_of "$H")")"; fi
 done
+# ------------------------------------- 11. a newer version installed meanwhile
+test_case "telegram-all: a newer binary installed during the download is kept (#83)"
+H="$SCRATCH/all-newer-meanwhile"; make_home "$H" yes "$MIN_ALL"; serve "$H" all
+echo 4 > "$H/fake-curl/asset.delay"
+NEWER="$(( ${DESIRED_VERSION%%.*} + 1 )).0.0"
+write_fake_all_binary "$SCRATCH/by-hand" "$NEWER"
+run "$H" all
+if [ "$RC" = started ]; then pass "the installed $MIN_ALL started while the download runs"; else fail "not started ($RC)"; fi
+# By hand, as README "Manual install" does it: the file, then its record.
+cp "$SCRATCH/by-hand" "$H/bin/$ALL.new" && mv "$H/bin/$ALL.new" "$H/bin/$ALL" && echo "$NEWER" > "$H/bin/.$ALL.version"
+wait_no_fetch "$H" 20 || fail "the background download did not end"
+if cmp -s "$H/bin/$ALL" "$SCRATCH/by-hand"; then pass "~/bin/$ALL is still the v$NEWER installed by hand"; else fail "the v$NEWER binary was replaced"; fi
+if [ "$(cat "$H/bin/.$ALL.version")" = "$NEWER" ]; then pass "its version record still says $NEWER"; else fail "the record now says $(cat "$H/bin/.$ALL.version")"; fi
+if grep -q "v$NEWER is installed" "$(log_of "$H" "$ALL")" 2>/dev/null; then pass "the download log says why it installed nothing"; else fail "log: $(tail -2 "$(log_of "$H" "$ALL")" 2>/dev/null | tr '\n' ' ')"; fi
+
 H="$SCRATCH/all-resume"
 extra=$(cd "$H/bin" && ls -A | grep -v -x -e "$ALL" -e ".$ALL.version" -e "$(basename "$(stage_of "$H")")" || true)
 if [ -z "$extra" ]; then pass "~/bin holds only the binary, its version record and the staging directory"; else fail "~/bin also holds: $(echo "$extra" | tr '\n' ' ')"; fi

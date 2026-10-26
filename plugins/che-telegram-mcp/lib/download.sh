@@ -378,6 +378,16 @@ download_fetch() {
         echo "$name: the download of v$version has sha256 ${f:-unknown}, not $expected ($checked_against); it was removed and nothing was installed" >&2
         return 31
     fi
+    # Once more, right before the move: the version may have been installed,
+    # or a newer one, since this download began, by hand or by a session whose
+    # wrapper takes no part in this lock. A binary at least as new is never
+    # replaced (PsychQuant/che-msg#83).
+    f=$(read_version_record "$record")
+    if [[ -x "$binary" ]] && version_at_least "$f" "$version"; then
+        rm -f "$part"
+        echo "$name: v$f is installed now, not older than v$version; nothing was installed" >&2
+        return 0
+    fi
     if [[ -d "$binary" && ! -L "$binary" ]]; then
         echo "$name: $binary is a directory; nothing was installed" >&2
         return 40
