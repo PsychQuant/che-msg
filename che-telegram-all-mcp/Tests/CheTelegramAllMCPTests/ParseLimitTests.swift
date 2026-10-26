@@ -75,8 +75,7 @@ final class ParseLimitTests: XCTestCase {
             "chat_id": .int(100),
             "limit": .int(20000),
         ])) { error in
-            XCTAssertEqual((error as? HandlerArgError)?.description,
-                           "limit exceeds 10_000 cap; got 20000. Use pagination instead of a single large request.")
+            assertCapError(error, field: "limit", got: 20000)
         }
     }
 
@@ -112,8 +111,7 @@ final class ParseLimitTests: XCTestCase {
     /// Codex flagged (default path silently bypassed the cap).
     func testLimitDefaultOverCapRejected() {
         XCTAssertThrowsError(try parseLimit([:], default: 20000)) { error in
-            XCTAssertEqual((error as? HandlerArgError)?.description,
-                           "limit exceeds 10_000 cap; got 20000. Use pagination instead of a single large request.")
+            assertCapError(error, field: "limit", got: 20000)
         }
     }
 }

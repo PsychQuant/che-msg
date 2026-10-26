@@ -39,15 +39,11 @@ final class ParseMaxMessagesTests: XCTestCase {
     }
 
     func testMaxMessagesRejectsOverCap() {
-        // #11: assert exact contract message
         XCTAssertThrowsError(try parseGetChatHistoryArgs([
             "chat_id": .int(100),
             "max_messages": .int(50_000),
         ])) { error in
-            XCTAssertEqual(
-                (error as? HandlerArgError)?.description,
-                "max_messages exceeds 10_000 cap; got 50000. Use since_date/until_date to narrow the range."
-            )
+            assertCapError(error, field: "max_messages", got: 50000)
         }
     }
 
@@ -151,10 +147,7 @@ final class ParseMaxMessagesTests: XCTestCase {
             "chat_id": .int(100),
             "max_messages": .double(20000.0),
         ])) { error in
-            XCTAssertEqual(
-                (error as? HandlerArgError)?.description,
-                "max_messages exceeds 10_000 cap; got 20000. Use since_date/until_date to narrow the range."
-            )
+            assertCapError(error, field: "max_messages", got: 20000)
         }
     }
 
@@ -218,8 +211,7 @@ final class ParseMaxMessagesTests: XCTestCase {
     /// `testParseDumpDefaultMaxMessagesRespectsCap` could not provide.
     func testParseMaxMessagesWithDefaultAppliesCapToDefaultPath() {
         XCTAssertThrowsError(try parseMaxMessagesWithDefault([:], default: 11000)) { error in
-            XCTAssertEqual((error as? HandlerArgError)?.description,
-                           "max_messages exceeds 10_000 cap; got 11000. Use since_date/until_date to narrow the range.")
+            assertCapError(error, field: "max_messages", got: 11000)
         }
     }
 
