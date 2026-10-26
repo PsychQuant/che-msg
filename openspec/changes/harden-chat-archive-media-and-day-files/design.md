@@ -36,9 +36,11 @@
 
 `readDayFile(_:day:limit:)` 回傳檔案內容（`limit` 給前置檢查用的 512 bytes），檔案不存在時回 nil，其餘情況：
 
-- `open` 因 `ELOOP` 失敗（最後一個元件是 symlink，不論目標存不存在）→ `notRegularFile`
+- `open` 失敗（不是 `ENOENT`）時，以 `lstat` 看日檔名字本身是什麼：不是一般檔案（symlink 在 `O_NOFOLLOW` 下回 `ELOOP`、socket 回 `EOPNOTSUPP`）→ `notRegularFile`；`lstat` 也失敗（例如上層目錄的 symlink 迴圈）或它是一般檔案（例如沒有讀取權限）→ `unreadableOffset`（verify round 1：原本只看 `ELOOP`，上層迴圈會被說成「不是一般檔案」，socket 會被說成「讀不到」）
 - `fstat` 不是 `S_IFREG`（FIFO、device、目錄）→ `notRegularFile`
-- 其他 `open`／`fstat`／讀取錯誤 → `unreadableOffset`（沿用「讀不到」的錯誤）
+- 其他 `fstat`／讀取錯誤 → `unreadableOffset`（沿用「讀不到」的錯誤）
+
+`O_NOFOLLOW` 只管日檔名字本身；`<chat_id>/` 這類上層目錄是 symlink 時照舊跟隨（見 Non-Goals）。
 
 `O_NONBLOCK` 讓 FIFO 的 open 立刻回來（唯讀開 FIFO 不需要寫入端）；確認是一般檔案後用 `fcntl` 清掉這個旗標再讀，一般檔案的讀取本來就不受它影響，清掉只是不讓旗標留在之後的讀取上。前置檢查與 `write` 都用這個 helper：兩者之間檔案可能被換掉（鎖只擋其他歸檔），所以合併時要再確認一次。`write` 也改用它判斷「有沒有舊檔」，懸空的 symlink 因此在讀取時就被拒絕，不會走到 `moveItem`。
 

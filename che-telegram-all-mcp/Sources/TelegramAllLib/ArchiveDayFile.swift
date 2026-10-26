@@ -23,7 +23,7 @@ public enum ArchiveDayFile {
         case offsetMismatch(existing: String, requested: String)
         /// A day file in the chat directory has no readable `utc_offset`.
         case unreadableOffset(day: String)
-        /// A day file in the chat directory is a symbolic link, FIFO, device or directory (#76).
+        /// A day file in the chat directory is a symbolic link, FIFO, socket, device or directory (#76).
         case notRegularFile(day: String)
         /// A day file to merge into contains a carriage return; the merge splits lines on LF only (#76).
         case carriageReturn(day: String)
@@ -34,7 +34,7 @@ public enum ArchiveDayFile {
                 return "day file \(day).md has no readable utc_offset in its frontmatter (or cannot be read, or uses "
                     + "CRLF line endings); this archive cannot be merged into safely (move the file aside or restore it)"
             case .notRegularFile(let day):
-                return "day file \(day).md is not a regular file (a symbolic link, FIFO, device or directory); this "
+                return "day file \(day).md is not a regular file (a symbolic link, FIFO, socket, device or directory); this "
                     + "archive cannot be merged into safely (replace it with the file itself or move it aside)"
             case .carriageReturn(let day):
                 return "day file \(day).md contains a carriage return (CRLF or CR line endings, as another editor may "
@@ -149,9 +149,13 @@ public enum ArchiveDayFile {
     static func readDayFile(_ file: URL, day: String, limit: Int? = nil) throws -> Data? {
         let fd = open(file.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else {
-            let error = errno
-            if error == ENOENT { return nil }
-            throw error == ELOOP ? WriteError.notRegularFile(day: day) : WriteError.unreadableOffset(day: day)
+            if errno == ENOENT { return nil }
+            // Name what is at the day file's own name: a link (ELOOP under O_NOFOLLOW) or a socket
+            // (EOPNOTSUPP) is not a regular file; a path that fails above it (a loop of links in a
+            // parent directory) or a regular file that cannot be opened is unreadable.
+            var info = stat()
+            if lstat(file.path, &info) == 0, info.st_mode & S_IFMT != S_IFREG { throw WriteError.notRegularFile(day: day) }
+            throw WriteError.unreadableOffset(day: day)
         }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? handle.close() }

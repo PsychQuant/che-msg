@@ -404,6 +404,37 @@ final class ArchiveDayFileTests: XCTestCase {
         XCTAssertEqual(fileType(dir.appendingPathComponent("2026-10-12.md")), S_IFDIR)
     }
 
+    /// A loop of links above the day file is a path that cannot be read, not a day file that is a
+    /// link; a socket named like a day file is not a regular file (#76 verify round 1).
+    func testParentLinkLoopIsUnreadableAndASocketIsNotARegularFile() throws {
+        let dir = try scratchDir()
+        let a = dir.appendingPathComponent("a"), b = dir.appendingPathComponent("b")
+        try FileManager.default.createSymbolicLink(at: a, withDestinationURL: b)
+        try FileManager.default.createSymbolicLink(at: b, withDestinationURL: a)
+        XCTAssertThrowsError(try ArchiveDayFile.readDayFile(a.appendingPathComponent("2026-10-11.md"), day: "2026-10-11")) {
+            XCTAssertEqual($0 as? ArchiveDayFile.WriteError, .unreadableOffset(day: "2026-10-11"))
+        }
+        // A socket path must fit sockaddr_un (104 bytes), so this one lives under /tmp.
+        let short = URL(fileURLWithPath: "/tmp").appendingPathComponent("df-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: short, withIntermediateDirectories: false)
+        addTeardownBlock { try? FileManager.default.removeItem(at: short) }
+        let path = short.appendingPathComponent("2026-10-11.md").path
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { close(fd) }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: path.utf8.prefix($0.count - 1)) }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        XCTAssertEqual(bound, 0)
+        XCTAssertEqual(fileType(URL(fileURLWithPath: path)), S_IFSOCK)
+        XCTAssertThrowsError(try ArchiveDayFile.checkOffsets(directory: short, utcOffset: "+08:00")) {
+            XCTAssertEqual($0 as? ArchiveDayFile.WriteError, .notRegularFile(day: "2026-10-11"))
+        }
+    }
+
     // MARK: - Carriage returns (#76)
 
     // Scenario "Carriage return below the frontmatter": "\r\n" is one Character, so the merge would
