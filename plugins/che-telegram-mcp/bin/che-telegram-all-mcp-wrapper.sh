@@ -37,14 +37,16 @@ SHA256_PIN="90e8a365c1447e3f8b7d2967d08ea064b99149ab3513771bf1dcf22bc1198b6c"
 DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME"
 RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIRED_VERSION"
 
-# --- Startup errors Claude Code can show (#31, PsychQuant/che-msg#58) ---
-# When the wrapper exits before starting the server, Claude Code's MCP
-# transport sees no response and shows a generic "-32000 Server error".
-# Answering the pending initialize request with a JSON-RPC 2.0 error lets it
-# show the reason instead. The wrapper stops early only for missing Keychain
-# credentials, a binary it cannot obtain, or a binary older than 0.7.0;
-# another session running telegram-all never stops it (the server decides
-# who opens TDLib).
+# --- Startup errors (#31, PsychQuant/che-msg#58, #59) ---
+# The wrapper stops before starting the server only for missing Keychain
+# credentials, a binary it cannot obtain (or that is still downloading on a
+# first install), or a binary older than 0.7.0; another session running
+# telegram-all never stops it (the server decides who opens TDLib). It then
+# writes the reason to stderr, which Claude Code keeps in the server's MCP
+# log, and answers the pending initialize request with a JSON-RPC 2.0 error
+# that carries the reason and a link to the README. Whether Claude Code shows
+# that error depends on its build: the builds checked for #59 showed only
+# CONNECTION_CLOSED, so the README sends the user to the MCP log.
 #
 # The error carries the id of the initialize request, which
 # lib/startup-error.sh's read_first_request reads briefly from stdin (Claude

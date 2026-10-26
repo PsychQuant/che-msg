@@ -38,9 +38,10 @@ SHA256_PIN="d27480f9ebfc06119df091199555f8ee247363a477e54f70af4bb9786c8edadd"
 DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME"
 RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIRED_VERSION"
 
-# When a first install cannot start the server yet, the wrapper answers the
-# pending initialize request with a JSON-RPC 2.0 error, as the telegram-all
-# wrapper does, so /mcp shows the reason (PsychQuant/che-msg#67). $1 MUST NOT
+# When a first install cannot start the server yet, the wrapper writes the
+# reason to stderr and answers the pending initialize request with a JSON-RPC
+# 2.0 error, as the telegram-all wrapper does (PsychQuant/che-msg#67; whether
+# Claude Code shows it: see that wrapper, #59). $1 MUST NOT
 # contain double quotes or backslashes (callers build it from fixed literals,
 # version numbers and download_failure's phrases), so the JSON needs no
 # escaping.

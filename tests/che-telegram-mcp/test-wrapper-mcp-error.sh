@@ -6,7 +6,8 @@
 # Another session never stops the wrapper. It stops before starting the
 # server only for missing Keychain credentials, a missing binary, or a binary
 # older than 0.7.0, and then answers the pending initialize request with a
-# JSON-RPC 2.0 error, because Claude Code otherwise shows only a generic -32000.
+# JSON-RPC 2.0 error that names the reason. test-wrapper-first-request.sh
+# covers a first request other than initialize (PsychQuant/che-msg#59).
 #
 # Tests:
 #   1. Another session's legacy wrapper lock (~/.cache/che-telegram-all-mcp.lock
@@ -136,7 +137,7 @@ RC=$?
 if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
 check_error "$H" 11
 if [ -s "$H/curl.calls" ]; then pass "the upgrade was attempted (fake curl)"; else fail "no upgrade attempt"; fi
-# check_message <home> <expected substring>: the reason, as /mcp shows it.
+# check_message <home> <expected substring>: the reason in the error's message.
 check_message() {
     local msg; msg=$(head -1 "$1/out" | jq -r '.error.message' 2>/dev/null)
     case "$msg" in
