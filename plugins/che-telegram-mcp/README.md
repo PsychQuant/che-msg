@@ -112,13 +112,20 @@ The plugin's wrappers (`bin/che-telegram-{all,bot}-mcp-wrapper.sh`) detect your 
 3. `~/.local/bin/$BINARY_NAME`
 4. Source build at `~/Developer/che-msg/che-telegram-{all,bot}-mcp/.build/release/$BINARY_NAME`
 
-If none are found on first invocation, the wrapper **lazy-downloads** the binary from the latest [GitHub Release](https://github.com/PsychQuant/che-msg/releases/latest), strips the macOS quarantine flag, and caches it in `~/bin/`. A disabled server never triggers a download.
+If none are found on first invocation, the wrapper **lazy-downloads** the binary from the latest [GitHub Release](https://github.com/PsychQuant/che-msg/releases/latest) and caches it in `~/bin/`. A disabled server never triggers a download.
+
+The download ([#56](https://github.com/PsychQuant/che-msg/issues/56)) is shared by both wrappers (`lib/download.sh`):
+
+- It retries (`curl --retry 3 --retry-all-errors`) and gives up only when the transfer stalls (below 4 KB/s for 60 seconds), not after a fixed time.
+- It writes to a partial file named after the version, `~/bin/.<Binary>.<version>.part`. A transfer cut off is resumed from there by the next start (`curl -C -`). A partial file of another version is removed, never joined to this one.
+- An HTTP error (for example a release without that asset) installs nothing and writes no version record (`curl -f`).
+- One process downloads at a time: a lock, `~/bin/.<Binary>.download.lock`, names the process that is downloading. A wrapper that finds the lock held by a running download does not start a second one.
 
 ### Auto-upgrade (v1.3.0+)
 
 The wrapper pins a **`DESIRED_VERSION`** matching the binary the plugin expects and writes a `~/bin/.${BINARY_NAME}.version` sidecar each time it installs.
 
-When the plugin is updated and the desired version is newer than the sidecar, the wrapper re-downloads on the next MCP server spawn and replaces the binary atomically (`.tmp` → `mv`) — falling back to the last installed binary if the network fails. It also downloads when no binary is installed, and re-downloads when the sidecar is missing or is not a plain `x.y.z`. A binary **newer** than the desired version is kept, so a session on an older plugin does not put its binary back over a newer one — as long as that session's wrapper has this check. Sessions started on plugin 1.7.0 or earlier still run the old wrapper, which re-downloads whenever the two versions differ; restart them after updating the plugin. The download decision reads only the sidecar, never the binary, so replace the two together. To go back from a newer binary to the desired version, install that version by hand (below), which writes both. Going below the desired version does not stick: once the sidecar says something older, the wrapper downloads the desired version again on the next start, so a fix for a bad release ships as a release with a higher version number. For telegram-all, falling back to the last installed binary works only for a binary of 0.7.0 or later: the wrapper does not run an older one (see [When telegram-all does not start](#when-telegram-all-does-not-start)). Source builds under `~/Developer/...` are never auto-replaced.
+When the plugin is updated and the desired version is newer than the sidecar, the wrapper re-downloads on the next MCP server spawn and replaces the binary atomically (partial file → `mv`) — falling back to the last installed binary if the download fails. It also downloads when no binary is installed, and re-downloads when the sidecar is missing or is not a plain `x.y.z`. A binary **newer** than the desired version is kept, so a session on an older plugin does not put its binary back over a newer one — as long as that session's wrapper has this check. Sessions started on plugin 1.7.0 or earlier still run the old wrapper, which re-downloads whenever the two versions differ; restart them after updating the plugin. The download decision reads only the sidecar, never the binary, so replace the two together. To go back from a newer binary to the desired version, install that version by hand (below), which writes both. Going below the desired version does not stick: once the sidecar says something older, the wrapper downloads the desired version again on the next start, so a fix for a bad release ships as a release with a higher version number. For telegram-all, falling back to the last installed binary works only for a binary of 0.7.0 or later: the wrapper does not run an older one (see [When telegram-all does not start](#when-telegram-all-does-not-start)). Source builds under `~/Developer/...` are never auto-replaced.
 
 A **SessionStart hook** (`hooks/check-mcp.sh`) verifies on every session that:
 
@@ -132,15 +139,16 @@ It prints `⚠️` warnings with copy-pasteable fix commands when something is m
 
 ```bash
 mkdir -p ~/bin
-curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.9.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
-curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.9.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
-chmod +x ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
-xattr -dr com.apple.quarantine ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
+curl -fL -C - https://github.com/PsychQuant/che-msg/releases/download/v0.9.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP.new
+curl -fL -C - https://github.com/PsychQuant/che-msg/releases/download/v0.9.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP.new
+chmod +x ~/bin/CheTelegramAllMCP.new ~/bin/CheTelegramBotMCP.new
+mv ~/bin/CheTelegramAllMCP.new ~/bin/CheTelegramAllMCP
+mv ~/bin/CheTelegramBotMCP.new ~/bin/CheTelegramBotMCP
 echo 0.9.0 > ~/bin/.CheTelegramAllMCP.version
 echo 0.9.0 > ~/bin/.CheTelegramBotMCP.version
 ```
 
-The last two lines record the installed version. Without them the wrapper keeps reading the old record, which no longer describes the binary: an older record makes it download again on the next start, and a newer one hides the version you installed.
+Run the `mv` lines only after both `curl` lines finished without an error. If a `curl` stops part-way, run the same line again: `-C -` continues where it stopped, and `-f` makes an HTTP error fail instead of saving the error page. The download goes to `.new` and is moved into place in one step, so a session that is running the old binary keeps running it; writing over `~/bin/CheTelegramAllMCP` directly would change the file under that session. The last two lines record the installed version. Without them the wrapper keeps reading the old record, which no longer describes the binary: an older record makes it download again on the next start, and a newer one hides the version you installed.
 
 > **Universal binary**: prebuilt binaries are Mach-O universal (arm64 + x86_64), so they run on both Apple Silicon and Intel Macs. Building from source: `git clone https://github.com/PsychQuant/che-msg.git && cd che-msg/che-telegram-all-mcp && swift build -c release`.
 
@@ -292,7 +300,7 @@ A value that is not a whole number of seconds (or is negative) falls back to 600
 The wrapper stops before starting the server in three cases only, and `/mcp` then shows the reason:
 
 - **API credentials missing**: store `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in the Keychain as in step 2 of [Track A](#track-a--personal-account-only-most-common), then reconnect with `/mcp`.
-- **Binary not available**: the download failed or found no release asset. Install it by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
+- **Binary not available**: the download failed or found no release asset. The message says why: the transfer was interrupted (reconnect with `/mcp` and the next start resumes it), the server answered with an HTTP error, or another session is downloading it. Reconnect, or install it by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
 - **Binary too old**: the binary found is older than 0.7.0 — typically the previous version, kept because the download of the new one failed, or an old copy outside `~/bin` (such as `~/.local/bin`), which the wrapper never upgrades. The message names the binary and why it was not upgraded. Binaries before 0.6.0 open TDLib without coordinating with other sessions, and 0.6.x binaries send Telegram's log-out from `logout`, which deletes the local database, so the wrapper runs neither. Install the current one by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
 
 Another session using `telegram-all` is never a reason: the wrapper takes no lock and stops only the server it started itself.
