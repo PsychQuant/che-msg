@@ -74,7 +74,7 @@ chats:
         "at": "2026-10-11T15:00:00+0800",
         "new_messages": 12, "media_messages": 3,
         "media_downloaded": 2, "media_skipped": 1, "media_failed": 1, "media_gone": 0,
-        "media_pending_local_cache": 0, "undated_messages_skipped": 0,
+        "media_pending_local_cache": 0, "undated_messages_skipped": 0, "upgraded_messages": 0,
         "source": "tdlib", "complete": true, "bookmark_safe": true,
         "bookmark_advanced": true, "reason": null, "stopped_reason": null
       }
@@ -92,7 +92,7 @@ chats:
 | 結果 | 處理 |
 |------|------|
 | 已登入（ready） | 繼續 |
-| 錯誤，`type` 是 `tdlib_in_use` | 另一個 session 正持有 TDLib。**停止**，請使用者等那個 session 閒置（預設 10 分鐘）後再跑。原因：從本機快取寫入的區塊沒有寄件人名稱、說明文字與音訊連結，而且之後的執行**不會改寫**已存在的區塊（#72）。只有使用者明確要求「先從快取歸檔」時才繼續，並在報告中說明這些區塊會一直維持這樣 |
+| 錯誤，`type` 是 `tdlib_in_use` | 另一個 session 正持有 TDLib。**停止**，請使用者等那個 session 閒置（預設 10 分鐘）後再跑。原因：從本機快取寫入時不下載媒體，寫出的區塊沒有寄件人名稱、說明文字、投票／貼圖／位置的內容與音訊連結；這些區塊是**暫時的**（錨點下一行是 `<!-- provisional: local-cache -->`），之後透過 TDLib 跑到同一段範圍時才會換成完整版本（#72）。只有使用者明確要求「先從快取歸檔」時才繼續，並在報告中說明這些區塊要等之後透過 TDLib 再跑才會補齊 |
 | 尚未登入 | 停止，請使用者先跑 `/auth` |
 
 ## Step 4：逐一歸檔
@@ -119,7 +119,7 @@ chats:
 
 ## Step 5：結尾核對
 
-要核對的檔案是 `files` 加上 `newest_message_file`（不是 null 時）——重跑時最新訊息早已寫入，它所在的日檔不一定在 `files` 裡。每份 manifest 都要通過三項，所有 Grep 一律用**只列檔名**的輸出（`files_with_matches`），**`path` 給該日檔的絕對路徑**（`OUTPUT_ABS` 加上清單裡的相對路徑），不要給目錄：歸檔目錄在 `.gitignore` 裡，從上層目錄搜尋時會被略過。`<chat_id>` 用清單路徑開頭的整數。**不要用 Read 讀日檔**，也不要用會印出比對內容的模式，那會把訊息內容帶進對話：
+要核對的檔案是 `files` 加上 `newest_message_file`（不是 null 時）——重跑時最新訊息早已寫入，它所在的日檔不一定在 `files` 裡。`files` 也列出這次只把暫時區塊換成完整版本、沒有新訊息的日檔（#72），一樣要核對；暫時區塊的標記在錨點的下一行，錨點本身不變，不影響第 3 項。每份 manifest 都要通過三項，所有 Grep 一律用**只列檔名**的輸出（`files_with_matches`），**`path` 給該日檔的絕對路徑**（`OUTPUT_ABS` 加上清單裡的相對路徑），不要給目錄：歸檔目錄在 `.gitignore` 裡，從上層目錄搜尋時會被略過。`<chat_id>` 用清單路徑開頭的整數。**不要用 Read 讀日檔**，也不要用會印出比對內容的模式，那會把訊息內容帶進對話：
 
 1. 要核對的每個檔案（相對於 `OUTPUT_ABS`）都存在（第 2 項的 Grep 有列出它，就表示存在）。
 2. 每個檔案開頭的 frontmatter 是這個聊天的：以多行模式搜尋 `\A---\nchat_id: <chat_id>\n`，該檔案要出現在結果裡。
@@ -133,7 +133,7 @@ chats:
 
 - `pending_media` 設成 manifest 的 `media_failed_ids`（書籤有沒有前進都一樣）。重試時 TDLib 說訊息已經不存在的 id 列在 `media_gone_ids`、不在 `media_failed_ids` 裡，所以會離開 `pending_media`，不再重試。
 - 書籤：**只有** `bookmark_safe` 是 true、Step 5 通過、而且 `newest_message_id` 不是 null，才把 `last_message_id` 設成 `newest_message_id`。其餘情況保持原值（原本沒有就繼續沒有）。
-- 記下 `utc_offset` 與 `last_run`（欄位見 Step 2；`media_skipped`、`media_failed` 與 `media_gone` 記數量，manifest 沒有 `media_gone_ids` 時 `media_gone` 記 0；`undated_messages_skipped` 照抄，沒有這個欄位時記 0；`reason` 是 `bookmark_unsafe_reason`，核對失敗時寫 `check-failed`；`at` 用 `date +%Y-%m-%dT%H:%M:%S%z`）。
+- 記下 `utc_offset` 與 `last_run`（欄位見 Step 2；`media_skipped`、`media_failed` 與 `media_gone` 記數量，manifest 沒有 `media_gone_ids` 時 `media_gone` 記 0；`undated_messages_skipped` 與 `upgraded_messages` 照抄，沒有這個欄位時記 0；`reason` 是 `bookmark_unsafe_reason`，核對失敗時寫 `check-failed`；`at` 用 `date +%Y-%m-%dT%H:%M:%S%z`）。
 
 寫入時先用 Write 寫到同目錄下一個這次才用的暫存檔（例如 `index.json.<隨機字串>.tmp`），再 `mv -f '<暫存檔>' '<INDEX_FILE>'`（依 Step 1 的引號規則），中途失敗不會留下寫一半的索引，兩個 session 也不會共用暫存檔。索引所在的目錄不存在時先建立（同樣用單引號）。不要同時在同一個 workspace 跑兩個 `/archive-telegram`：兩邊各自讀寫索引，後寫的會蓋掉先寫的書籤。
 
@@ -142,6 +142,7 @@ chats:
 每個聊天一段，用 `label`（沒有就用 `chat_id`）當標題，寫出：
 
 - 新訊息數、其中帶媒體檔（照片、影片、文件、音訊、語音、影片訊息、動圖、貼圖）的訊息數
+- `upgraded_messages` 大於 0 時：幾則先前從本機快取寫入的暫時區塊換成了完整版本（不算在新訊息數裡）
 - 媒體：下載了幾個；略過的每一個寫 message id 與大小（MB）；下載失敗幾個（下次會自動重試）；訊息已經不存在（例如被刪除）、不再重試的幾個（`media_gone_ids`，有這個欄位且不是空的時）；本機快取歸檔時待補的數量（`media_pending_local_cache`）
 - `undated_messages_skipped` 大於 0 時：幾則訊息因為本機快取沒有日期而沒有寫入（之後透過 TDLib 再跑會補上）
 - 書籤：前進到哪個 id；沒前進時寫原因與下一步：
@@ -151,7 +152,7 @@ chats:
 | `stopped_reason: flood_wait` | Telegram 限制請求頻率，要求等待 `retry_after_seconds` 秒（TDLib 已先自行等過一段時間）。已寫入的檔案保留，書籤沒前進；過了這段時間再跑一次。重跑會從最新訊息重新翻頁，已載入過的頁通常由 TDLib 的本機資料庫回答、已寫入的訊息不會重複；長歷史的第一次歸檔可能要跑幾次（#74） |
 | `stopped_reason: no-progress` | 歷史翻頁沒有進展，歸檔可能不完整。書籤沒前進；再跑一次，仍發生就回報 issue |
 | `not-synced` | TDLib 還沒和 Telegram 同步完成，可能缺少最新訊息。書籤沒前進；稍後再跑 |
-| `local-cache` | 使用者要求從本機快取歸檔。沒有下載媒體，寄件人寫成 `User <id>`、沒有說明文字；之後透過 TDLib 再跑會補上缺的訊息與媒體檔，但**不會改寫**這次寫入的區塊（#72） |
+| `local-cache` | 使用者要求從本機快取歸檔。沒有下載媒體，寄件人寫成 `User <id>`、沒有說明文字；這次寫入的區塊是暫時的，之後透過 TDLib 再跑同一段範圍時會換成完整版本（報告寫出升級的數量）並補上媒體檔（#72） |
 | `check-failed` | Step 5 的哪一項失敗、是哪個檔案 |
 | 工具錯誤 | 錯誤的 `type` 或訊息 |
 
