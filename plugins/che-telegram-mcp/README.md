@@ -170,7 +170,7 @@ Each skill's `allowed-tools` lets Claude call the listed tools **without a permi
 
 | Skill | Pre-approved | Not pre-approved |
 |-------|--------------|------------------|
-| `auth` | `auth_status`, `auth_run`, `auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password` | — |
+| `auth` | `auth_status`, `auth_run`, `auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password` | **`logout`** — it resets the local session, so Claude asks you first |
 | `chats` | `auth_status`, `get_chats` | — |
 | `search` | `auth_status`, `search_chats`, `search_messages`, `get_chat_history` | — |
 | `send` | `auth_status`, `search_chats` | **`send_message`** — a sent message cannot be recalled, so it is left out on purpose |
