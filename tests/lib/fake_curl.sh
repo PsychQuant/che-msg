@@ -20,7 +20,7 @@
 #                    example 7, could not connect, or 60, a bad certificate)
 #
 # With -C - and an existing -o file it serves the body from that file's size
-# on, appended. At or past the end it writes nothing and exits 0, as curl does
+# on, appended. An -o file it cannot write makes it exit 23, as curl does. At or past the end it writes nothing and exits 0, as curl does
 # when a server answers 416 to a resumed request.
 #
 # A route without a body file, and any other URL, exits 1 with no output, so
@@ -63,6 +63,7 @@ fi
 
 # write <bytes source command...>: to the -o file (appended when resuming) or stdout.
 write() {
+    if [ -n "$out" ] && [ -e "$out" ] && [ ! -w "$out" ]; then exit 23; fi
     if [ -z "$out" ]; then "$@"
     elif [ "$resume" = yes ]; then "$@" >> "$out"
     else "$@" > "$out"; fi

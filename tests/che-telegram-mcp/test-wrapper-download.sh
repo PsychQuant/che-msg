@@ -54,6 +54,9 @@
 #      is refused too, not repaired, even with a genuine partial file in it,
 #      and once it is removed the next start creates it anew with mode 700.
 #      ~/bin holds no temporary file afterwards.
+#  12. A partial file left read-only (a download stopped after making it so,
+#      before moving it into place) is resumed, not refused for good: the
+#      fake curl fails with 23 on a file it cannot write, as curl does.
 #  11. A newer version installed while a download runs is kept: with 0.7.0
 #      installed and a slow download of the pinned version, a newer binary
 #      installed by hand meanwhile (binary and version record) is still there
@@ -431,6 +434,16 @@ wait_no_fetch "$H" 20 || fail "the background download did not end"
 if cmp -s "$H/bin/$ALL" "$SCRATCH/by-hand"; then pass "~/bin/$ALL is still the v$NEWER installed by hand"; else fail "the v$NEWER binary was replaced"; fi
 if [ "$(cat "$H/bin/.$ALL.version")" = "$NEWER" ]; then pass "its version record still says $NEWER"; else fail "the record now says $(cat "$H/bin/.$ALL.version")"; fi
 if grep -q "v$NEWER is installed" "$(log_of "$H" "$ALL")" 2>/dev/null; then pass "the download log says why it installed nothing"; else fail "log: $(tail -2 "$(log_of "$H" "$ALL")" 2>/dev/null | tr '\n' ' ')"; fi
+
+# ------------------------------------------- 12. a read-only partial file
+test_case "telegram-all: a read-only partial file is resumed"
+H="$SCRATCH/all-readonly-part"; empty_home "$H" all; serve "$H" all
+make_stage "$H"; PART=$(part_of "$H" "$ALL" "$DESIRED_VERSION")
+head -c "$(( $(wc -c < "$ASSETS/$ALL") / 2 ))" "$ASSETS/$ALL" > "$PART"; chmod 0444 "$PART"
+run "$H" all
+expect_installed "$H" "$ALL" "$DESIRED_VERSION"
+case "$(nth_asset_call "$H" 1)" in *"-C -"*) pass "the transfer resumed it (-C -)" ;; *) fail "no resumed transfer: $(nth_asset_call "$H" 1)" ;; esac
+if [ "$RC" = started ]; then pass "and the binary started"; else fail "not started ($RC): $(reason "$H" all)"; fi
 
 H="$SCRATCH/all-resume"
 extra=$(cd "$H/bin" && ls -A | grep -v -x -e "$ALL" -e ".$ALL.version" -e "$(basename "$(stage_of "$H")")" || true)

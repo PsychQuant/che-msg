@@ -305,6 +305,12 @@ download_fetch() {
         [ "$f" = "$part" ] || rm -f "$f"
     done
     _dl_clear_nonregular "$part" || return 42
+    # A partial file is made read-only just before it is hashed; one left so
+    # by a download stopped before its move is made writable again, or curl
+    # could never resume it (exit 23 at every start).
+    if _dl_regular "$part" && [[ ! -w "$part" ]]; then
+        chmod u+w "$part" 2>/dev/null || rm -f "$part"
+    fi
 
     # The sha256 the result must have, known before anything is downloaded:
     # the pin for this version, or nothing is downloaded.
