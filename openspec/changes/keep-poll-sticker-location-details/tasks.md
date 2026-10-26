@@ -10,4 +10,4 @@
 
 ## 3. 文件
 
-- [x] 3.1 all-mcp README：dump 範例加一則投票與一則位置，說明細節的寫法與本機快取沒有細節；歸檔段落說明區塊內文帶細節、已寫好的區塊不補（只往前生效）。CHANGELOG `[Unreleased]` 記 #82（含 `options` 欄位與 `ArchiveDayFile.body(of:messageId:)` 的 API 變更，並依設計「預設選項（維護者不在時採用）」寫明 `other` 不改、座標不四捨五入、只往前生效是維護者不在時採用的預設）。驗證：人工核對 README 的範例與 `MessageBodyTests` 的期望輸出一致；`swift test --skip E2ETests` 全過 [after: 2.2]
+- [x] 3.1 all-mcp README：dump 範例加一則投票與一則位置，說明細節的寫法與本機快取沒有細節；歸檔段落說明區塊內文帶細節、已寫好的區塊不補（只往前生效）。CHANGELOG `[Unreleased]` 記 #82（含 `options` 欄位與 `ArchiveDayFile.body(of:messageId:)` 的 API 變更，並寫出依設計「預設選項（維護者不在時採用）」選定的行為：`other` 不改、座標不四捨五入、只往前生效；決策過程只留在 proposal、design 與 commit message，不寫進使用者看的文件）。驗證：人工核對 README 的範例與 `MessageBodyTests` 的期望輸出一致；`swift test --skip E2ETests` 全過 [after: 2.2]
