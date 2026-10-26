@@ -121,9 +121,23 @@ public enum ArchiveMedia {
     /// The quarantine given to every media file the archive saves (LSQuarantine.h key and value).
     static let quarantineProperties: [String: Any] = ["LSQuarantineType": "LSQuarantineTypeInstantMessageAttachment"]
 
+    /// Gives `file` the archive's quarantine properties.
+    static func markQuarantined(_ file: URL) throws {
+        var values = URLResourceValues()
+        values.quarantineProperties = quarantineProperties
+        var file = file
+        try file.setResourceValues(values)
+    }
+
     /// Makes sure the message's media directory holds its file.
     public static func ensure(_ message: [String: Any], chatDir: URL, downloader: ArchiveMediaDownloading,
                               maxBytes: Int64?) async -> Outcome {
+        await ensure(message, chatDir: chatDir, downloader: downloader, maxBytes: maxBytes, markQuarantined: markQuarantined)
+    }
+
+    /// `ensure` with the quarantine step injected (tests make it fail).
+    static func ensure(_ message: [String: Any], chatDir: URL, downloader: ArchiveMediaDownloading,
+                       maxBytes: Int64?, markQuarantined: (URL) throws -> Void) async -> Outcome {
         guard let file = file(of: message), let messageId = (message["id"] as? NSNumber)?.int64Value,
               let type = message["type"] as? String else { return .noFile }
         let directory = directory(chatDir: chatDir, messageId: messageId)
@@ -142,10 +156,7 @@ public enum ArchiveMedia {
             // Files received from someone else, marked like a browser download so that Gatekeeper
             // assesses them when opened from Finder; set before the rename, which keeps it. A file
             // that cannot be marked is not saved (#75).
-            var values = URLResourceValues()
-            values.quarantineProperties = quarantineProperties
-            var marked = temporary
-            try marked.setResourceValues(values)
+            try markQuarantined(temporary)
             // A symbolic link where the file belongs is not a download (existingFile skips it);
             // remove the link itself, never what it points to.
             if (try? fm.attributesOfItem(atPath: target.path)[.type] as? FileAttributeType) == .typeSymbolicLink {

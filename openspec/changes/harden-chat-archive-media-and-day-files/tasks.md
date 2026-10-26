@@ -31,3 +31,10 @@
 
 - [x] 7.1 SKILL.md（Requirement: archive-telegram skill configuration and index、Requirement: archive-telegram end-of-run check and report）：Step 1 的 `output_dir` 三條規則（空白、`..`、`~`）、權限段落列出 `date`、`mv`、`mkdir`、`git` 與 Grep；Step 4 以「cannot be merged into safely」比對日檔錯誤並說明三種原因；Step 6 說明已刪除的 id 不在 `media_failed_ids` 裡、`last_run` 加 `media_gone` 與 `undated_messages_skipped`；Step 7 報告與範例加上這兩個數字。驗證：`for t in tests/che-telegram-mcp/*.sh; do bash "$t" | tail -1; done` 全過，人工核對 Scenario: Output directory under the home shorthand、Gone media leaves the pending list、Report names media that is gone 都有對應的步驟 [after: 4.2, 6.2, 2.2]
 - [x] 7.2 工具說明（`Server.swift` 的 `archive_chat_to_markdown`）、all-mcp README 的 manifest 欄位、日檔拒絕條件與 quarantine、plugin README 的歸檔段落、兩份 CHANGELOG 的 `[Unreleased]`（各記 #75、#76）。驗證：人工核對 README 的欄位名稱與 `manifestJSON` 的鍵一致；`swift test --skip E2ETests` 全過 [after: 7.1]
+
+## 8. Verify round 1 的修正
+
+- [x] 8.1 quarantine 設不上的路徑要有測試（Requirement: Media download into the archive）：`ArchiveMedia.ensure` 的 quarantine 步驟改成可注入（預設是真的 `markQuarantined`），測試注入會丟錯的版本，確認回 `.failed`、暫存檔移除、目標不存在。驗證：`swift test --filter ArchiveMediaTests/testMediaThatCannotBeQuarantinedIsNotSaved` 通過，且把呼叫處的 `try` 改成 `try?` 時這個測試失敗
+- [ ] 8.2 含 CR 的日檔只在這次呼叫真的要加訊息時才拒絕（Requirement: Merge and idempotent rewrite）：檔案已經有這一天這次要寫的每一則訊息時（CRLF 當成換行來讀錨點），不拒絕、不改檔；否則照舊拒絕。驗證：先寫的測試（CRLF 日檔已含要寫的訊息時 `write` 回空、檔案不變；`ChatArchiver` 重跑不會卡在這個檔）先失敗、改完通過 [after: 8.1]
+- [ ] 8.3 `readDayFile` 的錯誤分類（Requirement: Merge and idempotent rewrite）：open 失敗時以 `lstat` 判斷名字本身是什麼，socket 回 `notRegularFile`，上層目錄 symlink 迴圈回 `unreadableOffset`。驗證：先寫的測試先失敗、改完通過 [after: 8.2]
+- [ ] 8.4 文件：README 與 CHANGELOG 說明只有日檔本身不跟隨 symlink（上層目錄如 `<chat_id>/` 會跟隨）；CHANGELOG 與 README 拿掉「維護者不在時的預設」這種流程用語；`getMessage` 在 pin 的 TDLib 對不存在的訊息回 404 `Not Found`，400 `Message not found` 來自其他請求，照實寫；spec 與 skill 跟著 8.2 改。驗證：人工核對；plugin tests 與 `swift test --skip E2ETests` 全過 [after: 8.3]

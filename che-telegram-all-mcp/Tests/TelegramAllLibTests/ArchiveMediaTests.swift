@@ -465,4 +465,19 @@ final class ArchiveMediaTests: XCTestCase {
         XCTAssertEqual(outcome, .alreadyPresent)
         XCTAssertFalse(hasQuarantineAttribute(old.appendingPathComponent("photo.jpg").path))
     }
+
+    /// A file that cannot be marked is not saved: the download fails, the temporary file is
+    /// removed and nothing is at the target.
+    func testMediaThatCannotBeQuarantinedIsNotSaved() async throws {
+        let root = scratch(), chatDir = root.appendingPathComponent("777")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        var marked: [URL] = []
+        let outcome = await ArchiveMedia.ensure(Self.media(7000, 2, type: "document", fileId: 70, name: "report.pdf"),
+                                                chatDir: chatDir, downloader: downloader, maxBytes: nil,
+                                                markQuarantined: { marked.append($0); throw CocoaError(.featureUnsupported) })
+        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(marked.map { $0.lastPathComponent.hasPrefix(".") }, [true], "the temporary file is marked, before the rename")
+        let mediaDir = ArchiveMedia.directory(chatDir: chatDir, messageId: 7000)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: mediaDir.path), [])
+    }
 }
