@@ -169,6 +169,8 @@ Input hardening + handler glue testability + log-format polish.
 
 ## [0.5.3] - 2026-04-26
 
+Not released on its own: there is no `v0.5.3` tag or GitHub Release. These changes first shipped in `v0.6.0` (2026-10-09).
+
 Type-safety + CLI-MCP parity hardening.
 
 ### Fixed
@@ -186,6 +188,8 @@ Type-safety + CLI-MCP parity hardening.
 
 ## [0.5.2] - 2026-04-26
 
+Not released on its own: there is no `v0.5.2` tag or GitHub Release. These changes first shipped in `v0.6.0` (2026-10-09).
+
 Internal refactor and test hardening — no behavior change for MCP callers.
 
 ### Refactored
@@ -197,6 +201,8 @@ Internal refactor and test hardening — no behavior change for MCP callers.
 - Test count: 139 → 150.
 
 ## [0.5.1] - 2026-04-26
+
+Not released on its own: there is no `v0.5.1` tag or GitHub Release. These changes first shipped in `v0.6.0` (2026-10-09).
 
 Internal refactor and test hardening — no behavior change for MCP callers.
 
@@ -254,6 +260,8 @@ Internal refactor and test hardening — no behavior change for MCP callers.
 
 ## [0.4.2] - 2026-04-17
 
+Not released on its own: there is no `v0.4.2` tag or GitHub Release. These changes first shipped in `v0.4.3` (2026-04-25).
+
 ### Refactored
 - **Extract `parseGetChatHistoryArgs` pure function (#7)**: Argument parsing + validation logic for `get_chat_history` handler is now in `Sources/CheTelegramAllMCPCore/HandlerArgs.swift`, testable without a live TDLib connection. Handler became 16 lines (down from 35). Introduces `GetChatHistoryArgs` struct and `HandlerArgError` for structured validation failures. 11 new unit tests lock down the #3 fromMsgId==0 auto-pagination rule, #4 param wiring, and #5/#6 validation boundaries.
 
@@ -288,6 +296,8 @@ Internal refactor and test hardening — no behavior change for MCP callers.
 
 ## [0.4.0] - 2026-04-15
 
+Not released on its own: there is no `v0.4.0` tag or GitHub Release. These changes first shipped in `v0.4.1` (2026-04-16).
+
 ### Added
 - **New MCP tool `dump_chat_to_markdown`**: one-shot export of chat history to a Markdown file. Paginates TDLib internally, batch-resolves sender names, groups messages by day, and writes to a caller-supplied `output_path`. Returns summary metadata (`path`, `message_count`, `date_range`, `senders`) — does NOT return Markdown content in the MCP response (avoids context bloat). Supports `max_messages`, `since_date`, `until_date`, `self_label` parameters.
 - **Library `TDLibClient.getChatHistory` extended** with three optional parameters: `maxMessages: Int?`, `sinceDate: Date?`, `untilDate: Date?`. When `maxMessages` is non-nil the method auto-paginates (newest → oldest) with `sinceDate` early-terminate. Date filters apply independently of `maxMessages` and may be combined with single-page fetches.
@@ -307,6 +317,8 @@ Internal refactor and test hardening — no behavior change for MCP callers.
 - The middle-tier tool `get_chat_history_full` was deliberately NOT added — JSON-batch responses to MCP are never the AI's end goal (it always re-formats to Markdown), so the middle tier is dead surface. See `openspec/archive/*-add-chat-history-export/design.md`.
 
 ## [0.3.0] - 2026-04-13
+
+Not released on its own: there is no `v0.3.0` tag or GitHub Release. These changes first shipped in `v0.4.1` (2026-04-16).
 
 ### Added
 - New `TelegramAllLib` Swift package target — standalone TDLib wrapper, no MCP SDK dependency
@@ -328,6 +340,8 @@ Internal refactor and test hardening — no behavior change for MCP callers.
 
 ## [0.2.0] - 2026-02-10
 
+Not released on its own: there is no `v0.2.0` tag or GitHub Release. These changes first shipped in `v0.4.1` (2026-04-16).
+
 ### Added
 - Auto-authentication via environment variables (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_2FA_PASSWORD`)
 - New tools: `create_group`, `add_chat_member`
@@ -337,6 +351,8 @@ Internal refactor and test hardening — no behavior change for MCP callers.
 - Tool count: 26 → 28
 
 ## [0.1.0] - 2026-02-08
+
+Not released on its own: there is no `v0.1.0` tag or GitHub Release. These changes first shipped in `v0.4.1` (2026-04-16).
 
 ### Added
 - Initial release with TDLib integration
