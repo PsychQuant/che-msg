@@ -47,7 +47,7 @@ plugin 的 wrapper 只把 `TELEGRAM_API_ID`、`TELEGRAM_API_HASH` 從 Keychain �
 - `KeychainCredentialSource` protocol：一個 `lookup(_:) async -> KeychainLookup`。
 - `SecurityCLICredentialSource`：正式版。初始化參數 `executable`（預設 `/usr/bin/security`）、`keychainPath`（預設 nil，即使用者的預設搜尋清單）、`timeout`（預設 10 秒）只給測試用：測試用假執行檔與暫存 Keychain 檔驗證行為，不需要環境變數開關。
 
-`TDLibClient.init` 多一個 `credentials: KeychainCredentialSource` 參數，預設 `SecurityCLICredentialSource()`，所以三個建構點（MCP server、`telegram-all` CLI 的兩處）都不用改，CLI 也一起得到 Keychain 讀取。`TDLibClient` 另提供 `lookUpKeychainCredential(_:) async -> String?` 給 `auth_run` 用，同一個注入來源。
+`TDLibClient.init` 多一個 `credentials: KeychainCredentialSource` 參數，預設 `SecurityCLICredentialSource()`，所以 MCP server 的建構點不用改。`telegram-all` CLI 的兩處後來改傳 `NoKeychainCredentialSource()`（#96）：CLI 的每個指令都會打開 TDLib，用 Keychain 會在登出時送出存好的電話號碼，也會和 `auth-phone` 搶先。`TDLibClient` 另提供 `lookUpKeychainCredential(_:) async -> String?` 給 `auth_run` 用，同一個注入來源。
 
 替代方案：直接在 `TDLibClient` 裡寫 `Process` 呼叫。被否決：無法在沒有 TDLib 的單元測試裡驗證逾時、exit status 與不洩值。
 

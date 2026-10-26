@@ -452,7 +452,9 @@ public final class TDLibClient {
     /// An explicit phone number (`auth_run`, `auth_send_phone`, the CLI): the
     /// current state gets no automatic one after it (#96).
     public func sendPhoneNumber(_ phoneNumber: String) async throws {
-        lock.withLock { credentialLookups.explicitSubmission() }
+        // Only while TDLib waits for a phone number: a phone number sent at
+        // another step must not cancel that step's automatic value.
+        lock.withLock { if authState == .waitingForPhoneNumber { credentialLookups.explicitSubmission() } }
         try await requestPhoneNumber(phoneNumber)
     }
 
@@ -479,7 +481,7 @@ public final class TDLibClient {
     /// An explicit 2FA password: the current state gets no automatic one after
     /// it (#96).
     public func sendPassword(_ password: String) async throws {
-        lock.withLock { credentialLookups.explicitSubmission() }
+        lock.withLock { if authState == .waitingForPassword { credentialLookups.explicitSubmission() } }
         try await requestPassword(password)
     }
 
