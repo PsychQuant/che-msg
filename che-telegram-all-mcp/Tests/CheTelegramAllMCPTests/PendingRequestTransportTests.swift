@@ -94,6 +94,36 @@ final class PendingRequestTransportTests: XCTestCase {
         XCTAssertEqual(count, 0)
     }
 
+    /// The SDK tries a single message as a response before a request: with a
+    /// `result`, or an `error` it can read, it is a response even with a
+    /// method, and gets no answer. An `error` it cannot read makes it a request.
+    func testAMessageWithAMethodAndAResultIsAResponse() async throws {
+        let tracker = await PendingRequestTransport(wrapping: ScriptedTransport([
+            #"{"jsonrpc":"2.0","id":20,"method":"tools/list","result":{}}"#,
+            #"{"jsonrpc":"2.0","id":21,"method":"tools/list","error":{"code":-32600,"message":"x"}}"#,
+            #"{"jsonrpc":"2.0","id":22,"method":"tools/list","error":"not an error object"}"#,
+        ]))
+        try await readAll(tracker)
+        var count = await tracker.unansweredCount
+        XCTAssertEqual(count, 1, "only id 22 is a request")
+        try await send(tracker, response("22"))
+        count = await tracker.unansweredCount
+        XCTAssertEqual(count, 0)
+    }
+
+    /// A number JSON can hold but Swift cannot (1e999) makes the SDK's params
+    /// unreadable: it answers such a request, alone or in a batch, at once
+    /// with a random id, so the request is not counted.
+    func testARequestWithParamsTheSDKCannotReadIsNotCounted() async throws {
+        let tracker = await PendingRequestTransport(wrapping: ScriptedTransport([
+            #"{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"n":1e999}}"#,
+            "[\(request("24")),{\"jsonrpc\":\"2.0\",\"id\":25,\"method\":\"tools/call\",\"params\":{\"n\":1e999}}]",
+        ]))
+        try await readAll(tracker)
+        let count = await tracker.unansweredCount
+        XCTAssertEqual(count, 0)
+    }
+
     /// The SDK reads a null id as the empty string and answers under it.
     func testANullIDIsCountedAsTheSDKReadsIt() async throws {
         let tracker = await PendingRequestTransport(wrapping: ScriptedTransport([request("null")]))

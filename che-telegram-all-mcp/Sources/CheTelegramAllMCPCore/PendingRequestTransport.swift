@@ -73,24 +73,9 @@ actor PendingRequestTransport: Transport {
     /// still answers it (a cancel that comes before the SDK has started the
     /// handler is ignored; one that comes after it has started but before the
     /// handler runs leaves the request unanswered, and `run()` then waits
-    /// for the bound). Follows how swift-sdk 0.12's `Server.start` reads a
-    /// message: a batch is read only when every item is a request or a
-    /// notification, else it gets one error with a random id; a client's
-    /// response gets no answer; a message that is none of these is answered
-    /// inside the receive loop.
+    /// for the bound).
     private func read(_ data: Data) {
-        let messages: [Envelope]
-        if let batch = try? JSONDecoder().decode([Envelope].self, from: data) {
-            guard !batch.isEmpty, batch.allSatisfy(\.isBatchItem) else { return }
-            messages = batch
-        } else if let message = try? JSONDecoder().decode(Envelope.self, from: data), !message.isResponse {
-            messages = [message]
-        } else {
-            return
-        }
-        for message in messages where message.isVersion2 && message.method != nil {
-            if let id = message.id { unanswered[id, default: 0] += 1 }
-        }
+        for id in Self.laterAnsweredRequestIDs(in: data) { unanswered[id, default: 0] += 1 }
     }
 
     private func remove(_ id: ID) {
@@ -98,34 +83,66 @@ actor PendingRequestTransport: Transport {
         unanswered[id] = count > 1 ? count - 1 : nil
     }
 
-    /// The JSON-RPC objects in `data`: one, or the items of a batch.
-    private static func messages(in data: Data) -> [Envelope] {
-        if let batch = try? JSONDecoder().decode([Envelope].self, from: data) { return batch }
-        return (try? JSONDecoder().decode(Envelope.self, from: data)).map { [$0] } ?? []
+    /// The ids of the requests in `data` that the SDK answers in a task of
+    /// their own. Decodes `data` the way swift-sdk 0.12's `Server.start` does,
+    /// in the same order and with the SDK's own message types: a batch is read
+    /// only when every item is a request or a notification (else it gets one
+    /// error with a random id) and is answered inside the receive loop; a
+    /// single message is a response first (no answer), then a request; anything
+    /// else is answered inside the receive loop.
+    private static func laterAnsweredRequestIDs(in data: Data) -> [ID] {
+        let decoder = JSONDecoder()
+        if let items = try? decoder.decode([Value].self, from: data) {
+            return batchRequestIDs(items) ?? []
+        }
+        if (try? decoder.decode(Response<AnyRequestMethod>.self, from: data)) != nil { return [] }
+        if let request = try? decoder.decode(Request<AnyRequestMethod>.self, from: data) { return [request.id] }
+        return []
     }
 
-    /// The fields of a JSON-RPC object that decide whether it is answered.
-    private struct Envelope: Decodable {
-        let isVersion2: Bool
-        let hasID: Bool
-        /// The id as the SDK reads it (null is the empty string); nil when
-        /// there is none or it is not a string or an integer.
+    /// The ids of the requests in a batch, or nil when the SDK cannot read it:
+    /// it re-encodes each item and reads one with an `id` key as a request,
+    /// any other as a notification.
+    private static func batchRequestIDs(_ items: [Value]) -> [ID]? {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        var ids: [ID] = []
+        for item in items {
+            guard case .object(let fields) = item, let data = try? encoder.encode(item) else { return nil }
+            if fields["id"] != nil {
+                guard let request = try? decoder.decode(Request<AnyRequestMethod>.self, from: data) else { return nil }
+                ids.append(request.id)
+            } else {
+                guard (try? decoder.decode(Message<AnyMessageNotification>.self, from: data)) != nil else { return nil }
+            }
+        }
+        return ids
+    }
+
+    /// The SDK's type-erased method and notification (`AnyMethod`,
+    /// `AnyNotification`) are internal; these have the same parameters and
+    /// result, so the SDK's `Request`, `Response` and `Message` decode with
+    /// them exactly as they do inside the SDK.
+    private enum AnyRequestMethod: MCP.Method {
+        static let name = ""
+        typealias Parameters = Value
+        typealias Result = Value
+    }
+
+    private struct AnyMessageNotification: MCP.Notification {
+        static let name = ""
+        typealias Parameters = Value
+    }
+
+    /// The JSON-RPC objects in `data`: one, or the items of a batch.
+    private static func messages(in data: Data) -> [Sent] {
+        if let batch = try? JSONDecoder().decode([Sent].self, from: data) { return batch }
+        return (try? JSONDecoder().decode(Sent.self, from: data)).map { [$0] } ?? []
+    }
+
+    /// What the server sends: a response has an id and no method.
+    private struct Sent: Decodable {
         let id: ID?
         let method: String?
-        let isResponse: Bool
-
-        /// Whether the SDK can read this as an item of a batch.
-        var isBatchItem: Bool { isVersion2 && method != nil && (!hasID || id != nil) }
-
-        private enum Keys: String, CodingKey { case jsonrpc, id, method, result, error }
-
-        init(from decoder: Decoder) throws {
-            let object = try decoder.container(keyedBy: Keys.self)
-            isVersion2 = (try? object.decode(String.self, forKey: .jsonrpc)) == "2.0"
-            hasID = object.contains(.id)
-            id = hasID ? try? object.decode(ID.self, forKey: .id) : nil
-            method = try? object.decode(String.self, forKey: .method)
-            isResponse = object.contains(.result) || object.contains(.error)
-        }
     }
 }

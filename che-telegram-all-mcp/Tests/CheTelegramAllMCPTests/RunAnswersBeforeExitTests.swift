@@ -125,6 +125,22 @@ final class RunAnswersBeforeExitTests: XCTestCase {
         XCTAssertFalse(isOpen)
     }
 
+    /// A request whose params the SDK cannot read is answered at once with a
+    /// random id; `run()` must not wait for an answer under its own id.
+    func testARequestTheSDKCannotReadDoesNotHoldRun() async throws {
+        let transport = ScriptedTransport([ScriptedMessages.initialize(id: 1),
+                                           #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"n":1e999}}"#])
+        let server = try await makeServer(transport, answerTimeout: 5)
+        let start = ContinuousClock.now
+        try await server.run()
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(2), "run() waited for an answer that never comes")
+        let objects = await transport.sentObjects
+        XCTAssertEqual(objects.count, 2, "\(objects)")
+        XCTAssertTrue(objects.contains { $0["id"] as? Int == 1 && $0["result"] != nil }, "\(objects)")
+        XCTAssertTrue(objects.contains { $0["id"] is String && $0["error"] != nil },
+                      "the SDK answers the unreadable request with an error under a random id: \(objects)")
+    }
+
     func testTheDefaultBoundIsTheTDLibCloseTimeout() {
         XCTAssertEqual(CheTelegramAllMCPServer.defaultAnswerTimeout, 30)
         XCTAssertEqual(CheTelegramAllMCPServer.defaultAnswerTimeout, TDLibLifecycle<TDLibClient>.closeTimeout)
