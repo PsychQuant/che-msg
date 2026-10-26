@@ -9,8 +9,21 @@
 #        scans bin/ and hooks/, plugin-deploy only bin/), and moving them out
 #        silently disabled its pin detection and release gate (#138 verify
 #        round 1).
+#        The plugin also has only the components a check here reviews
+#        (PsychQuant/che-msg#54, mirroring tests/che-archive-lines): the root
+#        holds exactly .claude-plugin, .mcp.json, CHANGELOG.md, README.md, bin,
+#        hooks and skills; .claude-plugin/ only plugin.json; hooks/ only
+#        check-mcp.sh and hooks.json, whose only hook is the SessionStart
+#        command; skills/ exactly the six skills, each with only SKILL.md (a new
+#        skill must be added here and to (h) on purpose). plugin.json and the
+#        repository marketplace entry carry metadata keys only (no hooks,
+#        skills, mcpServers, …); the entry is the only one for this plugin and
+#        its source is ./plugins/che-telegram-mcp.
 #   (b)  every .mcp.json command is ${CLAUDE_PLUGIN_ROOT}/bin/<name>-wrapper.sh
 #        and resolves to an executable file
+#        .mcp.json declares exactly telegram-all and telegram-bot, each with
+#        only type, command and description (no env, args, … that no check
+#        reviews; #54).
 #   (b2) every wrapper assigns DESIRED_VERSION exactly once, as a literal x.y.z.
 #        devtools reads the LAST assignment, so a later or conditional override
 #        makes the pin unreadable.
@@ -57,6 +70,14 @@
 #        security fail too; a command that cannot be parsed is reported as
 #        such. It guards against mistakes, not evasion: a pipe through `env`
 #        or `xargs`, or a quoted command name, is not recognised.
+#   (l)  the README's Pre-approved table (| Skill | Pre-approved | Not
+#        pre-approved |) has one row per skill with a non-empty allowed-tools,
+#        and each row's Pre-approved set equals that skill's allowed-tools (order
+#        ignored; tools on telegram-bot are written bot:<tool>); a row for a
+#        skill that does not exist fails; a tool the row lists as not
+#        pre-approved must not be in allowed-tools. No table found fails
+#        (PsychQuant/che-msg#86: the table is what users read, and nothing
+#        compared it with the frontmatter).
 #   (fm) every skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (see below)
 #
@@ -148,11 +169,79 @@ if os.path.isdir(bindir):
         elif not os.access(p, os.X_OK):
             bad("a", f"bin/{name} is not executable")
 
+# (a) only the components a check reviews (#54; same rule as che-archive-lines)
+IGNORED = {".DS_Store"}
+def listing(path):
+    return sorted(set(os.listdir(path)) - IGNORED) if os.path.isdir(path) else None
+SKILLS = ["archive-telegram", "auth", "chats", "search", "send", "telegram-messaging"]
+expected = {
+    "": [".claude-plugin", ".mcp.json", "CHANGELOG.md", "README.md", "bin", "hooks", "skills"],
+    ".claude-plugin": ["plugin.json"],
+    "hooks": ["check-mcp.sh", "hooks.json"],
+    "skills": SKILLS,
+}
+for name in SKILLS:
+    expected[f"skills/{name}"] = ["SKILL.md"]
+for rel, want in expected.items():
+    got = listing(os.path.join(root, rel))
+    if got != want:
+        bad("a", f"{rel or '.'}/ contains {got}, expected exactly {want}")
+# Compared without quotes: (c) decides how ${CLAUDE_PLUGIN_ROOT} must be quoted.
+HOOK_COMMAND = "${CLAUDE_PLUGIN_ROOT}/hooks/check-mcp.sh"
+def load_json(path):
+    """A parsed JSON file, or None after reporting under (a) why it is not checked."""
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, ValueError, RecursionError) as e:
+        bad("a", f"{os.path.relpath(path, root)} cannot be read ({type(e).__name__}) — not checked")
+        return None
+hooks_cfg = load_json(os.path.join(root, "hooks", "hooks.json"))
+if isinstance(hooks_cfg, dict):
+    if set(hooks_cfg) != {"hooks"}:
+        bad("a", f"hooks/hooks.json has top-level keys {sorted(hooks_cfg)}, expected only ['hooks']")
+    events = hooks_cfg.get("hooks", {})
+    if sorted(events) != ["SessionStart"]:
+        bad("a", f"hooks/hooks.json declares events {sorted(events)}, expected only ['SessionStart']")
+    commands = [h.get("command") for m in events.get("SessionStart", []) for h in m.get("hooks", [])]
+    if [str(c).replace('"', "") for c in commands] != [HOOK_COMMAND]:
+        bad("a", f"hooks/hooks.json SessionStart runs {commands}, expected only [{HOOK_COMMAND!r}]")
+market = os.path.join(root, "..", "..", ".claude-plugin", "marketplace.json")
+if not os.path.isfile(market):
+    bad("a", "repo .claude-plugin/marketplace.json not found — cannot check the plugin's entry")
+else:
+    market_cfg = load_json(market)
+    entries = [e for e in market_cfg.get("plugins", []) if isinstance(e, dict) and e.get("name") == "che-telegram-mcp"] \
+        if isinstance(market_cfg, dict) else None
+    if entries is None:
+        pass
+    elif len(entries) != 1:
+        bad("a", f"marketplace.json has {len(entries)} che-telegram-mcp entries, expected 1")
+    else:
+        extra = set(entries[0]) - {"name", "version", "description", "author", "source", "category"}
+        if extra:
+            bad("a", f"marketplace entry declares {sorted(extra)} (Claude Code merges them into the plugin)")
+        if entries[0].get("source") != "./plugins/che-telegram-mcp":
+            bad("a", f"marketplace entry source is {entries[0].get('source')!r}, not ./plugins/che-telegram-mcp (the directory this test checks)")
+manifest = os.path.join(root, ".claude-plugin", "plugin.json")
+manifest_cfg = load_json(manifest) if os.path.isfile(manifest) else None
+if isinstance(manifest_cfg, dict):
+    extra = set(manifest_cfg) - {"name", "version", "description", "author",
+                                 "homepage", "repository", "license", "keywords"}
+    if extra:
+        bad("a", f"plugin.json declares {sorted(extra)} (components or behaviour no check reviews)")
+
 # ---------- (b) / (b2) .mcp.json ----------
 cfg = json.load(open(os.path.join(root, ".mcp.json")))
 servers = cfg.get("mcpServers", cfg)
 if not servers:
     bad("b", ".mcp.json declares no servers")
+if sorted(servers) != ["telegram-all", "telegram-bot"]:
+    bad("b", f".mcp.json declares servers {sorted(servers)}, expected exactly ['telegram-all', 'telegram-bot']")
+for name, spec in servers.items():
+    extra = set(spec) - {"type", "command", "description"} if isinstance(spec, dict) else {"<not an object>"}
+    if extra:
+        bad("b", f".mcp.json: {name} declares {sorted(extra)} (only type, command and description are reviewed)")
 for name, spec in servers.items():
     cmd = spec.get("command", "")
     if not re.fullmatch(r"\$\{CLAUDE_PLUGIN_ROOT\}/bin/[A-Za-z0-9._-]+-wrapper\.sh", cmd):
@@ -371,6 +460,60 @@ for rel in keychain_command_files():
         elif not toks or toks[-1] != "-w" or toks.count("-w") != 1:
             bad("k", f"{rel}:{n}: `-w` is not the last argument (a secret after it stays in shell history): {line.strip()}")
 
+# (l) The README's pre-approved table says the same as each skill's allowed-tools (#86).
+TABLE_HEADER = "| Skill | Pre-approved | Not pre-approved |"
+readme_lines = readme.splitlines()
+start = next((i for i, l in enumerate(readme_lines) if l.strip() == TABLE_HEADER), None)
+if start is None:
+    bad("l", f"README has no pre-approved table (header {TABLE_HEADER!r}) — cannot check")
+else:
+    TOOL = r"(?:bot:)?[a-z][a-z0-9_]*"
+    rows = {}
+    k = start + 1
+    if k >= len(readme_lines) or not re.fullmatch(r"\|[-:\s|]+\|", readme_lines[k].strip()):
+        bad("l", f"README pre-approved table has no separator row after its header (line {start + 2})")
+    k += 1
+    while k < len(readme_lines) and readme_lines[k].lstrip().startswith("|"):
+        line = readme_lines[k]
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        m = re.fullmatch(r"`([a-z0-9-]+)`", cells[0]) if len(cells) == 3 else None
+        if not m:
+            bad("l", f"README line {k + 1}: not a row of `skill` | tools | tools: {line.strip()}")
+        else:
+            pre_cell, not_cell = cells[1], cells[2]
+            pre = set() if pre_cell in ("—", "-") else set(re.findall(f"`({TOOL})`", pre_cell))
+            if pre_cell not in ("—", "-") and not pre:
+                bad("l", f"README line {k + 1}: Pre-approved cell lists no `tool`: {pre_cell}")
+            if m.group(1) in rows:
+                bad("l", f"README pre-approved table has two rows for {m.group(1)}")
+            rows[m.group(1)] = (pre, set(re.findall(f"\\*\\*`({TOOL})`\\*\\*", not_cell)))
+        k += 1
+    have = {}
+    for path, skill in skill_files:
+        if skill in meta:
+            names = set()
+            for t in tool_list(meta[skill].get("allowed-tools")):
+                mt = prefix.match(t)
+                if mt:
+                    names.add(mt.group(2) if mt.group(1) == "all" else f"bot:{mt.group(2)}")
+            if names:
+                have[skill] = names
+    skill_names = {skill for _, skill in skill_files}
+    for skill in sorted(set(have) | set(rows) | (unreadable & skill_names)):
+        if skill in unreadable:
+            bad("l", f"skills/{skill}: frontmatter cannot be read — cannot compare it with its table row")
+        elif skill not in skill_names:
+            bad("l", f"README pre-approved table has a row for {skill}, which is not a skill")
+        elif skill not in rows:
+            bad("l", f"README pre-approved table has no row for {skill}, which pre-approves {sorted(have[skill])}")
+        else:
+            pre, not_pre = rows[skill]
+            mine = have.get(skill, set())
+            if pre != mine:
+                bad("l", f"{skill}: the README pre-approves {sorted(pre)}, its allowed-tools has {sorted(mine)}")
+            if not_pre & mine:
+                bad("l", f"{skill}: allowed-tools has {sorted(not_pre & mine)}, which the README lists as not pre-approved")
+
 for msg in install_refs.problems("che-telegram-mcp", root, os.path.join(root, "..", ".."), docs_url_required=True):
     bad("j", msg)
 
@@ -395,7 +538,7 @@ report() {  # $1 = tag, $2 = description when clean
     fi
 }
 
-report a  "bin/ holds only executable *-wrapper.sh files"
+report a  "only reviewed components: bin/ wrappers, hooks/, skills/, metadata-only manifests"
 report b  ".mcp.json commands are \${CLAUDE_PLUGIN_ROOT}/bin/*-wrapper.sh and executable"
 report b2 "every wrapper assigns DESIRED_VERSION exactly once, as a literal"
 report c  "hook commands quote \${CLAUDE_PLUGIN_ROOT}"
@@ -412,6 +555,7 @@ report h  "auth/chats/search/send/archive-telegram set disable-model-invocation:
 report i  "no skill sets hooks or runs !\`command\` blocks"
 report j  "the plugin and the repository README name the marketplace this repository publishes"
 report k  "Keychain commands end with a bare -w (the secret is prompted for, not passed)"
+report l  "the README's pre-approved table matches each skill's allowed-tools"
 
 echo
 if [ "$FAILURES" -gt 0 ]; then

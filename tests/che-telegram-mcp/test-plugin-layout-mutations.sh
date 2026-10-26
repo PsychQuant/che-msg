@@ -474,6 +474,58 @@ expect_fail "a non-UTF-8 file with a Keychain command is still checked (#51 veri
 P=$(fresh); printf '%s\n' '' 'security add-generic-password -a x -s Y -pSECRET -U -w' >> "$P/README.md"
 expect_fail "-p attached to its value (#51 verify r2)" "README\.md:[0-9]+: .-p. / .-X."
 
+# ---------- #54: only reviewed components ((a) whitelist, (b) .mcp.json keys) ----------
+# jedit <file> <python statement on d>: edit a JSON file in the scratch tree
+jedit() { python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); exec(sys.argv[2]); json.dump(d, open(p, "w"), indent=2)' "$1" "$2"; }
+P=$(fresh); printf '%s\n' '{"hooks": {"PreToolUse": []}}' > "$P/settings.json"
+expect_fail "a settings.json with hooks at the plugin root (#54)" "^    \./ contains"
+P=$(fresh); mkdir "$P/agents"; printf '%s\n' '---' 'name: x' '---' > "$P/agents/x.md"
+expect_fail "an agents/ directory (#54)" "^    \./ contains"
+P=$(fresh); mkdir "$P/monitors"; : > "$P/monitors/m.json"
+expect_fail "a monitors/ directory (#54)" "^    \./ contains"
+P=$(fresh); mkdir "$P/mods"; : > "$P/mods/tool-check.js"
+expect_fail "a mods/ directory with a tool.check handler (#54)" "^    \./ contains"
+P=$(fresh); printf '%s\n' '{}' > "$P/.lsp.json"
+expect_fail "a .lsp.json at the plugin root (#54)" "^    \./ contains"
+P=$(fresh); jedit "$P/.claude-plugin/plugin.json" 'd["hooks"] = {"SessionStart": []}'
+expect_fail "plugin.json with inline hooks (#54)" "plugin\.json declares"
+P=$(fresh); jedit "$P/.claude-plugin/plugin.json" 'd["skills"] = "./other-skills"'
+expect_fail "plugin.json with a skills path (#54)" "plugin\.json declares"
+P=$(fresh); jedit "$SCRATCH/tree/.claude-plugin/marketplace.json" '[e.__setitem__("hooks", {"SessionStart": []}) for e in d["plugins"] if e["name"] == "che-telegram-mcp"]'
+expect_fail "the marketplace entry declares hooks (#54)" "marketplace entry declares"
+P=$(fresh); jedit "$SCRATCH/tree/.claude-plugin/marketplace.json" '[e.__setitem__("source", "./plugins/elsewhere") for e in d["plugins"] if e["name"] == "che-telegram-mcp"]'
+expect_fail "the marketplace entry's source points elsewhere (#54)" "marketplace entry source is"
+P=$(fresh); jedit "$P/hooks/hooks.json" 'd["hooks"]["PreToolUse"] = [{"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/check-mcp.sh"}]}]'
+expect_fail "hooks.json with a second event, quoted correctly (#54)" "hooks\.json .*PreToolUse"
+P=$(fresh); printf '%s\n' '#!/bin/bash' > "$P/hooks/extra.sh"
+expect_fail "an extra file in hooks/ (#54)" "hooks/ contains"
+P=$(fresh); mkdir "$P/skills/extra"; printf '%s\n' '---' 'name: extra' 'description: x' '---' 'body' > "$P/skills/extra/SKILL.md"
+expect_fail "an extra skill without allowed-tools (#54)" "skills/ contains"
+P=$(fresh); : > "$P/skills/chats/notes.md"
+expect_fail "an extra file next to a SKILL.md (#54)" "skills/chats/ contains"
+P=$(fresh); jedit "$P/.mcp.json" 'd["telegram-extra"] = {"type": "stdio", "command": "${CLAUDE_PLUGIN_ROOT}/bin/che-telegram-all-mcp-wrapper.sh"}'
+expect_fail "a third server in .mcp.json (#54)" "\.mcp\.json .*telegram-extra"
+P=$(fresh); jedit "$P/.mcp.json" 'd["telegram-all"]["env"] = {"TELEGRAM_2FA_PASSWORD": "x"}'
+expect_fail "a server with an env block in .mcp.json (#54)" "telegram-all declares .*env"
+
+# ---------- #86: README pre-approved table matches each skill's allowed-tools ((l)) ----------
+P=$(fresh); perl -0pi -e 's{(allowed-tools:(\r?)\n(?:  - .*\n)*)}{$1  - mcp__plugin_che-telegram-mcp_telegram-all__get_me$2\n}' "$P/skills/chats/SKILL.md"
+expect_fail "a skill pre-approves a tool the table does not list (#86)" "FAIL \(l\)"
+P=$(fresh); perl -pi -e 's{^\| `chats` \| `auth_status`, `get_chats` \|}{| `chats` | `auth_status`, `get_chats`, `get_me` |}' "$P/README.md"
+expect_fail "the table lists a tool the skill does not pre-approve (#86)" "FAIL \(l\)"
+P=$(fresh); perl -pi -e 's{^(\| `chats` .*)$}{$1\n| `ghost` | `auth_status` | — |}' "$P/README.md"
+expect_fail "the table has a row for a skill that does not exist (#86)" "ghost"
+P=$(fresh); perl -ni -e 'print unless /^\| `chats` \|/' "$P/README.md"
+expect_fail "the table has no row for a skill that pre-approves tools (#86)" "no row for chats"
+P=$(fresh); perl -0pi -e 's{(allowed-tools:(\r?)\n(?:  - .*\n)*)}{$1  - mcp__plugin_che-telegram-mcp_telegram-all__auth_run$2\n}' "$P/skills/auth/SKILL.md"
+expect_fail "only the auth skill gains auth_run, the table is unchanged (#48's half edit, #86)" "auth_run"
+P=$(fresh); perl -pi -e 's{^\| Skill \| Pre-approved \| Not pre-approved \|}{| Skill | Allowed | Not allowed |}' "$P/README.md"
+expect_fail "the table's header is rewritten, so the table cannot be found (#86)" "FAIL \(l\)"
+P=$(fresh); perl -pi -e 's{^\| `search` \| `auth_status`, `search_chats`, `search_messages`, `get_chat_history` \|}{| `search` | `get_chat_history`, `search_messages`, `auth_status`, `search_chats` |}' "$P/README.md"
+expect_pass "the same tools in another order in a row (#86)"
+P=$(fresh); perl -0pi -e 's{(allowed-tools:(\r?)\n(?:  - .*\n)*)}{$1  - mcp__plugin_che-telegram-mcp_telegram-all__send_message$2\n}' "$P/skills/send/SKILL.md"
+expect_fail "a skill pre-approves a tool its row lists as not pre-approved (#86)" "send_message"
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
