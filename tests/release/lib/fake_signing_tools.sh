@@ -11,6 +11,8 @@
 #           extra-entitlement  a signed binary carries an entitlement
 #           not-notarized      spctl does not accept the binary as notarized
 #           rejected-notarized spctl says "rejected" but names a notarized source
+#           accepted-unnotarized  spctl says "accepted" and exits 0, but names
+#                              a source that is not notarized
 #           notarize-fails-second  the second notarytool submit fails
 #           verify-fails       codesign --verify reports a broken signature and fails
 #           split-output       security and file write their listing in two
@@ -91,6 +93,7 @@ EOF
 echo "spctl \$*" >> "$log"
 if [ "$mode" = not-notarized ]; then echo "\$4: rejected"; echo "source=Unnotarized Developer ID"; exit 3; fi
 if [ "$mode" = rejected-notarized ]; then echo "\$4: rejected"; echo "source=Notarized Developer ID"; exit 3; fi
+if [ "$mode" = accepted-unnotarized ]; then echo "\$4: accepted"; echo "source=Developer ID"; exit 0; fi
 echo "\$4: accepted"; echo "source=Notarized Developer ID"
 [ "$mode" = split-output ] && yes 'a long listing goes on after the line that matters' | head -n 5000
 exit 0

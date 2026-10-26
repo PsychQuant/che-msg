@@ -30,6 +30,8 @@
 #      entitlements plist and a bad SPCTL_TIMEOUT_SECONDS are refused before
 #      codesign; signed entitlements that differ, and an spctl "rejected", fail;
 #      the notarization's temp files are removed.
+#  10b. spctl's "accepted" with a source that is not notarized fails: both the
+#      verdict and the source are required (#94).
 #  12. A signature that does not verify right after signing stops the run
 #      with codesign's reason on stderr, not silently.
 #  11. Output that a reader stops reading at its first match (an identity
@@ -239,6 +241,12 @@ test_case "spctl says rejected but names a notarized source"
 D="$SCRATCH/rejected-notarized"; make_env "$D" rejected-notarized
 run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile -- "$D/Bin"
 if [ "$RC" -ne 0 ]; then pass "fails (exit $RC)"; else fail "exit 0"; fi
+
+test_case "spctl says accepted but names a source that is not notarized (#94)"
+D="$SCRATCH/accepted-unnotarized"; make_env "$D" accepted-unnotarized
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile -- "$D/Bin"
+if [ "$RC" -ne 0 ]; then pass "fails (exit $RC)"; else fail "exit 0"; fi
+case "$OUT" in *"does not accept"*"as notarized"*) pass "says it is not accepted as notarized" ;; *) fail "no message: $(printf '%s\n' "$OUT" | tail -2)" ;; esac
 
 test_case "the notarization's temp files are removed"
 D="$SCRATCH/temp-files"; make_env "$D"
