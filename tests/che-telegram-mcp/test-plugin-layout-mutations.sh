@@ -454,6 +454,13 @@ expect_fail "a README Keychain command with the secret after -w (#51)" "FAIL \(k
 P=$(fresh); printf '%s\n' '    echo "  security add-generic-password -a x -s Y -w VALUE -U" >&2' >> "$P/bin/che-telegram-bot-mcp-wrapper.sh"
 expect_fail "a wrapper hint with a value after -w (#51)" "che-telegram-bot-mcp-wrapper.sh:[0-9]+: .-w. is not the last"
 
+P=$(fresh); printf '%s\n' '' 'security add-generic-password -a x -s TELEGRAM_BOT_TOKEN -w "hunter2"' >> "$P/skills/send/SKILL.md"
+expect_fail "a skill with a Keychain command that has a value (#51 verify)" "skills/send/SKILL\.md:[0-9]+: .-w. is not the last"
+P=$(fresh); printf '%s\n' 'security add-generic-password -a x -s Y -p secret -U -w' > "$P/hooks/.notes"
+expect_fail "-p with a value in a dotfile under hooks/ (#51 verify)" "hooks/\.notes:[0-9]+: .-p. / .-X."
+P=$(fresh); printf '%s\n' '' "printf '%s' \"\$TOKEN\" | security add-generic-password -a x -s Y -U -w" >> "$P/README.md"
+expect_fail "a value piped into security (#51 verify)" "a value is piped into security"
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

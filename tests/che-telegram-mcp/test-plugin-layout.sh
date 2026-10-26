@@ -48,11 +48,13 @@
 #        must have one) and its #anchor point at this README. The five rules
 #        are in tests/lib/install_refs.py (PsychQuant/che-msg#42: five such
 #        places still named the old marketplace after the move).
-#   (k)  every `security add-generic-password` command in the README, hooks/
-#        and bin/ ends with a bare `-w`, so security prompts for the secret
+#   (k)  every `security add-generic-password` / `add-internet-password`
+#        command in any plugin file (the top-level CHANGELOG.md excepted, as
+#        for (j)) ends with a bare `-w`, so security prompts for the secret
 #        instead of taking it as an argument, which would stay in the shell
-#        history and show in the process list (PsychQuant/che-msg#51). A
-#        command that cannot be parsed counts as a violation.
+#        history and show in the process list (PsychQuant/che-msg#51). `-p` and
+#        `-X` (other ways to pass the value) and a value piped into security
+#        fail too; a command that cannot be parsed is reported as such.
 #   (fm) every skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (see below)
 #
@@ -324,13 +326,12 @@ for name in ("auth", "chats", "search", "send", "archive-telegram"):
 import install_refs
 # (k) Keychain commands take the secret from a prompt, never from an argument.
 def keychain_command_files():
-    yield "README.md"
-    for sub in ("hooks", "bin"):
-        d = os.path.join(root, sub)
-        if os.path.isdir(d):
-            for name in sorted(os.listdir(d)):
-                if os.path.isfile(os.path.join(d, name)) and not name.startswith("."):
-                    yield f"{sub}/{name}"
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            rel = os.path.relpath(os.path.join(dirpath, name), root)
+            if rel != "CHANGELOG.md":
+                yield rel
 for rel in keychain_command_files():
     try:
         with open(os.path.join(root, rel), encoding="utf-8") as fh:
@@ -339,17 +340,28 @@ for rel in keychain_command_files():
         bad("k", f"{rel}: cannot be read ({e}) — not checked")
         continue
     for n, line in enumerate(lines, 1):
-        i = line.find("add-generic-password")
-        if i < 0:
+        m = re.search(r"add-(generic|internet)-password", line)
+        if not m:
+            continue
+        if re.search(r"\|\s*(sudo\s+)?(/usr/bin/)?security\s+add-(generic|internet)-password", line):
+            bad("k", f"{rel}:{n}: a value is piped into security (let it prompt instead): {line.strip()}")
             continue
         # The command runs to the end of the line, or to the closing quote of
-        # the echo that prints it (optionally followed by a redirection).
-        cmd = re.sub(r'"\s*(>&\s*\d+)?\s*$', "", line[i:])
-        try:
-            toks = shlex.split(cmd)
-        except ValueError:
-            toks = []
-        if not toks or toks[-1] != "-w" or toks.count("-w") != 1:
+        # the echo that prints it (optionally followed by a redirection): try
+        # the line as it is first, then without that closing quote.
+        toks = None
+        for cmd in (line[m.start():], re.sub(r'"\s*(>&\s*\d+)?\s*$', "", line[m.start():])):
+            try:
+                toks = shlex.split(cmd)
+                break
+            except ValueError:
+                continue
+        if toks is None:
+            bad("k", f"{rel}:{n}: cannot be parsed, check it by hand: {line.strip()}")
+            continue
+        if "-p" in toks or "-X" in toks:
+            bad("k", f"{rel}:{n}: `-p` / `-X` pass the secret as an argument: {line.strip()}")
+        elif not toks or toks[-1] != "-w" or toks.count("-w") != 1:
             bad("k", f"{rel}:{n}: `-w` is not the last argument (a secret after it stays in shell history): {line.strip()}")
 
 for msg in install_refs.problems("che-telegram-mcp", root, os.path.join(root, "..", ".."), docs_url_required=True):
