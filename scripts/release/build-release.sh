@@ -25,8 +25,10 @@
 # (and no untracked file in a package's Sources), because the release must be
 # reproducible from the commit its tag will point at; the other modes check
 # consistency only and warn about uncommitted changes. Signing modes also run
-# sign-and-notarize.sh --preflight. The output directory appears only when
-# every file in it is done.
+# sign-and-notarize.sh --preflight. In every mode, each package's
+# Package.resolved must be tracked and present, and every swift build uses
+# exactly its versions (--force-resolved-versions). The output directory
+# appears only when every file in it is done.
 
 set -euo pipefail
 
@@ -93,14 +95,22 @@ fi
 # Every build uses exactly the dependency versions recorded in the package's
 # tracked Package.resolved (PsychQuant/che-msg#92); swift-sdk and
 # swift-argument-parser are ranges, so without it the build would use whatever
-# this checkout last resolved, and nothing would record it.
+# this checkout last resolved, and nothing would record it. The file must also be
+# on disk: with an earlier .build, a missing file does not fail the build, which
+# then uses that earlier resolution.
 for entry in "${PACKAGES[@]}"; do
     pkg=${entry%%:*}
     if ! git -C "$ROOT" ls-files --error-unmatch -- "$pkg/Package.resolved" >/dev/null 2>&1; then
-        echo "Error: $pkg/Package.resolved is not tracked. The release builds only the dependency versions it records;" >&2
-        echo "       resolve the package (swift package resolve), run the tests, and commit the file." >&2
-        exit 1
+        problem="is not tracked"
+    elif [ ! -f "$ROOT/$pkg/Package.resolved" ]; then
+        problem="is missing from the working tree"
+    else
+        continue
     fi
+    echo "Error: $pkg/Package.resolved $problem. The release builds only the dependency versions it records." >&2
+    echo "       Restore it from the last release (git checkout <tag> -- $pkg/Package.resolved); to update the" >&2
+    echo "       dependencies on purpose, run swift package update in $pkg, run its tests, and commit the file." >&2
+    exit 1
 done
 # The bundles are packed from HEAD's files; a symlink there would pull in
 # whatever it points at, possibly from outside the repository.

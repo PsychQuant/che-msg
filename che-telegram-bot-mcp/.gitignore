@@ -8,4 +8,4 @@ DerivedData/
 mcpb/server/*
 !mcpb/server/.gitkeep
 # Tracked: the release build uses exactly these versions (PsychQuant/che-msg#92).
-!Package.resolved
+!/Package.resolved

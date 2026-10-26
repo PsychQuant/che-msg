@@ -41,6 +41,9 @@
 #      before build-release.sh runs; with the variables set, sign-check signs
 #      without notarizing and release-signed notarizes; plain make prints the
 #      targets and runs nothing; make check-pins checks consistency only.
+#  15. Every swift build uses --force-resolved-versions; a Package.resolved
+#      that is on disk but untracked, or tracked but missing from the working
+#      tree, is refused before any build (#92).
 #
 # Usage:
 #   bash tests/release/test-build-release.sh
@@ -267,8 +270,8 @@ for pkg in che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTelegr
     if unzip -p "$DIST/$name.mcpb" "server/$bin" 2>/dev/null | cmp -s - "$DIST/$bin"; then pass "$name.mcpb holds the same signed binary as dist"; else fail "$name.mcpb holds a different binary"; fi
 done
 if calls "$R" "mcpb validate" >/dev/null; then pass "manifests validated before packing"; else fail "no mcpb validate"; fi
-unpinned=$(calls "$R" "swift build" | grep -v -- --force-resolved-versions)
-if [ -z "$unpinned" ]; then pass "every swift build uses the versions in Package.resolved (#92)"; else fail "swift build without --force-resolved-versions: $unpinned"; fi
+builds=$(calls "$R" "swift build" | grep -c .); unpinned=$(calls "$R" "swift build" | grep -v -- --force-resolved-versions)
+if [ "$builds" -ge 4 ] && [ -z "$unpinned" ]; then pass "every swift build ($builds) uses the versions in Package.resolved (#92)"; else fail "$builds swift builds; without --force-resolved-versions: ${unpinned:-none}"; fi
 if ! git -C "$R" status --porcelain -- che-telegram-all-mcp/mcpb che-telegram-bot-mcp/mcpb | grep -qv stale.mcpb; then pass "tracked mcpb directories untouched"; else fail "mcpb directories changed: $(git -C "$R" status --porcelain)"; fi
 if printf '%s' "$OUT" | grep -qF "$(git -C "$R" rev-parse HEAD)"; then pass "prints the commit it was built from"; else fail "commit not printed"; fi
 if ! ls -d "$R"/.build/release-stage* >/dev/null 2>&1; then pass "staging directory removed"; else fail "staging left: $(ls -d "$R"/.build/release-stage*)"; fi
@@ -325,14 +328,21 @@ if printf '%s' "$OUT" | grep -qi 'uncommitted'; then pass "says the tree has unc
 build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only
 if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qi 'uncommitted'; then pass "--sign-only builds it with a warning"; else fail "--sign-only: exit $RC"; fi
 
-test_case "a package without a tracked Package.resolved (#92)"
+test_case "a Package.resolved on disk but not tracked (#92)"
 for mode in full sign-only; do
-    R=$(make_repo "noresolved-$mode")
-    git -C "$R" rm -q che-telegram-bot-mcp/Package.resolved && git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -q -m "drop the lock file"
+    R=$(make_repo "untracked-resolved-$mode")
+    git -C "$R" rm -q --cached che-telegram-bot-mcp/Package.resolved && git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -q -m "stop tracking the lock file"
+    if [ -f "$R/che-telegram-bot-mcp/Package.resolved" ]; then pass "$mode: the file is still on disk"; else fail "$mode: setup removed the file"; fi
     if [ "$mode" = full ]; then build "$R" "${SIGN_ENV[@]}" --; else build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; fi
     expect_no_build "$R"
-    if printf '%s' "$OUT" | grep -q 'che-telegram-bot-mcp/Package.resolved'; then pass "$mode: names the missing Package.resolved"; else fail "$mode: no message: $(printf '%s' "$OUT" | tail -3)"; fi
+    if printf '%s' "$OUT" | grep -q 'che-telegram-bot-mcp/Package.resolved is not tracked'; then pass "$mode: says it is not tracked"; else fail "$mode: no message: $(printf '%s' "$OUT" | tail -3)"; fi
 done
+
+test_case "a tracked Package.resolved missing from the working tree (#92)"
+R=$(make_repo missing-resolved); rm "$R/che-telegram-bot-mcp/Package.resolved"
+build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only
+expect_no_build "$R"
+if printf '%s' "$OUT" | grep -q 'che-telegram-bot-mcp/Package.resolved is missing'; then pass "--sign-only: says it is missing"; else fail "--sign-only: no message: $(printf '%s' "$OUT" | tail -3)"; fi
 
 test_case "an untracked file in a package's Sources"
 R=$(make_repo untracked); echo "// local" > "$R/che-telegram-all-mcp/Sources/Extra.swift"

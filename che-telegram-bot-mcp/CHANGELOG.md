@@ -4,7 +4,7 @@
 
 ### Distribution
 - Starting with this release, the binary is signed with a Developer ID and notarized by Apple, and every release asset comes with a `.sha256` file holding its SHA-256 hash ([#40](https://github.com/PsychQuant/che-msg/issues/40)). The releases are built by `make release-signed` ([RELEASING.md](../RELEASING.md)). Releases up to `v0.8.0` stay as they were: ad-hoc signed, without `.sha256` files.
-- `Package.resolved` is tracked, and the release build uses exactly the dependency versions it records (`--force-resolved-versions`), so a tag reproduces its binaries' dependencies ([#92](https://github.com/PsychQuant/che-msg/issues/92)). They are the versions this package was built with up to `v0.8.0` (swift-sdk 0.12.0, swift-argument-parser 1.7.1); a fresh clone used to resolve newer ones.
+- `Package.resolved` is tracked, and the release build uses exactly the dependency versions it records (`--force-resolved-versions`), so a tag reproduces its binaries' dependencies ([#92](https://github.com/PsychQuant/che-msg/issues/92)). They are the versions the maintainer's checkout has resolved since 2026-04-12 (swift-sdk 0.12.0, swift-argument-parser 1.7.1), so most likely the ones the releases from then to `v0.8.0` were built with; a fresh clone used to resolve newer ones.
 
 ## [0.8.0] - 2026-10-14
 
