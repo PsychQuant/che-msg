@@ -36,7 +36,8 @@
 #      stopped the download completes and installs the asset.
 #   3. A complete partial file of the pinned version whose sha256 matches:
 #      installed without downloading the asset again.
-#   4. The download writes what it did to ~/bin/.<Binary>.download.log.
+#   4. The download writes what it did to its log,
+#      ~/bin/.che-telegram-mcp-download/<Binary>.log.
 #   5. With CHE_TELEGRAM_MCP_INSTALL_WAIT longer than the download, a first
 #      install finishes within the wait and the new binary is started.
 #
@@ -181,7 +182,7 @@ for which in all bot; do
     test_case "$which: a complete partial file whose sha256 matches is installed without downloading"
     H="$SCRATCH/$which-complete"; empty_home "$H" "$which"; serve "$H" "$which"
     echo 404 > "$H/fake-curl/asset.status"       # a download would fail
-    cp "$ASSETS/$NAME" "$H/bin/.$NAME.$PIN.part"
+    make_stage "$H"; cp "$ASSETS/$NAME" "$(part_of "$H" "$NAME" "$PIN")"
     launch "$H" "$which"
     expect_installed "$H" "$NAME" "$PIN"
     if ! grep -q '/releases/download/' "$H/curl.calls" 2>/dev/null; then pass "the asset was not downloaded again"; else fail "the asset was downloaded again"; fi
@@ -190,8 +191,8 @@ for which in all bot; do
 
     # ------------------------------------------- 4. the log
     test_case "$which: the download writes what it did to its log"
-    LOG="$SCRATCH/$which-first/bin/.$NAME.download.log"
-    if grep -q "installed v$PIN" "$LOG" 2>/dev/null; then pass "~/bin/.$NAME.download.log says v$PIN was installed"; else fail "no install line in $LOG: $(tail -3 "$LOG" 2>/dev/null | tr '\n' ' ')"; fi
+    LOG=$(log_of "$SCRATCH/$which-first" "$NAME")
+    if grep -q "installed v$PIN" "$LOG" 2>/dev/null; then pass "the download log says v$PIN was installed"; else fail "no install line in $LOG: $(tail -3 "$LOG" 2>/dev/null | tr '\n' ' ')"; fi
 
     # ------------------------------------------- 5. a longer wait
     test_case "$which: a longer CHE_TELEGRAM_MCP_INSTALL_WAIT lets a first download finish"

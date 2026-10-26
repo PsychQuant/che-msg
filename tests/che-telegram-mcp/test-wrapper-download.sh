@@ -40,6 +40,14 @@
 #      does): a start downloads nothing, says the download is already
 #      running, and leaves the lock alone; once the holder is gone the lock
 #      file it leaves is no obstacle and the next start installs.
+#  10. The download's files live in a private staging directory,
+#      ~/bin/.che-telegram-mcp-download, mode 700, and nothing in it is
+#      followed if it is a symbolic link: a partial file that is a link to the
+#      installed binary leaves that binary's bytes untouched and the installed
+#      file is the verified asset; a log that is a link leaves its target
+#      untouched; a staging directory that is a link, or not a directory, is
+#      refused and nothing is installed; one with looser permissions is set
+#      back to 700. ~/bin holds no temporary file afterwards.
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-download.sh
@@ -208,7 +216,7 @@ for which in all bot; do
     HALF=$((SIZE / 2)); printf '%s\n%s\n%s\n%s\nfull\n' "$HALF" "$HALF" "$HALF" "$HALF" > "$H/fake-curl/asset.cuts"
     run "$H" "$which"
     if [ "$RC" = 1 ]; then pass "the first start fails (exit 1)"; else fail "first start: $RC"; fi
-    PART="$H/bin/.$NAME.$PIN.part"
+    PART=$(part_of "$H" "$NAME" "$PIN")
     if [ -f "$PART" ] && [ "$(wc -c < "$PART" | tr -d ' ')" = "$HALF" ]; then
         pass "a partial file named after the version keeps the $HALF bytes received"
     else
@@ -228,10 +236,10 @@ for which in all bot; do
     # ------------------------------------------- 4. another version's partial
     test_case "$which: a partial file of another version is never resumed"
     H="$SCRATCH/$which-otherpart"; empty_home "$H" "$which"; serve "$H" "$which"
-    printf 'GARBAGE FROM AN OLDER RELEASE' > "$H/bin/.$NAME.$OLDER.part"
+    make_stage "$H"; printf 'GARBAGE FROM AN OLDER RELEASE' > "$(part_of "$H" "$NAME" "$OLDER")"
     run "$H" "$which"
     expect_installed "$H" "$NAME" "$PIN"
-    if [ ! -e "$H/bin/.$NAME.$OLDER.part" ]; then pass "the other version's partial file is removed"; else fail "the other version's partial file is still there"; fi
+    if [ ! -e "$(part_of "$H" "$NAME" "$OLDER")" ]; then pass "the other version's partial file is removed"; else fail "the other version's partial file is still there"; fi
 
     # ------------------------------------------------------------- 5. retries
     test_case "$which: a cut-off transfer is retried in the same start, an HTTP error is not"
@@ -324,6 +332,56 @@ kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
 run "$H" all
 expect_installed "$H" "$ALL" "$DESIRED_VERSION"
 if [ "$RC" = started ]; then pass "with the holder gone, the next start installs and starts it"; else fail "next start: $RC"; fi
+
+# ---------------------------------------------- 10. the staging directory
+test_case "telegram-all: a partial file that is a symbolic link is not followed"
+H="$SCRATCH/all-partlink"; make_home "$H" yes "$MIN_ALL"; serve "$H" all
+ln "$H/bin/$ALL" "$SCRATCH/installed-inode"          # a second name for the installed file's bytes
+cp "$H/bin/$ALL" "$SCRATCH/installed-copy"
+make_stage "$H"; ln -s "$H/bin/$ALL" "$(part_of "$H" "$ALL" "$DESIRED_VERSION")"
+run "$H" all
+wait_no_fetch "$H" || fail "the background download did not end"
+if cmp -s "$SCRATCH/installed-inode" "$SCRATCH/installed-copy"; then pass "the installed binary's bytes were not written to"; else fail "the installed binary's bytes were changed through the link"; fi
+expect_installed "$H" "$ALL" "$DESIRED_VERSION"
+if [ ! -L "$(part_of "$H" "$ALL" "$DESIRED_VERSION")" ]; then pass "the link is gone"; else fail "the link is still there"; fi
+
+test_case "telegram-all: a log that is a symbolic link is not followed"
+H="$SCRATCH/all-loglink"; empty_home "$H" all; serve "$H" all
+printf 'keep\n' > "$SCRATCH/outside-log"
+make_stage "$H"; ln -s "$SCRATCH/outside-log" "$(log_of "$H" "$ALL")"
+run "$H" all
+if [ "$(cat "$SCRATCH/outside-log")" = keep ]; then pass "the link's target is untouched"; else fail "the link's target was written: $(head -c 120 "$SCRATCH/outside-log")"; fi
+expect_installed "$H" "$ALL" "$DESIRED_VERSION"
+LOG=$(log_of "$H" "$ALL")
+if [ -f "$LOG" ] && [ ! -L "$LOG" ] && grep -q "installed v$DESIRED_VERSION" "$LOG"; then pass "the log is a file of its own"; else fail "the log is not a regular file with the install line"; fi
+
+i=0
+for kind in link file; do
+    i=$((i + 1))
+    test_case "telegram-all: a staging directory that is a $kind is refused"
+    H="$SCRATCH/all-stage-$kind"; empty_home "$H" all; serve "$H" all
+    mkdir -p "$SCRATCH/elsewhere-$i"
+    if [ "$kind" = link ]; then ln -s "$SCRATCH/elsewhere-$i" "$(stage_of "$H")"; else printf 'x' > "$(stage_of "$H")"; fi
+    run "$H" all 30
+    if [ "$RC" = 1 ]; then pass "the start fails (exit 1)"; else fail "exit $RC"; fi
+    if [ ! -e "$H/bin/$ALL" ]; then pass "nothing installed"; else fail "installed anyway"; fi
+    if [ -z "$(ls -A "$SCRATCH/elsewhere-$i")" ]; then pass "nothing was written where the link points"; else fail "written there: $(ls -A "$SCRATCH/elsewhere-$i" | tr '\n' ' ')"; fi
+    if [ "$(asset_calls "$H")" = 0 ]; then pass "nothing was downloaded"; else fail "downloaded $(asset_calls "$H") time(s)"; fi
+    case "$(reason "$H" all)" in
+        *".che-telegram-mcp-download"*) pass "the reason names the staging directory" ;;
+        *) fail "the reason does not name it: $(reason "$H" all)" ;;
+    esac
+done
+
+test_case "telegram-all: the staging directory is private"
+H="$SCRATCH/all-stage-mode"; empty_home "$H" all; serve "$H" all
+mkdir -m 777 "$(stage_of "$H")"; chmod 777 "$(stage_of "$H")"
+run "$H" all
+if [ "$(stat -f %Lp "$(stage_of "$H")")" = 700 ]; then pass "set back to 700"; else fail "mode $(stat -f %Lp "$(stage_of "$H")")"; fi
+expect_installed "$H" "$ALL" "$DESIRED_VERSION"
+H="$SCRATCH/all-resume"
+extra=$(cd "$H/bin" && ls -A | grep -v -x -e "$ALL" -e ".$ALL.version" -e "$(basename "$(stage_of "$H")")" || true)
+if [ -z "$extra" ]; then pass "~/bin holds only the binary, its version record and the staging directory"; else fail "~/bin also holds: $(echo "$extra" | tr '\n' ' ')"; fi
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."

@@ -188,7 +188,7 @@ DOWNLOAD_RUNNING=false
 BINARY_VERSION=""
 PROBED=""
 if $NEED_DOWNLOAD; then
-    echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO in the background (log: ~/bin/.$BINARY_NAME.download.log)" >&2
+    echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO in the background (log: ~/bin/.che-telegram-mcp-download/$BINARY_NAME.log)" >&2
     download_start "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$INSTALL_DIR" \
         "$SHA256_PIN_VERSION" "$SHA256_PIN" "$RELEASE_API_URL"
     if [[ -n "$BINARY" ]]; then

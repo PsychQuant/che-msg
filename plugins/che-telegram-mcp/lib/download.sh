@@ -10,15 +10,26 @@
 # stopped with the wrapper before it could be moved into place, and the next
 # start began again. download_start runs it in a session of its own, so it
 # outlives the wrapper and a signal to the wrapper's process group; its output
-# goes to ~/bin/.<Binary>.download.log. The wrappers wait for it a few seconds
-# (download_wait) only when there is no binary they can run meanwhile.
+# goes to ~/bin/.che-telegram-mcp-download/<Binary>.log. The wrappers wait for
+# it a few seconds (download_wait) only when there is no binary they can run
+# meanwhile.
+#
+# Its files live in a private staging directory, ~/bin/.che-telegram-mcp-download
+# (mode 700, owned by the user; a symbolic link or anything else there is
+# refused): the lock, the log, the partial file and the version record's
+# temporary copy. Nothing there is followed if it is a symbolic link: curl
+# would append to a link's target, shasum would hash it and mv would install
+# the link. A partial file, lock or log that is not a regular file is removed
+# before use, and the finished file must still be a regular file when it is
+# hashed and when it is moved into place.
 #
 # What a download does, and why:
 # - It fails on an HTTP error (curl -f). `curl -sL` exits 0 with the error
 #   page, which the wrappers installed as the binary and recorded as the
 #   pinned version, so no later start downloaded again.
 # - It resumes. It writes to a partial file named after the version,
-#   ~/bin/.<Binary>.<version>.part, with `curl -C -`, so a transfer cut off
+#   <Binary>.<version>.part in the staging directory, with `curl -C -`, so a
+#   transfer cut off
 #   here or in an earlier start continues where it stopped. A partial file of
 #   another version is removed, never joined to this one.
 # - It retries a transfer that stops, up to three more times, each resuming
@@ -28,8 +39,8 @@
 #   at 234 KB/s. An HTTP error is not retried (curl's --retry-all-errors would
 #   retry a 404 too, for seconds that a first install does not wait), so a
 #   release without the asset is reported at once.
-# - It has one writer. The download runs holding an flock on
-#   ~/bin/.<Binary>.download.lock, taken by perl before it execs the download,
+# - It has one writer. The download runs holding an flock on <Binary>.lock in
+#   the staging directory, taken by perl before it execs the download,
 #   so the downloading process and everything it starts (curl, shasum, mv)
 #   hold it: the partial file is written, hashed, made executable and moved
 #   into place under the same lock. A second download that finds the lock
@@ -51,6 +62,7 @@
 # The functions keep to bash 3.2, the /bin/bash the wrappers run with.
 
 DOWNLOAD_LIB="${BASH_SOURCE[0]}"
+DOWNLOAD_STAGE_NAME=".che-telegram-mcp-download"
 
 # version_at_least <version> <minimum>: true when <version> is x.y.z and not older.
 version_at_least() {
@@ -77,12 +89,20 @@ read_version_record() {
 # (exit 10 when it is held: "download already running"), keeps the lock's file
 # descriptor open across exec, and execs `download.sh fetch`.
 download_start() {
-    local log="$4/.$1.download.log" lock="$4/.$1.download.lock"
-    mkdir -p "$4" 2>/dev/null
-    nohup perl -MPOSIX -MFcntl=:flock,F_SETFD -e '
+    local stage log lock
+    DOWNLOAD_PID=""
+    DOWNLOAD_START_STATUS=""
+    if ! stage=$(download_stage "$4"); then DOWNLOAD_START_STATUS=42; return 1; fi
+    log="$stage/$1.log"
+    lock="$stage/$1.lock"
+    if ! _dl_clear_nonregular "$log" || ! _dl_clear_nonregular "$lock"; then
+        DOWNLOAD_START_STATUS=42
+        return 1
+    fi
+    nohup perl -MPOSIX -MFcntl=:flock,F_SETFD,O_WRONLY,O_APPEND,O_CREAT,O_NOFOLLOW -e '
         POSIX::setsid();
         my $lock = shift;
-        open(my $fh, ">>", $lock) or do { print STDERR "cannot open the download lock $lock: $!\n"; exit 70 };
+        sysopen(my $fh, $lock, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0600) or do { print STDERR "cannot open the download lock $lock: $!\n"; exit 70 };
         flock($fh, LOCK_EX | LOCK_NB) or do { print STDERR "download already running: another process holds $lock\n"; exit 10 };
         fcntl($fh, F_SETFD, 0) or exit 71;
         exec @ARGV or exit 71;
@@ -99,6 +119,11 @@ download_wait() {
     local name=$1 version=$2 dir=$3 deadline=$((SECONDS + $4))
     DOWNLOAD_STATE=running
     DOWNLOAD_STATUS=""
+    if [[ -z "$DOWNLOAD_PID" ]]; then
+        DOWNLOAD_STATUS=${DOWNLOAD_START_STATUS:-42}
+        DOWNLOAD_STATE=failed
+        return 0
+    fi
     while :; do
         if [[ -z "$DOWNLOAD_STATUS" ]] && ! kill -0 "$DOWNLOAD_PID" 2>/dev/null; then
             wait "$DOWNLOAD_PID" 2>/dev/null
@@ -130,7 +155,7 @@ install_wait_seconds() {
 # the partial file of that version, or nothing when there is none yet.
 download_progress() {
     local bytes
-    bytes=$(stat -f %z "$3/.$1.$2.part" 2>/dev/null) || return 0
+    bytes=$(stat -f %z "$3/$DOWNLOAD_STAGE_NAME/$1.$2.part" 2>/dev/null) || return 0
     [[ "$bytes" =~ ^[0-9]+$ ]] && [[ "$bytes" -gt 0 ]] && echo ", $((bytes / 1048576)) MB so far"
     return 0
 }
@@ -149,6 +174,7 @@ download_failure() {
         30) echo "no sha256 is known to check it against: this plugin pins none for this version, and GitHub reported no digest for the asset" ;;
         31) echo "the downloaded file does not match its sha256, so it was removed" ;;
         40) echo "the downloaded file could not be put in place in ~/bin" ;;
+        42) echo "its staging directory ~/bin/$DOWNLOAD_STAGE_NAME, or a file in it, is not safe to use (see the message before this one)" ;;
         *)  echo "the download stopped with status $1" ;;
     esac
 }
@@ -164,6 +190,52 @@ download_manual_hint() {
     echo "    curl -fL -C - $url -o ~/bin/$name.new" >&2
     echo "    shasum -a 256 ~/bin/$name.new    # must print $expected" >&2
     echo "    chmod +x ~/bin/$name.new && mv ~/bin/$name.new ~/bin/$name && echo $version > ~/bin/.$name.version" >&2
+}
+
+# ---------------------------------------------------- the staging directory
+
+# download_stage <install dir>: prints the private staging directory
+# <install dir>/.che-telegram-mcp-download, creating it with mode 700. Fails,
+# saying why on stderr, when it is a symbolic link, not a directory, or not
+# the user's; a directory of the user's with looser permissions is set to 700.
+download_stage() {
+    local stage="$1/$DOWNLOAD_STAGE_NAME"
+    mkdir -p "$1" 2>/dev/null
+    [[ -e "$stage" || -L "$stage" ]] || mkdir -m 700 "$stage" 2>/dev/null
+    if [[ -L "$stage" ]]; then
+        echo "che-telegram-mcp: $stage is a symbolic link; the download does not use it. Remove it and reconnect." >&2
+        return 1
+    fi
+    if [[ ! -d "$stage" ]]; then
+        echo "che-telegram-mcp: $stage is not a directory; the download does not use it. Remove it and reconnect." >&2
+        return 1
+    fi
+    if [[ ! -O "$stage" ]]; then
+        echo "che-telegram-mcp: $stage belongs to another user; the download does not use it." >&2
+        return 1
+    fi
+    if ! chmod 700 "$stage" 2>/dev/null; then
+        echo "che-telegram-mcp: the permissions of $stage cannot be set to 700; the download does not use it." >&2
+        return 1
+    fi
+    printf '%s' "$stage"
+}
+
+# _dl_regular <path>: a regular file, not a symbolic link.
+_dl_regular() { [[ -f "$1" && ! -L "$1" ]]; }
+
+# _dl_clear_nonregular <path>: removes <path> when it is a symbolic link or
+# anything but a regular file; true when it is now absent or a regular file.
+_dl_clear_nonregular() {
+    if [[ -L "$1" ]] || { [[ -e "$1" ]] && ! _dl_regular "$1"; }; then
+        echo "che-telegram-mcp: $1 is not a regular file; removing it" >&2
+        rm -f "$1" 2>/dev/null
+    fi
+    if [[ -e "$1" || -L "$1" ]] && ! _dl_regular "$1"; then
+        echo "che-telegram-mcp: $1 is not a regular file and cannot be removed; the download does not use it" >&2
+        return 1
+    fi
+    return 0
 }
 
 # ------------------------------------------------------------ the checksum
@@ -204,12 +276,14 @@ _dl_api_digest() {
 #   30  no sha256 to check the download against; nothing was downloaded
 #   31  the download does not match its sha256; it was removed
 #   40  the downloaded file could not be put in place
+#   42  the staging directory, or a file in it, is not safe to use
 download_fetch() {
     local name=$1 version=$2 url=$3 dir=$4 pin_version=${5:-} pin=${6:-} api_url=${7:-}
     local binary="$dir/$name" record="$dir/.$name.version"
-    local part="$dir/.$name.$version.part" f rc expected checked_against attempt
+    local stage part f rc expected checked_against attempt tmp
 
-    mkdir -p "$dir" || return 40
+    stage=$(download_stage "$dir") || return 42
+    part="$stage/$name.$version.part"
     # curl and the pauses between attempts are stopped with this process.
     # They hold the lock too (they inherit its descriptor), so a transfer
     # that outlived this process would keep any other download out.
@@ -217,8 +291,8 @@ download_fetch() {
     trap '[ -n "$DL_CURL" ] && kill "$DL_CURL" 2>/dev/null' EXIT
     trap 'exit 143' TERM INT
     # The log collects every session's downloads; keep it short.
-    f="$dir/.$name.download.log"
-    [[ -f "$f" ]] && [[ "$(wc -c < "$f" 2>/dev/null)" -gt 262144 ]] && : > "$f"
+    f="$stage/$name.log"
+    _dl_regular "$f" && [[ "$(wc -c < "$f" 2>/dev/null)" -gt 262144 ]] && : > "$f"
     echo "$(date '+%Y-%m-%d %H:%M:%S %z') $name: downloading v$version (process $$)" >&2
 
     # The wrapper decided to download before the lock was taken; another
@@ -227,9 +301,10 @@ download_fetch() {
         return 0
     fi
 
-    for f in "$dir/.$name."*.part; do
+    for f in "$stage/$name."*.part; do
         [ "$f" = "$part" ] || rm -f "$f"
     done
+    _dl_clear_nonregular "$part" || return 42
 
     # The sha256 the result must have, known before anything is downloaded.
     if [[ -n "$pin" && "$pin_version" != "$version" ]]; then
@@ -259,7 +334,7 @@ download_fetch() {
         checked_against="the sha256 digest GitHub reports for the asset"
     fi
 
-    if [[ -f "$part" ]] && [[ "$(_dl_sha256 "$part")" == "$expected" ]]; then
+    if _dl_regular "$part" && [[ "$(_dl_sha256 "$part")" == "$expected" ]]; then
         # Complete already: an earlier download finished but was stopped
         # before its move (#67).
         echo "$name: the partial file of v$version is complete and matches; installing it without downloading again" >&2
@@ -297,19 +372,33 @@ download_fetch() {
         esac
     fi
 
+    # Not writable from here on, still a regular file when it is hashed, and
+    # moved into place under the lock it was written under.
+    if ! _dl_regular "$part"; then
+        rm -f "$part"
+        echo "$name: the download is not a regular file; nothing was installed" >&2
+        return 42
+    fi
+    chmod 0555 "$part" || return 40
     f=$(_dl_sha256 "$part")
     if [[ "$f" != "$expected" ]]; then
         rm -f "$part"
         echo "$name: the download of v$version has sha256 ${f:-unknown}, not $expected ($checked_against); it was removed and nothing was installed" >&2
         return 31
     fi
-
-    if ! chmod +x "$part" || ! mv -f "$part" "$binary"; then
+    if [[ -d "$binary" && ! -L "$binary" ]]; then
+        echo "$name: $binary is a directory; nothing was installed" >&2
+        return 40
+    fi
+    # -h: a link at $binary is replaced, never followed into a directory.
+    if ! _dl_regular "$part" || ! mv -f -h "$part" "$binary"; then
         echo "$name: the download could not be moved into place at $binary" >&2
         return 40
     fi
-    if ! printf '%s\n' "$version" > "$record.$$" || ! mv -f "$record.$$" "$record"; then
-        rm -f "$record.$$"
+    chmod 0755 "$binary" 2>/dev/null
+    tmp="$stage/$name.version.$$"
+    if ! ( set -C; printf '%s\n' "$version" > "$tmp" ) 2>/dev/null || ! mv -f -h "$tmp" "$record"; then
+        rm -f "$tmp"
         echo "$name: v$version is installed, but its version record $record could not be written" >&2
         return 40
     fi

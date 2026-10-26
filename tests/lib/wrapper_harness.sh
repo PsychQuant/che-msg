@@ -165,10 +165,14 @@ wait_no_fetch() {
     wait_until "${2:-10}" bash -c "! pgrep -f 'download\\.sh fetch .* $1/bin( |\$)' >/dev/null"
 }
 
-# Where a download keeps its files, for a HOME and a binary name.
-lock_of() { echo "$1/bin/.$2.download.lock"; }
-log_of() { echo "$1/bin/.$2.download.log"; }
-part_of() { echo "$1/bin/.$2.$3.part"; }   # <home> <name> <version>
+# Where a download keeps its files, for a HOME and a binary name: a private
+# staging directory in ~/bin (PsychQuant/che-msg#50, #56).
+stage_of() { echo "$1/bin/.che-telegram-mcp-download"; }
+lock_of() { echo "$(stage_of "$1")/$2.lock"; }
+log_of() { echo "$(stage_of "$1")/$2.log"; }
+part_of() { echo "$(stage_of "$1")/$2.$3.part"; }   # <home> <name> <version>
+# make_stage <home>: the staging directory as a download creates it (mode 700).
+make_stage() { mkdir -p "$1/bin"; mkdir -m 700 "$(stage_of "$1")"; }
 
 # hold_lock <lock file>: a process that holds the download lock the way a
 # running download does (flock), until it is killed; prints its PID.

@@ -194,7 +194,7 @@ for which in all bot; do
     pinned "$which" "$OLDER" "$BAD" "$SCRATCH/$which-stale-plugin"
     run "$H" "$C"
     expect_installed "$H" "$NAME" "$PIN"
-    LOG="$H/bin/.$NAME.download.log"
+    LOG=$(log_of "$H" "$NAME")
     if grep -q "is for v$OLDER" "$LOG" 2>/dev/null; then pass "the download log says the pin is for v$OLDER"; else fail "the download log does not say the pin is for v$OLDER: $(head -3 "$LOG" 2>/dev/null | tr '\n' ' ')"; fi
 
     # ------------------------------------------------------ 6. no pin
