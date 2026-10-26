@@ -1,7 +1,7 @@
 ## 1. 日檔只讀一般檔案（#76 items 1、3）
 
-- [ ] 1.1 先寫失敗的測試（Requirement: Merge and idempotent rewrite 的 FIFO 與 symlink scenario）：名字像日檔的 FIFO 讓 `checkOffsets` 與 `write` 在 5 秒期限內回 `notRegularFile`（逾時時測試自己開寫入端放掉卡住的 open，再判失敗）；指向目錄外有效日檔的 symlink、懸空的 symlink、名字像日檔的目錄都回 `notRegularFile`，link 與目標位元組不變；`ChatArchiver` 遇到 FIFO 日檔時一頁都沒讀就失敗。驗證：`swift test --filter ArchiveDayFileTests` 與 `--filter ChatArchiverTests` 先失敗，且沒有卡住
-- [ ] 1.2 依設計「日檔以一個 helper 開啟」與「拒絕原因用兩個新的錯誤 case」實作 `readDayFile`（`O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC`、`fstat` 要求 `S_IFREG`、讀前清掉 `O_NONBLOCK`）與 `WriteError.notRegularFile`，`checkOffsets` 與 `write` 都改用它。驗證：1.1 的測試與既有的 `ArchiveDayFileTests`、`ChatArchiverTests` 通過 [after: 1.1]
+- [x] 1.1 先寫失敗的測試（Requirement: Merge and idempotent rewrite 的 FIFO 與 symlink scenario）：名字像日檔的 FIFO 讓 `checkOffsets` 與 `write` 在 5 秒期限內回 `notRegularFile`（逾時時測試自己開寫入端放掉卡住的 open，再判失敗）；指向目錄外有效日檔的 symlink、懸空的 symlink、名字像日檔的目錄都回 `notRegularFile`，link 與目標位元組不變；`ChatArchiver` 遇到 symlink 日檔時一頁都沒讀就失敗、link 與目標不變（FIFO 的同一條路徑在 `ArchiveDayFile` 層以期限測）。驗證：`swift test --filter ArchiveDayFileTests` 與 `--filter ChatArchiverTests` 先失敗，且沒有卡住
+- [x] 1.2 依設計「日檔以一個 helper 開啟」與「拒絕原因用兩個新的錯誤 case」實作 `readDayFile`（`O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC`、`fstat` 要求 `S_IFREG`、讀前清掉 `O_NONBLOCK`）與 `WriteError.notRegularFile`，`checkOffsets` 與 `write` 都改用它。驗證：1.1 的測試與既有的 `ArchiveDayFileTests`、`ChatArchiverTests` 通過 [after: 1.1]
 
 ## 2. 含 carriage return 的日檔（#76 item 2）
 

@@ -23,12 +23,22 @@ public enum ArchiveDayFile {
         case offsetMismatch(existing: String, requested: String)
         /// A day file in the chat directory has no readable `utc_offset`.
         case unreadableOffset(day: String)
+        /// A day file in the chat directory is a symbolic link, FIFO, device or directory (#76).
+        case notRegularFile(day: String)
+        /// A day file to merge into contains a carriage return; the merge splits lines on LF only (#76).
+        case carriageReturn(day: String)
 
         public var errorDescription: String? {
             switch self {
             case .unreadableOffset(let day):
                 return "day file \(day).md has no readable utc_offset in its frontmatter (or cannot be read, or uses "
                     + "CRLF line endings); this archive cannot be merged into safely (move the file aside or restore it)"
+            case .notRegularFile(let day):
+                return "day file \(day).md is not a regular file (a symbolic link, FIFO, device or directory); this "
+                    + "archive cannot be merged into safely (replace it with the file itself or move it aside)"
+            case .carriageReturn(let day):
+                return "day file \(day).md contains a carriage return (CRLF or CR line endings, as another editor may "
+                    + "write them); this archive cannot be merged into safely (convert it to LF line endings or move it aside)"
             case .offsetMismatch(let existing, let requested):
                 return "utc_offset \(requested) differs from \(existing), the offset this archive's day files were "
                     + "written with; archive this chat with utc_offset \(existing)"
@@ -111,12 +121,35 @@ public enum ArchiveDayFile {
         for name in names.sorted()
         where name.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$"#, options: .regularExpression) != nil {
             let day = String(name.dropLast(3))
-            guard let handle = FileHandle(forReadingAtPath: directory.appendingPathComponent(name).path) else {
+            guard let data = try readDayFile(directory.appendingPathComponent(name), day: day, limit: 512) else {
                 throw WriteError.unreadableOffset(day: day)
             }
-            defer { try? handle.close() }
-            let head = String(decoding: (try? handle.read(upToCount: 512)) ?? Data(), as: UTF8.self)
-            try checkOffset(recordedIn: head, day: day, utcOffset: utcOffset)
+            try checkOffset(recordedIn: String(decoding: data, as: UTF8.self), day: day, utcOffset: utcOffset)
+        }
+    }
+
+    /// The bytes of day file `file` (at most `limit`), or nil when there is no file of that name.
+    /// The file is opened without following a symbolic link and without waiting for a writer — a
+    /// FIFO named like a day file would otherwise block while the call holds the chat's lock — and
+    /// only a regular file is read (#76).
+    static func readDayFile(_ file: URL, day: String, limit: Int? = nil) throws -> Data? {
+        let fd = open(file.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else {
+            if errno == ENOENT { return nil }
+            throw errno == ELOOP ? WriteError.notRegularFile(day: day) : WriteError.unreadableOffset(day: day)
+        }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(fd, &info) == 0 else { throw WriteError.unreadableOffset(day: day) }
+        guard info.st_mode & S_IFMT == S_IFREG else { throw WriteError.notRegularFile(day: day) }
+        // The flag was for the open only; a read of a regular file does not block either way.
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK)
+        do {
+            if let limit { return try handle.read(upToCount: limit) ?? Data() }
+            return try handle.readToEnd() ?? Data()
+        } catch {
+            throw WriteError.unreadableOffset(day: day)
         }
     }
 
@@ -196,7 +229,12 @@ public enum ArchiveDayFile {
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let file = directory.appendingPathComponent("\(day).md")
-        let existing = fm.fileExists(atPath: file.path) ? try String(contentsOf: file, encoding: .utf8) : nil
+        // Read through the same checks as `checkOffsets`: the file can have changed since (the
+        // lock only keeps other archives out), and a dangling link must not read as "no file".
+        let existing = try readDayFile(file, day: day).map { data -> String in
+            guard let text = String(data: data, encoding: .utf8) else { throw WriteError.unreadableOffset(day: day) }
+            return text
+        }
         if let existing { try checkOffset(recordedIn: existing, day: day, utcOffset: utcOffset) }
         let (content, added) = merged(existing: existing, chatId: chatId, day: day, utcOffset: utcOffset,
                                       messages: messages)

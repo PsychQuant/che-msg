@@ -431,4 +431,28 @@ final class ChatArchiverTests: XCTestCase {
         } catch {}
         XCTAssertFalse(FileManager.default.fileExists(atPath: elsewhere.path))
     }
+
+    // MARK: - Day files that are not regular files, carriage returns (#76)
+
+    /// A symlinked day file is refused before any page is read; neither the link nor its target changes.
+    func testSymlinkedDayFileIsRefusedBeforeReading() async throws {
+        let dir = try outputDir()
+        let chatDir = dir.appendingPathComponent("777")
+        try FileManager.default.createDirectory(at: chatDir, withIntermediateDirectories: true)
+        let outside = dir.appendingPathComponent("outside.md")
+        try Data("---\nchat_id: 777\ndate: 2026-10-11\nutc_offset: \"+08:00\"\n---\n\n".utf8).write(to: outside)
+        let before = try Data(contentsOf: outside)
+        let link = chatDir.appendingPathComponent("2026-10-11.md")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        let source = FakeSource([Self.msg(30, 2)])
+        do {
+            _ = try await archiver(source).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+            XCTFail("expected the symlinked day file to be refused")
+        } catch let error as ArchiveDayFile.WriteError {
+            XCTAssertEqual(error, .notRegularFile(day: "2026-10-11"))
+        }
+        XCTAssertEqual(source.calls, 0, "refused before reading any page")
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), outside.path)
+        XCTAssertEqual(try Data(contentsOf: outside), before)
+    }
 }

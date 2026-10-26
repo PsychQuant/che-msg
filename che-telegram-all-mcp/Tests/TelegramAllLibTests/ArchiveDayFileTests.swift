@@ -289,4 +289,96 @@ final class ArchiveDayFileTests: XCTestCase {
             XCTAssertEqual(error as? ArchiveDayFile.WriteError, .unreadableOffset(day: "2026-10-11"))
         }
     }
+
+    // MARK: - Regular files only (#76)
+
+    private let validHead = "---\nchat_id: 1\ndate: 2026-10-11\nutc_offset: \"+08:00\"\n---\n\n"
+
+    private final class Thrown: @unchecked Sendable { var error: Error? }
+
+    /// The error `body` throws, failing the test when it has not returned within 5 seconds. A
+    /// reader stuck opening the FIFO `fifo` is then released by opening its write end, so the
+    /// test run does not hang on the code before the fix.
+    private func errorWithoutBlocking(releasing fifo: URL, _ body: @escaping @Sendable () throws -> Void,
+                                      file: StaticString = #filePath, line: UInt = #line) -> Error? {
+        let done = DispatchSemaphore(value: 0)
+        let thrown = Thrown()
+        DispatchQueue.global().async {
+            do { try body() } catch { thrown.error = error }
+            done.signal()
+        }
+        if done.wait(timeout: .now() + 5) == .timedOut {
+            let writer = open(fifo.path, O_WRONLY | O_NONBLOCK)
+            if writer >= 0 { close(writer) }
+            _ = done.wait(timeout: .now() + 5)
+            XCTFail("blocked opening a FIFO named like a day file", file: file, line: line)
+        }
+        return thrown.error
+    }
+
+    private func fileType(_ url: URL) -> mode_t {
+        var info = stat()
+        return lstat(url.path, &info) == 0 ? info.st_mode & S_IFMT : 0
+    }
+
+    // Scenario "FIFO named like a day file".
+    func testFIFODayFileIsRefusedWithoutBlocking() throws {
+        let dir = try scratchDir()
+        let fifo = dir.appendingPathComponent("2026-10-11.md")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        let precheck = errorWithoutBlocking(releasing: fifo) {
+            try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+08:00")
+        }
+        XCTAssertEqual(precheck as? ArchiveDayFile.WriteError, .notRegularFile(day: "2026-10-11"))
+        let m = ArchiveMessage(id: 11, date: utc(2026, 10, 11, 2, 0), sender: "Alex", body: "b")
+        let write = errorWithoutBlocking(releasing: fifo) {
+            try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
+        }
+        XCTAssertEqual(write as? ArchiveDayFile.WriteError, .notRegularFile(day: "2026-10-11"))
+        XCTAssertEqual(fileType(fifo), S_IFIFO)
+    }
+
+    // Scenario "Day file that is a symbolic link".
+    func testSymlinkedDayFileIsRefusedAndNothingChanges() throws {
+        let dir = try scratchDir()
+        let outside = try scratchDir().appendingPathComponent("elsewhere.md")
+        try Data((validHead + "<!-- msg:5 -->\n**09:00 Alex**：\na\n\n").utf8).write(to: outside)
+        let before = try Data(contentsOf: outside)
+        let link = dir.appendingPathComponent("2026-10-11.md")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        XCTAssertThrowsError(try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+08:00")) { error in
+            XCTAssertEqual(error as? ArchiveDayFile.WriteError, .notRegularFile(day: "2026-10-11"))
+            XCTAssertTrue(error.localizedDescription.contains("not a regular file"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("cannot be merged into safely"), error.localizedDescription)
+        }
+        let m = ArchiveMessage(id: 11, date: utc(2026, 10, 11, 2, 0), sender: "Alex", body: "b")
+        XCTAssertThrowsError(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                      messages: [m])) { error in
+            XCTAssertEqual(error as? ArchiveDayFile.WriteError, .notRegularFile(day: "2026-10-11"))
+        }
+        XCTAssertEqual(fileType(link), S_IFLNK)
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), outside.path)
+        XCTAssertEqual(try Data(contentsOf: outside), before)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), ["2026-10-11.md"], "no temporary left")
+    }
+
+    /// A dangling link and a directory named like a day file are refused too, before and at the merge.
+    func testDanglingSymlinkAndDirectoryAreRefused() throws {
+        let dir = try scratchDir()
+        let missing = dir.appendingPathComponent("missing.md")
+        try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("2026-10-11.md"), withDestinationURL: missing)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("2026-10-12.md"), withIntermediateDirectories: false)
+        XCTAssertThrowsError(try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+08:00")) { error in
+            XCTAssertEqual(error as? ArchiveDayFile.WriteError, .notRegularFile(day: "2026-10-11"))
+        }
+        for day in ["2026-10-11", "2026-10-12"] {
+            let m = ArchiveMessage(id: 11, date: utc(2026, 10, 11, 2, 0), sender: "Alex", body: "b")
+            XCTAssertThrowsError(try ArchiveDayFile.write(directory: dir, chatId: 1, day: day, utcOffset: "+08:00",
+                                                          messages: [m])) { error in
+                XCTAssertEqual(error as? ArchiveDayFile.WriteError, .notRegularFile(day: day))
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path), "the link's target is not created")
+        XCTAssertEqual(fileType(dir.appendingPathComponent("2026-10-12.md")), S_IFDIR)
+    }
 }
