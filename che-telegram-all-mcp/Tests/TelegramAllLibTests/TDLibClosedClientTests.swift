@@ -53,21 +53,25 @@ final class TDLibClosedClientTests: XCTestCase {
     /// until the server restarts (#64).
     func testTheClosedMessageGivesTheNextStep() throws {
         let message = try XCTUnwrap(TDLibClient.TDError.sessionClosed.errorDescription)
-        XCTAssertEqual(message, "TDLib is closing or has closed this session; no further request was sent. "
+        XCTAssertEqual(message, "TDLib is closing or has closed this session; no request was sent. "
                        + "A new session opens on the first call after a successful logout, after the idle close "
-                       + "(CHE_TELEGRAM_ALL_IDLE_TIMEOUT s with no call), or after you reconnect telegram-all with /mcp.")
+                       + "(when CHE_TELEGRAM_ALL_IDLE_TIMEOUT is not 0, once no call is running), or after a reconnect with /mcp.")
+        XCTAssertLessThanOrEqual(message.count, 256, "error results are cut at 256 characters")
         XCTAssertFalse(message.contains("Not authenticated"), message)
         XCTAssertTrue(message.contains(IdleTimeout.environmentVariable), message)
     }
 
     /// The raw TDLibKit client is private to TDLibClient.swift, so the compiler
     /// keeps every other file on `openClient`, which calls `requireOpen`. In
-    /// that file the raw client is used only to close (`close` works on a
-    /// closing client and returns at once on a closed one) and for its id.
+    /// that file the raw client appears only in its declaration, its creation,
+    /// `close` and `id`, and `openClient`'s `return client`, whatever way a
+    /// use is written. How `close` behaves on a closing client is TDLib's and
+    /// is not verified here. `openClient` is always used directly (`openClient.`),
+    /// never bound once and reused across pages (#64 verify).
     /// The one exception is #98's request seam: the class hands the raw client
-    /// once to `TDLibKitCredentialRequests`, whose phone-number and 2FA-password
-    /// requests `AuthCoordinator` sends only after `requestRefusal`, under the
-    /// lock the request is handed to TDLib under
+    /// once to `TDLibKitCredentialRequests` (above the class), whose
+    /// phone-number and 2FA-password requests `AuthCoordinator` sends only after
+    /// `requestRefusal`, under the lock the request is handed to TDLib under
     /// (`AuthCoordinatorTests.testAClosingOrClosedClientRefusesAnExplicitCredential`).
     func testNoRequestBypassesTheClosedCheck() throws {
         let sources = URL(fileURLWithPath: #filePath)
@@ -84,30 +88,50 @@ final class TDLibClosedClientTests: XCTestCase {
                 }
             """), "openClient checks the state before handing out the client")
 
+        func codeLines(_ source: String) -> [String] {
+            source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+        }
         let classStart = try XCTUnwrap(client.range(of: "public final class TDLibClient {"))
         let seam = String(client[..<classStart.lowerBound])
         let body = String(client[classStart.lowerBound...])
+
+        // Every word `client` in the code, once the allowed forms are removed.
+        let allowed = ["private let client: TDLibKit.TDLibClient", "client = Self.manager.createClient",
+                       "client.id", "client.close(", "TDLibKitCredentialRequests(client: client)"]
+        let word = try NSRegularExpression(pattern: #"\bclient\b"#)
+        var returns = 0
+        for line in codeLines(body) {
+            var text = line
+            for form in allowed { text = text.replacingOccurrences(of: form, with: "") }
+            if text.trimmingCharacters(in: .whitespaces) == "return client" { returns += 1; continue }
+            let left = word.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
+            XCTAssertEqual(left, 0, "raw client used outside close / id: \(line)")
+        }
+        XCTAssertEqual(returns, 1, "only openClient hands out the raw client")
         XCTAssertTrue(body.contains("requests: TDLibKitCredentialRequests(client: client)"),
                       "the request seam gets the raw client in init")
 
-        let rawUse = try NSRegularExpression(pattern: #"\bclient\.([A-Za-z]+)"#)
-        func members(_ source: String) -> [String] {
-            var found: [String] = []
-            for line in source.split(separator: "\n") where !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
-                let text = String(line)
-                for match in rawUse.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-                    found.append(String(text[Range(match.range(at: 1), in: text)!]))
-                }
-            }
-            return found
+        // The seam sends only the two credential requests.
+        let seamForms = ["let client: TDLibKit.TDLibClient", "try client.setAuthenticationPhoneNumber(",
+                         "try client.checkAuthenticationPassword("]
+        for line in codeLines(seam) {
+            var text = line
+            for form in seamForms { text = text.replacingOccurrences(of: form, with: "") }
+            let left = word.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
+            XCTAssertEqual(left, 0, "raw client used in the request seam for something else: \(line)")
         }
-        XCTAssertEqual(Set(members(body)), ["id", "close"], "raw client members used: \(members(body))")
-        XCTAssertEqual(Set(members(seam)), ["setAuthenticationPhoneNumber", "checkAuthenticationPassword"],
-                       "the request seam sends only the two credential requests: \(members(seam))")
 
+        // `openClient` is used directly, never bound and reused.
+        let declaration = "var openClient: TDLibKit.TDLibClient {"
+        let bare = try NSRegularExpression(pattern: #"\bopenClient\b(?!\.)"#)
         for file in ["TDLibClient.swift", "TDLibClient+Archive.swift"] {
             let source = try String(contentsOf: sources.appendingPathComponent(file), encoding: .utf8)
             XCTAssertTrue(source.contains("openClient."), file)
+            for line in codeLines(source) where !line.contains(declaration) {
+                let hits = bare.numberOfMatches(in: line, range: NSRange(line.startIndex..., in: line))
+                XCTAssertEqual(hits, 0, "\(file): openClient not used directly: \(line)")
+            }
         }
     }
 }

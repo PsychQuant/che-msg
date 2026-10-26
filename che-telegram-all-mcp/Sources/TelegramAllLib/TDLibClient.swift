@@ -132,9 +132,12 @@ public final class TDLibClient {
             case .missingCredentials(let msg): return "Missing: \(msg)"
             case .tdlibError(let code, let message): return "TDLib error \(code): \(message)"
             case .sessionClosed:
-                return "TDLib is closing or has closed this session; no further request was sent. "
+                // The idle close happens only when the timeout is not 0 and no call is
+                // running (TDLibLifecycle.checkIdle); the whole text stays under the
+                // 256-character cap of error results.
+                return "TDLib is closing or has closed this session; no request was sent. "
                     + "A new session opens on the first call after a successful logout, after the idle close "
-                    + "(\(IdleTimeout.environmentVariable) s with no call), or after you reconnect telegram-all with /mcp."
+                    + "(when \(IdleTimeout.environmentVariable) is not 0, once no call is running), or after a reconnect with /mcp."
             }
         }
     }
@@ -427,7 +430,10 @@ public final class TDLibClient {
     }
 
     /// The TDLibKit client for one request, after `requireOpen` (#64): every
-    /// request, including each page of a paging loop, goes through this.
+    /// request, including each page of a paging loop, goes through this. The
+    /// check and the request are not one step: TDLib can still close between
+    /// them, and that request then waits forever as before. Closing that window
+    /// needs the lifecycle to stop new calls before it closes (#64 findings 1–3).
     var openClient: TDLibKit.TDLibClient {
         get throws {
             try requireOpen()

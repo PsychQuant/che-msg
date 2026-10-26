@@ -85,8 +85,9 @@ internal enum CredentialLookupStatus: Equatable, Sendable {
 /// opened on demand waits for this before its first call (PsychQuant/che-msg#58).
 /// While a Keychain lookup runs, or its value is being submitted, it is not
 /// settled (#49), or the first call would answer before the value is sent.
-/// Logging out or closing is not settled either: it ends in `closed` without
-/// a caller (#64).
+/// Logging out or closing is not settled either, unless an automatic step
+/// failed (that settles every state): it ends in `closed` without a caller
+/// (#64).
 internal func authorizationIsSettled(state: TDLibClient.AuthState, hasAutoFireError: Bool, envApiId: Int?,
                                      envApiHash: String?, envPhone: String?, envPassword: String?,
                                      keychainLookup: CredentialLookupStatus) -> Bool {
