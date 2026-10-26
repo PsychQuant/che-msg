@@ -16,7 +16,13 @@
 #      it is not reported.
 #   5. --expect with another version reports every place.
 #   6. Tag vX already exists locally, or on origin: refused.
-#   7. --expect that is not x.y.z, or an unknown option: exit 2.
+#   7. --expect that is not x.y.z, an empty option value, or an unknown
+#      option: exit 2.
+#   8. Edges found by the #40 verify: a longer version (X.1, 1X) does not count
+#      as naming X; X at the start of a line does; "### [X]" is not the section;
+#      a second, different pin in one file is reported; the marketplace's
+#      plugin order does not matter; a plugin version that is not x.y.z is
+#      reported; a warning from git ls-remote on stderr is not a tag.
 #
 # Usage:
 #   bash tests/release/test-check-versions.sh
@@ -24,6 +30,8 @@
 # Exit: 0 on all pass, 1 on any failure.
 
 set -u
+# Expected listings are in C collation; the maintainer's shell is usually UTF-8.
+export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHECK="${CHECK_VERSIONS_UNDER_TEST:-$ROOT/scripts/release/check-versions.sh}"
 
@@ -51,6 +59,9 @@ test_case() { TOTAL=$((TOTAL + 1)); echo "Test: $1"; }
 
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/check-versions-XXXXXX") || { echo "ERROR: cannot create a scratch directory" >&2; exit 1; }
 [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ] || { echo "ERROR: cannot create a scratch directory" >&2; exit 1; }
+# The scripts under test create temp files; keep them inside the scratch directory.
+export TMPDIR="$SCRATCH/tmp"
+mkdir -p "$TMPDIR"
 trap 'rm -rf "$SCRATCH"' EXIT
 
 # fresh_copy <name>: a git repo holding the FILES as committed at HEAD; prints its path.
@@ -173,6 +184,57 @@ if [ "$RC" -eq 1 ]; then pass "exit 1"; else fail "exit $RC"; fi
 n=$(crosses)
 if [ "$n" -ge 15 ]; then pass "reports every binary pin ($n problems)"; else fail "reports only $n problems:"$'\n'"$OUT"; fi
 
+# ---------------------------------------------------------------------- edges
+for longer in "$X.1" "1$X"; do
+    test_case "plugin CHANGELOG names only $longer"
+    D=$(fresh_copy "longer-${longer//./-}")
+    edit "$D" plugins/che-telegram-mcp/CHANGELOG.md "section('## [$P]', '$X', '$longer')"
+    run "$D" --no-remote
+    if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF "section ## [$P] does not mention $X"; then pass "$longer does not count as $X"; else fail "$longer counted as $X (exit $RC)"; fi
+done
+
+test_case "plugin CHANGELOG names the version at the start of a line"
+D=$(fresh_copy line-start)
+edit "$D" plugins/che-telegram-mcp/CHANGELOG.md "section('## [$P]', '$X', '$B')"
+edit "$D" plugins/che-telegram-mcp/CHANGELOG.md "re.sub('(?m)^(' + re.escape('## [$P]') + '[^\\n]*\\n)', lambda m: m.group(1) + '\\n$X is the binary version this release pins.\\n', s, count=1)"
+run "$D" --no-remote
+if [ "$RC" -eq 0 ]; then pass "counted (exit 0)"; else fail "exit $RC:"$'\n'"$(printf '%s\n' "$OUT" | grep '^✗')"; fi
+
+test_case "a heading that only contains the section's text"
+D=$(fresh_copy subheading)
+edit "$D" che-telegram-all-mcp/CHANGELOG.md "one('## [$X]', '### [$X]')"
+run "$D" --no-remote --expect "$X" --expect-plugin "$P"
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF "che-telegram-all-mcp/CHANGELOG.md: no section ## [$X]"; then pass "### [$X] is not the section"; else fail "### [$X] accepted (exit $RC)"; fi
+
+test_case "a second, different pin in one file"
+D=$(fresh_copy duplicate)
+edit "$D" plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh "s + 'DESIRED_VERSION=\"$B\"\\n'"
+run "$D" --no-remote --expect "$X" --expect-plugin "$P"
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF "che-telegram-all-mcp-wrapper.sh: DESIRED_VERSION is"; then pass "reported"; else fail "not reported (exit $RC)"; fi
+
+test_case "the marketplace lists another plugin first"
+D=$(fresh_copy market-order)
+edit "$D" .claude-plugin/marketplace.json "json.dumps({**json.loads(s), 'plugins': sorted(json.loads(s)['plugins'], key=lambda q: q['name'] == 'che-telegram-mcp')}, indent=2) + '\\n'"
+run "$D" --no-remote
+if [ "$RC" -eq 0 ]; then pass "order does not matter (exit 0)"; else fail "exit $RC:"$'\n'"$(printf '%s\n' "$OUT" | grep '^✗')"; fi
+
+test_case "a plugin version that is not x.y.z"
+D=$(fresh_copy plugin-xyz)
+edit "$D" plugins/che-telegram-mcp/.claude-plugin/plugin.json "one('\"version\": \"$P\"', '\"version\": \"${P%.*}\"')"
+run "$D" --no-remote
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF "plugin version \"${P%.*}\" is not x.y.z"; then pass "reported"; else fail "not reported (exit $RC)"; fi
+
+test_case "git ls-remote prints a warning on stderr"
+D=$(fresh_copy ls-remote-warning)
+git clone -q --bare "$D" "$SCRATCH/warn-origin.git" && git -C "$D" remote add origin "$SCRATCH/warn-origin.git" || exit 1
+REAL_GIT=$(command -v git)
+mkdir -p "$SCRATCH/fakegit"
+# shellcheck disable=SC2016  # $1 and $@ belong to the fake git script
+printf '#!/bin/bash\n[ "$1" = ls-remote ] && echo "warning: redirecting to https://example.invalid/" >&2\nexec "%s" "$@"\n' "$REAL_GIT" > "$SCRATCH/fakegit/git"
+chmod +x "$SCRATCH/fakegit/git"
+OUT=$(PATH="$SCRATCH/fakegit:$PATH" bash "$CHECK" --root "$D" 2>&1); RC=$?
+if [ "$RC" -eq 0 ]; then pass "the warning is not a tag (exit 0)"; else fail "exit $RC:"$'\n'"$(printf '%s\n' "$OUT" | grep '^✗')"; fi
+
 # ---------------------------------------------------------------------- tags
 test_case "tag v$X exists locally"
 D=$(fresh_copy tag-local); git -C "$D" tag "v$X"
@@ -206,6 +268,10 @@ run "$BASE" --bogus
 if [ "$RC" -eq 2 ]; then pass "unknown option: exit 2"; else fail "unknown option: exit $RC"; fi
 run "$BASE" --expect-plugin 1.x
 if [ "$RC" -eq 2 ]; then pass "--expect-plugin 1.x: exit 2"; else fail "--expect-plugin 1.x: exit $RC"; fi
+for opt in --expect --expect-plugin --root; do
+    run "$BASE" "$opt" ""
+    if [ "$RC" -eq 2 ]; then pass "$opt \"\": exit 2"; else fail "$opt \"\": exit $RC"; fi
+done
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."

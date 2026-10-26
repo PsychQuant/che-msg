@@ -32,9 +32,14 @@ TAG_CHECK=1
 REMOTE=1
 while [ $# -gt 0 ]; do
     case "$1" in
-        --expect) EXPECT="${2:-}"; shift 2 || { echo "check-versions: --expect needs a version" >&2; exit 2; } ;;
-        --expect-plugin) EXPECT_PLUGIN="${2:-}"; shift 2 || { echo "check-versions: --expect-plugin needs a version" >&2; exit 2; } ;;
-        --root) ROOT="${2:-}"; shift 2 || { echo "check-versions: --root needs a directory" >&2; exit 2; } ;;
+        # An empty value is refused rather than read as "use the default": a
+        # caller passing --expect "$V" with V unset would otherwise check nothing.
+        --expect) [ -n "${2:-}" ] || { echo "check-versions: --expect needs a version" >&2; exit 2; }
+            EXPECT=$2; shift 2 ;;
+        --expect-plugin) [ -n "${2:-}" ] || { echo "check-versions: --expect-plugin needs a version" >&2; exit 2; }
+            EXPECT_PLUGIN=$2; shift 2 ;;
+        --root) [ -n "${2:-}" ] || { echo "check-versions: --root needs a directory" >&2; exit 2; }
+            ROOT=$2; shift 2 ;;
         --no-tag-check) TAG_CHECK=0; shift ;;
         --no-remote) REMOTE=0; shift ;;
         -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
@@ -71,17 +76,23 @@ except Exception:
 print(v if isinstance(v, str) else "")' "$1" "$2"
 }
 
-# has_section <file> <version>: the CHANGELOG has a "## [version]" heading.
-has_section() { [ -f "$1" ] && grep -qF "## [$2]" "$1"; }
+# has_section <file> <version>: the CHANGELOG has a line starting "## [version]"
+# (a "### [version]" heading or the text inside a sentence does not count).
+has_section() { [ -f "$1" ] && awk -v h="## [$2]" 'index($0, h) == 1 { found = 1 } END { exit !found }' "$1"; }
 
-# section_mentions <file> <section version> <version>: that section names the version.
+# section_mentions <file> <section version> <version>: that section names the
+# version as a whole: not part of 10.8.0, 0.8.01 or 0.8.0.1. A sentence-ending
+# "0.8.0." still counts.
 section_mentions() {
     awk -v h="## [$2]" -v v="$3" '
         index($0, h) == 1 { inside = 1; next }
         inside && index($0, "## [") == 1 { exit }
         inside { line = $0; while ((i = index(line, v)) > 0) {
-            before = substr(line, i - 1, 1); after = substr(line, i + length(v), 1)
-            if (before !~ /[0-9.]/ && after !~ /[0-9]/) { hit = 1; exit }
+            # substr(s, 0, 1) is the first character in macOS awk, so a match at
+            # the start of the line needs its own case.
+            before = (i > 1) ? substr(line, i - 1, 1) : ""
+            after = substr(line, i + length(v), 2)
+            if (before !~ /[0-9.]/ && after !~ /^[0-9]/ && after !~ /^\.[0-9]/) { hit = 1; exit }
             line = substr(line, i + 1) } }
         END { exit hit ? 0 : 1 }' "$1"
 }
@@ -140,6 +151,9 @@ echo "Plugin version ${P:-?}"
 if [ -z "$P" ]; then
     bad "$PLUGIN_JSON: plugin version not found"
 else
+    if [ -z "$EXPECT_PLUGIN" ] && ! [[ "$P_JSON" =~ $XYZ ]]; then
+        bad "$PLUGIN_JSON: plugin version \"$P_JSON\" is not x.y.z"
+    fi
     expect "$PLUGIN_JSON" "plugin version" "$P" "$P_JSON"
     f=.claude-plugin/marketplace.json
     expect "$f" "che-telegram-mcp version" "$P" \
@@ -165,13 +179,16 @@ if [ "$TAG_CHECK" = 1 ]; then
         bad "tag v$X already exists locally — a released version is never published again; bump the version"
     elif [ "$REMOTE" = 0 ]; then
         ok "tags" "v$X does not exist locally (origin not checked)"
-    elif ! remote_tags=$(git ls-remote --tags origin "refs/tags/v$X" 2>&1); then
-        bad "cannot list origin's tags ($(printf '%s' "$remote_tags" | head -1)) — rerun when origin is reachable, or pass --no-remote to check local tags only"
+    # Only stdout lists tags; git writes warnings (a redirected URL, a new SSH
+    # host key) to stderr even when the listing succeeds.
+    elif ! remote_tags=$(git ls-remote --tags origin "refs/tags/v$X" 2>"${TMPDIR:-/tmp}/check-versions-ls-remote.$$"); then
+        bad "cannot list origin's tags ($(head -1 "${TMPDIR:-/tmp}/check-versions-ls-remote.$$")) — rerun when origin is reachable, or pass --no-remote to check local tags only"
     elif [ -n "$remote_tags" ]; then
         bad "tag v$X already exists on origin — a released version is never published again; bump the version"
     else
         ok "tags" "v$X exists neither locally nor on origin"
     fi
+    rm -f "${TMPDIR:-/tmp}/check-versions-ls-remote.$$"
 fi
 
 echo ""

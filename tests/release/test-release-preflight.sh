@@ -30,6 +30,8 @@
 # Exit: 0 on all pass, 1 on any failure.
 
 set -u
+# Expected listings are in C collation; the maintainer's shell is usually UTF-8.
+export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SIGN="${SIGN_UNDER_TEST:-$ROOT/scripts/release/sign-and-notarize.sh}"
 source "$ROOT/tests/release/lib/fake_signing_tools.sh"
@@ -44,6 +46,9 @@ test_case() { TOTAL=$((TOTAL + 1)); echo "Test: $1"; }
 
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/release-preflight-XXXXXX") || { echo "ERROR: cannot create a scratch directory" >&2; exit 1; }
 [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ] || { echo "ERROR: cannot create a scratch directory" >&2; exit 1; }
+# The scripts under test create temp files; keep them inside the scratch directory.
+export TMPDIR="$SCRATCH/tmp"
+mkdir -p "$TMPDIR"
 trap 'rm -rf "$SCRATCH"' EXIT
 
 # make_env <dir> [no-identity|no-runtime|not-notarized]: fake tools in <dir>/fakebin
