@@ -105,7 +105,7 @@ code:
 ---
 ### Requirement: TDLib closes after an idle period and releases the lock
 
-The server SHALL close TDLib and release the TDLib lock after no tool call has used TDLib for the idle timeout. A call in progress counts as using TDLib, and idle time SHALL be measured from the end of the most recent call. The idle timeout SHALL be read from the environment variable `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` in seconds, SHALL default to 600, and the value `0` SHALL disable idle closing. The server SHALL release the lock only after TDLib reports `authorizationStateClosed`. When its MCP connection ends, the server SHALL close TDLib and release the lock before its process exits, whatever the idle timeout.
+The server SHALL close TDLib and release the TDLib lock after no tool call has used TDLib for the idle timeout. A call in progress counts as using TDLib, and idle time SHALL be measured from the end of the most recent call. The idle timeout SHALL be read from the environment variable `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` in seconds, SHALL default to 600, and the value `0` SHALL disable idle closing. The server SHALL release the lock only after TDLib reports `authorizationStateClosed`. When its MCP connection ends, the server SHALL first answer the requests it read before the connection ended and the client has not cancelled, waiting at most 30 seconds for their answers, and SHALL then close TDLib and release the lock before its process exits, whatever the idle timeout. A process ended by a signal is not covered: the server installs no SIGTERM or SIGINT handler, so a signal ends it without answering those requests or closing TDLib, and the kernel releases the flock when the process ends.
 
 #### Scenario: Idle timeout closes TDLib
 
@@ -145,7 +145,20 @@ The server SHALL close TDLib and release the TDLib lock after no tool call has u
 #### Scenario: Connection end closes TDLib before exit
 
 - **WHEN** the MCP connection of a server that holds TDLib ends
-- **THEN** the server closes TDLib, waits for `authorizationStateClosed`, releases the TDLib lock and removes its owner file, and its process then exits with status 0
+- **THEN** the server first sends the answers to the requests it read before the connection ended, waiting at most 30 seconds for them, then closes TDLib, waits for `authorizationStateClosed`, releases the TDLib lock and removes its owner file, and its process then exits with status 0
+
+##### Example: the input ends right after three messages
+
+| Message read before the input ends | Answer sent before exit |
+| ---------------------------------- | ----------------------- |
+| `initialize` (id 1) | yes |
+| `notifications/initialized` | none (a notification) |
+| `tools/list` (id 2) | yes |
+
+#### Scenario: A request still unanswered when the wait ends
+
+- **WHEN** a request read before the MCP connection ended has no answer 30 seconds after the connection ended
+- **THEN** the server writes one line to stderr, stops waiting, and closes TDLib and exits without that answer
 
 #### Scenario: Close that does not finish keeps the lock
 
