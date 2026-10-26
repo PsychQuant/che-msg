@@ -371,6 +371,28 @@ def _case_13():
     if d:
         check({s["file"]: s["reason"] for s in d["skipped"]} == {"888": "symlinked-chat-directory"}, f"skipped: {d['skipped']}")
 
+def _case_writer_agreement():
+    case("as the writer: only LF ends a line, header times are ASCII digits, escaped <!-- plus a mark reads back")
+    A = archive()
+    ls, nel, mark = chr(0x2028), chr(0x85), chr(0x301)
+    one_line = "a" + ls + "<!-- msg:5 -->" + nel + "**09:00 X**" + chr(0xff1a)
+    day(A, 777, "2026-10-14", blk(23, "11:10", "Kim", "first", one_line))
+    arabic = "".join(chr(0x660 + int(c)) if c.isdigit() else c for c in "09:05")
+    fullwidth = "".join(chr(0xff10 + int(c)) if c.isdigit() else c for c in "09:05")
+    day(A, 777, "2026-10-15", "<!-- msg:24 -->\n**" + arabic + " Kim**" + chr(0xff1a) + "\nbody 24\n\n"
+        "<!-- msg:25 -->\n**" + fullwidth + " Kim**" + chr(0xff1a) + "\nbody 25\n\n")
+    day(A, 777, "2026-10-16", blk(26, "11:20", "Kim", "\\<!--" + mark + " escaped by scalar"))
+    rc, raw, d, err = run(["--archive", A, "--cite", "telegram:777/23", "--cite", "telegram:777/5",
+                           "--cite", "telegram:777/24", "--cite", "telegram:777/25", "--cite", "telegram:777/26"])
+    b = {x["citation"]: x for x in (d or {}).get("blocks", [])}
+    check(b.get("telegram:777/23", {}).get("text") == "first\n" + one_line, f"U+2028 and NEL stay inside the line: {b.get('telegram:777/23')}")
+    check((d or {}).get("not_found") == ["telegram:777/5"], f"no block after U+2028: {(d or {}).get('not_found')}")
+    for mid in (24, 25):
+        x = b.get(f"telegram:777/{mid}", {})
+        check(x.get("time") is None and x.get("sender") is None and x.get("text", "").endswith(f"body {mid}"),
+              f"non-ASCII digits are not a header time: {x}")
+    check(b.get("telegram:777/26", {}).get("text") == "<!--" + mark + " escaped by scalar", f"escape undone: {b.get('telegram:777/26')}")
+
 def _case_race():
     case("a chat directory swapped for a symlink during the search is not followed")
     # White-box: the script is imported and its guard wrapped, so the swap happens
@@ -700,7 +722,7 @@ def _case_28():
     check(listing(os.path.dirname(A)) == before, "archive listing unchanged")
     check(listing(work) == before_cwd == [], "working directory still empty")
 
-CASES = [_case_82, _case_grapheme, _case_race, _case_gitenv, _case_globalignore, _case_annotation_cap, _case_rendered_width, _case_digits, _case_memory, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
+CASES = [_case_82, _case_grapheme, _case_writer_agreement, _case_race, _case_gitenv, _case_globalignore, _case_annotation_cap, _case_rendered_width, _case_digits, _case_memory, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
 for fn in CASES:
     try:
         fn()
