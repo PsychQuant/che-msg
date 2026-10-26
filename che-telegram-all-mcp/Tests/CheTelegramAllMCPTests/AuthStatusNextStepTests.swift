@@ -299,4 +299,13 @@ final class AuthStatusNextStepTests: XCTestCase {
             XCTAssertTrue(hint.hasPrefix(start), hint)
         }
     }
+
+    /// The store command in the hint ends with a bare -w, so security prompts
+    /// for the value instead of taking it on the command line (#51, #95 verify).
+    func testThePasswordHintStoresWithABareW() throws {
+        let payload = try parsePayload(authStatusResult(state: .waitingForPassword, lastError: nil))
+        let hint = try XCTUnwrap((payload["next_step"] as? [String: Any])?["hint"] as? String)
+        XCTAssertTrue(hint.contains("security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_2FA_PASSWORD -U -w, "), hint)
+    }
 }
+

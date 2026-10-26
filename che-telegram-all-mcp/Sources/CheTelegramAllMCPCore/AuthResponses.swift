@@ -80,12 +80,13 @@ private func keychainLookupPayload(state: TDLibClient.AuthState, miss: KeychainM
 private func keychainMissSentence(_ miss: KeychainMiss, credential: String) -> String {
     switch miss {
     case .notStored: return "No \(credential) is stored in the Keychain. "
-    case .timedOut: return "The Keychain did not answer within 10 seconds; it is probably locked. "
+    case .timedOut: return "The Keychain did not answer within \(Int(SecurityCLICredentialSource().timeout)) seconds; it is probably locked. "
     case .unavailable: return "Reading the Keychain failed (the server log has the details). "
     }
 }
 
 private func authStatusNextStep(state: TDLibClient.AuthState, miss: KeychainMiss? = nil) -> [String: Any]? {
+    let account = SecurityCLICredentialSource.account, item = KeychainCredential.password.rawValue
     switch state {
     case .ready, .closed:
         return nil
@@ -115,9 +116,9 @@ private func authStatusNextStep(state: TDLibClient.AuthState, miss: KeychainMiss
             // The Keychain comes first: an argument passes through the
             // conversation, which is what #49 keeps the password out of (#95).
             "hint": (miss.map { keychainMissSentence($0, credential: "2FA password") } ?? "")
-                + "The 2FA password is read from the Keychain item TELEGRAM_2FA_PASSWORD (account che-telegram-all-mcp) "
-                + "when it is stored there. Ask the user to store it in their own terminal "
-                + "(security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_2FA_PASSWORD -U -w, which prompts for it) "
+                + "The 2FA password is read from the Keychain item \(item) (account \(account)) when it is stored there "
+                + "and the server's environment has no \(item). Ask the user to store it in their own terminal "
+                + "(security add-generic-password -a \(account) -s \(item) -U -w, which prompts for it) "
                 + "or to unlock the Keychain, then call auth_run with no arguments. "
                 + "Pass password only if the user chooses to type it here: it then passes through this conversation.",
         ]

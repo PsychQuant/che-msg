@@ -102,7 +102,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 > SMS verification code is **never** auto-fired, from the environment or the Keychain — it must be supplied via `auth_run(code: "...")` or `auth_send_code(code: "...")` in a one-shot delivery.
 >
-> The Keychain lookup runs `/usr/bin/security` with a 10-second limit, only when the environment has no value. A locked Keychain or a lookup that does not finish counts as "not stored": `auth_run` then asks for the value as before. The value is used for that one submission and never logged.
+> The Keychain lookup runs `/usr/bin/security` with a 10-second limit, only when the environment has no value. When the lookup finds nothing, `auth_status` and `auth_run` say why in `keychain_lookup` (`not_stored`, `timed_out` (usually a locked Keychain) or `unavailable`), and the 2FA hint asks for the Keychain item before the `password` argument. The value is used for that one submission and never logged.
 >
 > If env vars are not set, you can still drive the flow manually via `auth_run` (or the per-step `auth_set_parameters` / `auth_send_phone` / `auth_send_password` tools).
 
