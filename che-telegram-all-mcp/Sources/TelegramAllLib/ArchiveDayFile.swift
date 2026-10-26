@@ -85,9 +85,22 @@ public enum ArchiveDayFile {
     /// The anchor line that starts each message block.
     public static func anchor(_ id: Int64) -> String { "<!-- msg:\(id) -->" }
 
-    /// One message block: anchor, `**HH:mm sender**：`, body, blank line. A body line that
-    /// starts like an anchor is escaped so that it never reads back as one.
-    public static func block(_ message: ArchiveMessage, offsetSeconds: Int) -> String {
+    /// The line right after the anchor of a block written from TDLib's local cache (#72). Such a
+    /// block lacks what the local reader cannot give, so a later write through TDLib replaces it.
+    /// Kept out of the anchor so that every reader, v0.8.0's parser included, still finds each
+    /// block start at its unchanged anchor line.
+    public static let provisionalMarker = "<!-- provisional: local-cache -->"
+
+    /// True when `blockText` (a block as `parseBlocks` returns it) has the marker as its second line.
+    static func isProvisional(_ blockText: String) -> Bool {
+        let lines = blockText.split(separator: "\n", maxSplits: 2, omittingEmptySubsequences: false)
+        return lines.count >= 2 && lines[1] == provisionalMarker
+    }
+
+    /// One message block: anchor, the provisional marker when `provisional`, `**HH:mm sender**：`,
+    /// body, blank line. A body line that starts like an anchor (or the marker) is escaped so that
+    /// it never reads back as one.
+    public static func block(_ message: ArchiveMessage, offsetSeconds: Int, provisional: Bool = false) -> String {
         let time = formatter("HH:mm", offsetSeconds).string(from: message.date)
         // The sender sits on the header line: a line break in it would start a new line that
         // the parser could read as an anchor, so line breaks become spaces.
@@ -101,7 +114,8 @@ public enum ArchiveDayFile {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { isAnchorOrHeaderShaped($0) ? "\\" + $0 : String($0) }
             .joined(separator: "\n")
-        return "\(anchor(message.id))\n**\(time) \(sender)**：\n\(body)\n\n"
+        let marker = provisional ? provisionalMarker + "\n" : ""
+        return "\(anchor(message.id))\n\(marker)**\(time) \(sender)**：\n\(body)\n\n"
     }
 
     /// A body line that starts like an anchor, or begins like a block header (`**` and a time,
@@ -202,9 +216,13 @@ public enum ArchiveDayFile {
     }
 
     /// `existing` with every message of `messages` whose anchor it lacks added, all blocks
-    /// ordered by id; existing blocks keep their exact text. `added` lists the new ids.
+    /// ordered by id. Existing blocks keep their exact text, except that when the messages come
+    /// through TDLib (`provisional` false) a provisional block of one of them is replaced by its
+    /// block as written now (#72); messages from the local cache (`provisional` true) are added
+    /// with the marker and replace nothing. `added` lists the new ids, `upgraded` the replaced ones.
     public static func merged(existing: String?, chatId: Int64, day: String, utcOffset: String,
-                              messages: [ArchiveMessage]) -> (content: String, added: [Int64]) {
+                              messages: [ArchiveMessage], provisional: Bool = false)
+        -> (content: String, added: [Int64], upgraded: [Int64]) {
         let offset = offsetSeconds(utcOffset) ?? 0
         let parts = split(existing ?? "")
         var blocks: [Int64: String] = [:]
@@ -212,22 +230,31 @@ public enum ArchiveDayFile {
             blocks[block.id] = block.text.hasSuffix("\n") ? block.text : block.text + "\n"
         }
         var added: [Int64] = []
-        for message in messages where blocks[message.id] == nil {
-            blocks[message.id] = block(message, offsetSeconds: offset)
-            added.append(message.id)
+        var upgraded: [Int64] = []
+        var handled: Set<Int64> = []
+        for message in messages where handled.insert(message.id).inserted {
+            if let current = blocks[message.id] {
+                guard !provisional, isProvisional(current) else { continue }
+                blocks[message.id] = block(message, offsetSeconds: offset)
+                upgraded.append(message.id)
+            } else {
+                blocks[message.id] = block(message, offsetSeconds: offset, provisional: provisional)
+                added.append(message.id)
+            }
         }
         let body = blocks.keys.sorted().map { blocks[$0]! }.joined()
-        return (frontmatter(chatId: chatId, day: day, utcOffset: utcOffset) + parts.preamble + body, added)
+        return (frontmatter(chatId: chatId, day: day, utcOffset: utcOffset) + parts.preamble + body, added, upgraded)
     }
 
     /// Writes the day file for `day` under `directory` (created when missing), merging with
-    /// the file already there, by writing a temporary file in the same directory and renaming
-    /// it over the original. Leaves an existing file untouched when nothing is added, and refuses
-    /// one that is not a regular file or contains a carriage return.
-    /// Returns the ids of the messages added.
+    /// the file already there as `merged` does, by writing a temporary file in the same directory
+    /// and renaming it over the original. Leaves an existing file untouched when nothing is added
+    /// or upgraded, and refuses one that is not a regular file or contains a carriage return.
+    /// Returns the ids of the messages added and of the provisional blocks upgraded.
     @discardableResult
     public static func write(directory: URL, chatId: Int64, day: String, utcOffset: String,
-                             messages: [ArchiveMessage]) throws -> [Int64] {
+                             messages: [ArchiveMessage], provisional: Bool = false) throws
+        -> (added: [Int64], upgraded: [Int64]) {
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let file = directory.appendingPathComponent("\(day).md")
@@ -242,9 +269,9 @@ public enum ArchiveDayFile {
             return text
         }
         if let existing { try checkOffset(recordedIn: existing, day: day, utcOffset: utcOffset) }
-        let (content, added) = merged(existing: existing, chatId: chatId, day: day, utcOffset: utcOffset,
-                                      messages: messages)
-        if added.isEmpty && existing != nil { return [] }
+        let (content, added, upgraded) = merged(existing: existing, chatId: chatId, day: day, utcOffset: utcOffset,
+                                                messages: messages, provisional: provisional)
+        if added.isEmpty && upgraded.isEmpty && existing != nil { return ([], []) }
         let temporary = directory.appendingPathComponent(".\(day).md.\(UUID().uuidString).tmp")
         do {
             // Owner-only from the start: archives hold other people's messages.
@@ -259,7 +286,7 @@ public enum ArchiveDayFile {
             try? fm.removeItem(at: temporary)
             throw error
         }
-        return added
+        return (added, upgraded)
     }
 
     /// Frontmatter dropped; text between it and the first anchor kept as `preamble`.

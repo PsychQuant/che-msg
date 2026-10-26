@@ -278,8 +278,8 @@ public struct ChatArchiver {
         // Text first: an interrupted run then keeps the page's messages even if a large
         // download had not finished.
         for (day, dayMessages) in byDay {
-            let added = try ArchiveDayFile.write(directory: chatDir, chatId: request.chatId, day: day,
-                                                 utcOffset: request.utcOffset, messages: dayMessages)
+            let (added, _) = try ArchiveDayFile.write(directory: chatDir, chatId: request.chatId, day: day,
+                                                      utcOffset: request.utcOffset, messages: dayMessages)
             guard !added.isEmpty else { continue }
             result.newMessages += added.count
             result.mediaMessages += added.filter { media[$0] == true }.count

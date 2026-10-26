@@ -1,7 +1,7 @@
 ## 1. 標記與升級（日檔層）
 
-- [ ] 1.1 先寫失敗的測試（Requirement: Day file format 的 Example: block written from the local cache 與 Scenario: Text that looks like the marker；Requirement: Merge and idempotent rewrite 的 Example: which existing blocks a call replaces 與 Scenario: TDLib re-run after an upgrade）：`block(_:offsetSeconds:provisional: true)` 的第二行是 `provisionalMarker`；帶標記與不帶標記的日檔 `parseBlocks` 得到相同的 id；`merged(provisional: false)` 換掉帶標記的區塊並回報在 `upgraded`、其他區塊與 preamble 位元組不變；`merged(provisional: true)` 不換任何區塊；內文行恰為標記時被跳脫、該區塊不是暫時的；`write` 升級後檔案仍是 0600、再寫一次位元組不變並回 `([], [])`；只有快取訊息、id 都已存在時檔案不動。驗證：`swift test --filter ArchiveDayFileTests` 先失敗
-- [ ] 1.2 依設計「標記在錨點之後自己的一行」與「升級：TDLib 換掉帶標記的區塊，快取不換任何區塊」實作 `provisionalMarker`、`block(...provisional:)`、`isProvisional`、`merged(...provisional:)` 與 `write(...provisional:)`（回傳 `added` 與 `upgraded`），既有的 `write` 測試改讀 `.added`。驗證：1.1 的測試與既有的 `ArchiveDayFileTests` 通過 [after: 1.1]
+- [x] 1.1 先寫失敗的測試（Requirement: Day file format 的 Example: block written from the local cache 與 Scenario: Text that looks like the marker；Requirement: Merge and idempotent rewrite 的 Example: which existing blocks a call replaces 與 Scenario: TDLib re-run after an upgrade）：`block(_:offsetSeconds:provisional: true)` 的第二行是 `provisionalMarker`；帶標記與不帶標記的日檔 `parseBlocks` 得到相同的 id；`merged(provisional: false)` 換掉帶標記的區塊並回報在 `upgraded`、其他區塊與 preamble 位元組不變；`merged(provisional: true)` 不換任何區塊；內文行恰為標記時被跳脫、該區塊不是暫時的；`write` 升級後檔案仍是 0600、再寫一次位元組不變並回 `([], [])`；只有快取訊息、id 都已存在時檔案不動。驗證：`swift test --filter ArchiveDayFileTests` 先失敗
+- [x] 1.2 依設計「標記在錨點之後自己的一行」與「升級：TDLib 換掉帶標記的區塊，快取不換任何區塊」實作 `provisionalMarker`、`block(...provisional:)`、`isProvisional`、`merged(...provisional:)` 與 `write(...provisional:)`（回傳 `added` 與 `upgraded`），既有的 `write` 測試改讀 `.added`。驗證：1.1 的測試與既有的 `ArchiveDayFileTests` 通過 [after: 1.1]
 
 ## 2. 歸檔與 manifest
 

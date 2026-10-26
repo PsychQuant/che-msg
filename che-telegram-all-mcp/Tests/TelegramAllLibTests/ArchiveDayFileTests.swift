@@ -124,7 +124,7 @@ final class ArchiveDayFileTests: XCTestCase {
     func testOlderMessagesArriveAfterNewerOnes() {
         let first = ArchiveDayFile.render(chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
                                           messages: [message(30, minute: 0), message(50, minute: 2)])
-        let (content, added) = ArchiveDayFile.merged(existing: first, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+        let (content, added, _) = ArchiveDayFile.merged(existing: first, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
                                                      messages: [message(40, minute: 1), message(50, minute: 2)])
         XCTAssertEqual(added, [40])
         XCTAssertEqual(ArchiveDayFile.parseBlocks(content).map(\.id), [30, 40, 50])
@@ -134,7 +134,7 @@ final class ArchiveDayFileTests: XCTestCase {
     func testExistingBlocksKeepTheirExactText() {
         let existing = "---\nchat_id: 7\ndate: 2026-10-11\nutc_offset: \"+08:00\"\n---\n\n"
             + "<!-- msg:50 -->\n**09:02 Old name**：\nedited by hand\n\n"
-        let (content, _) = ArchiveDayFile.merged(existing: existing, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+        let (content, _, _) = ArchiveDayFile.merged(existing: existing, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
                                                  messages: [message(50, minute: 2, sender: "New name"), message(60, minute: 3)])
         XCTAssertTrue(content.contains("<!-- msg:50 -->\n**09:02 Old name**：\nedited by hand\n\n"), content)
         XCTAssertFalse(content.contains("New name"), content)
@@ -145,10 +145,10 @@ final class ArchiveDayFileTests: XCTestCase {
     func testRerunWithoutNewMessagesLeavesTheFileByteIdentical() throws {
         let dir = try tempDir()
         let batch = [message(30, minute: 0), message(40, minute: 1)]
-        XCTAssertEqual(try ArchiveDayFile.write(directory: dir, chatId: 7, day: "2026-10-11", utcOffset: "+08:00", messages: batch), [30, 40])
+        XCTAssertEqual(try ArchiveDayFile.write(directory: dir, chatId: 7, day: "2026-10-11", utcOffset: "+08:00", messages: batch).added, [30, 40])
         let file = dir.appendingPathComponent("2026-10-11.md")
         let before = try Data(contentsOf: file)
-        XCTAssertEqual(try ArchiveDayFile.write(directory: dir, chatId: 7, day: "2026-10-11", utcOffset: "+08:00", messages: batch), [])
+        XCTAssertEqual(try ArchiveDayFile.write(directory: dir, chatId: 7, day: "2026-10-11", utcOffset: "+08:00", messages: batch).added, [])
         XCTAssertEqual(try Data(contentsOf: file), before)
     }
 
@@ -442,5 +442,110 @@ final class ArchiveDayFileTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("cannot be merged into safely"), error.localizedDescription)
             XCTAssertTrue(error.localizedDescription.contains("2026-10-11.md"), error.localizedDescription)
         }
+    }
+
+    // MARK: - Provisional blocks written from the local cache (#72)
+
+    private let marker = "<!-- provisional: local-cache -->"
+    private let head = "---\nchat_id: 7\ndate: 2026-10-11\nutc_offset: \"+08:00\"\n---\n\n"
+
+    // Example "block written from the local cache": the marker is the line after the anchor.
+    func testACacheBlockHasTheMarkerAsItsSecondLine() {
+        XCTAssertEqual(ArchiveDayFile.provisionalMarker, marker)
+        let m = ArchiveMessage(id: 30, date: utc(2026, 10, 11, 0, 3), sender: "User 1001", body: "hi")
+        XCTAssertEqual(ArchiveDayFile.block(m, offsetSeconds: 28_800, provisional: true),
+                       "<!-- msg:30 -->\n<!-- provisional: local-cache -->\n**08:03 User 1001**：\nhi\n\n")
+        XCTAssertEqual(ArchiveDayFile.block(m, offsetSeconds: 28_800), "<!-- msg:30 -->\n**08:03 User 1001**：\nhi\n\n")
+    }
+
+    /// Anchors are unchanged, so a parser that knows nothing of the marker (v0.8.0's) finds the same blocks.
+    func testMarkersDoNotChangeWhereBlocksStart() {
+        let messages = [message(30, minute: 0), message(50, minute: 2)]
+        let marked = ArchiveDayFile.merged(existing: nil, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+                                           messages: messages, provisional: true).content
+        XCTAssertEqual(marked.components(separatedBy: "\n\(marker)\n").count - 1, 2, marked)
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(marked).map(\.id), [30, 50])
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(marked).map { ArchiveDayFile.isProvisional($0.text) }, [true, true])
+    }
+
+    // Example "which existing blocks a call replaces": a TDLib merge replaces marked blocks only.
+    func testATDLibMergeUpgradesProvisionalBlocksOnly() {
+        let block30 = "<!-- msg:30 -->\n\(marker)\n**09:00 User 1001**：\n[photo](media/30/)\n\n"
+        let block40 = "<!-- msg:40 -->\n**09:01 Old name**：\nedited by hand\n\n"
+        let block50 = "<!-- msg:50 -->\n\(marker)\n**09:02 User 1001**：\nm50\n\n"
+        let existing = head + "a note before the first block\n\n" + block30 + block40 + block50
+        let (content, added, upgraded) = ArchiveDayFile.merged(
+            existing: existing, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+            messages: [message(30, minute: 0, body: "[photo](media/30/) menu"),
+                       message(40, minute: 1, sender: "New name"), message(60, minute: 3)])
+        XCTAssertEqual(upgraded, [30])
+        XCTAssertEqual(added, [60])
+        XCTAssertEqual(content, head + "a note before the first block\n\n"
+            + "<!-- msg:30 -->\n**09:00 Alex**：\n[photo](media/30/) menu\n\n"
+            + block40 + block50 + "<!-- msg:60 -->\n**09:03 Alex**：\nm60\n\n")
+    }
+
+    func testACacheMergeReplacesNothing() {
+        let block30 = "<!-- msg:30 -->\n\(marker)\n**09:00 User 1001**：\nm30\n\n"
+        let block40 = "<!-- msg:40 -->\n**09:01 Alex**：\nm40\n\n"
+        let (content, added, upgraded) = ArchiveDayFile.merged(
+            existing: head + block30 + block40, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+            messages: [message(30, minute: 0, sender: "User 1001", body: "different"),
+                       message(40, minute: 1, sender: "User 1001"), message(60, minute: 3, sender: "User 1001")],
+            provisional: true)
+        XCTAssertEqual(upgraded, [])
+        XCTAssertEqual(added, [60])
+        XCTAssertEqual(content, head + block30 + block40 + "<!-- msg:60 -->\n\(marker)\n**09:03 User 1001**：\nm60\n\n")
+    }
+
+    // Scenario "Text that looks like the marker".
+    func testABodyLineThatIsTheMarkerCannotMakeABlockProvisional() {
+        let file = ArchiveDayFile.render(chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+                                         messages: [message(40, minute: 0, body: marker + "\nok")])
+        XCTAssertTrue(file.contains("**09:00 Alex**：\n\\\(marker)\nok\n"), file)
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(file).map { ArchiveDayFile.isProvisional($0.text) }, [false])
+        let (content, _, upgraded) = ArchiveDayFile.merged(existing: file, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+                                                           messages: [message(40, minute: 0, sender: "Other")])
+        XCTAssertEqual(upgraded, [])
+        XCTAssertEqual(content, file)
+    }
+
+    /// Only the second line marks a block; the marker anywhere else is just text the tool did not write.
+    func testTheMarkerCountsOnlyAsTheSecondLine() {
+        XCTAssertTrue(ArchiveDayFile.isProvisional("<!-- msg:1 -->\n\(marker)\n**09:00 A**：\nx\n\n"))
+        XCTAssertTrue(ArchiveDayFile.isProvisional("<!-- msg:1 -->\n\(marker)"), "a hand-cut block at the end of a file")
+        XCTAssertFalse(ArchiveDayFile.isProvisional("<!-- msg:1 -->\n**09:00 A**：\n\(marker)\n\n"))
+        XCTAssertFalse(ArchiveDayFile.isProvisional("<!-- msg:1 -->\n \(marker)\n**09:00 A**：\n\n"))
+        XCTAssertFalse(ArchiveDayFile.isProvisional("<!-- msg:1 -->\n<!-- provisional: local-cache -->x\n\n"))
+    }
+
+    // Scenario "TDLib re-run after an upgrade", at the file level.
+    func testWriteUpgradesOnceThenLeavesTheFileByteIdentical() throws {
+        let dir = try tempDir()
+        let file = dir.appendingPathComponent("2026-10-11.md")
+        let cached = [message(30, minute: 0, sender: "User 1001"), message(40, minute: 1, sender: "User 1001")]
+        let first = try ArchiveDayFile.write(directory: dir, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+                                             messages: cached, provisional: true)
+        XCTAssertEqual(first.added, [30, 40])
+        let afterCache = try Data(contentsOf: file)
+        let cacheAgain = try ArchiveDayFile.write(directory: dir, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+                                                  messages: cached, provisional: true)
+        XCTAssertEqual(cacheAgain.added + cacheAgain.upgraded, [])
+        XCTAssertEqual(try Data(contentsOf: file), afterCache, "a cache run over cache blocks changes nothing")
+
+        let full = [message(30, minute: 0), message(40, minute: 1)]
+        let upgrade = try ArchiveDayFile.write(directory: dir, chatId: 7, day: "2026-10-11", utcOffset: "+08:00", messages: full)
+        XCTAssertEqual(upgrade.added, [])
+        XCTAssertEqual(upgrade.upgraded, [30, 40])
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8),
+                       ArchiveDayFile.render(chatId: 7, day: "2026-10-11", utcOffset: "+08:00", messages: full))
+        let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(mode?.intValue, 0o600)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), ["2026-10-11.md"], "no temporary file left")
+
+        let afterUpgrade = try Data(contentsOf: file)
+        let again = try ArchiveDayFile.write(directory: dir, chatId: 7, day: "2026-10-11", utcOffset: "+08:00", messages: full)
+        XCTAssertEqual(again.added + again.upgraded, [])
+        XCTAssertEqual(try Data(contentsOf: file), afterUpgrade)
     }
 }
