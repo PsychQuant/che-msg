@@ -202,6 +202,33 @@ final class ToolRoutingTests: XCTestCase {
         XCTAssertTrue(reader.calls.isEmpty)
     }
 
+    /// The argument error's text reaches the caller, not just `isError` (#27):
+    /// each case fails if the error arm returns any other message.
+    func testArgumentErrorsCarryTheirMessage() async throws {
+        try holdTDLib(asPid: 4242)
+        let server = try await makeServer()
+        let output = Value.string(cache.appendingPathComponent("chat.md").path)
+        let cases: [(tool: String, args: [String: Value], expected: String)] = [
+            ("get_chat_history", [:], "Error: chat_id is required"),
+            ("dump_chat_to_markdown", ["chat_id": .int(777)], "Error: output_path is required"),
+            ("get_chat_history", ["chat_id": .int(777), "since_date": .string("2026/04/17")],
+             "Error: Date format invalid: expected YYYY-MM-DD, got \"2026/04/17\""),
+            ("search_messages", ["query": .string("a")], "Error: chat_id is required"),
+        ]
+        for c in cases {
+            let result = await server.handleToolCall(name: c.tool, arguments: c.args)
+            XCTAssertEqual(result.isError, true, c.expected)
+            XCTAssertEqual(texts(result), [c.expected])
+        }
+        let tooMany = await server.handleToolCall(name: "dump_chat_to_markdown",
+                                                  arguments: ["chat_id": .int(777), "output_path": output,
+                                                              "max_messages": .int(10_001)])
+        XCTAssertEqual(tooMany.isError, true)
+        XCTAssertEqual(texts(tooMany).count, 1)
+        XCTAssertTrue(texts(tooMany).first?.hasPrefix("Error: max_messages exceeds") == true, "\(texts(tooMany))")
+        XCTAssertTrue(reader.calls.isEmpty, "\(reader.calls)")
+    }
+
     // MARK: - Source note
 
     private let utcPlus8 = TimeZone(secondsFromGMT: 8 * 3600)!
