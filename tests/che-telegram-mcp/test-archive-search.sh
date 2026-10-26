@@ -46,6 +46,7 @@ for PY in "${INTERPRETERS[@]}"; do
 import json, os, subprocess, sys
 
 PY, SEARCH, SCRATCH = sys.argv[1], sys.argv[2], os.path.realpath(sys.argv[3])
+ELL = chr(0x2026)
 passed = failed = 0
 current = ""
 
@@ -393,6 +394,129 @@ def _case_writer_agreement():
               f"non-ASCII digits are not a header time: {x}")
     check(b.get("telegram:777/26", {}).get("text") == "<!--" + mark + " escaped by scalar", f"escape undone: {b.get('telegram:777/26')}")
 
+WHITEBOX = """
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("search_archive", sys.argv[1])
+sa = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sa)
+A, OUT = sys.argv[2], sys.argv[3]
+exec(sys.argv[4])
+sys.exit(sa.main(json.loads(sys.argv[5])))
+"""
+
+def whitebox(patch, A, out, argv, timeout=20):
+    """Runs the script's main() with `patch` applied first (it sees sa, os, A, OUT)."""
+    try:
+        p = subprocess.run([PY, "-I", "-B", "-c", WHITEBOX, SEARCH, A, out, patch, json.dumps(argv)],
+                           capture_output=True, timeout=timeout, cwd=SCRATCH, env=env())
+    except subprocess.TimeoutExpired:
+        return None, b"", None
+    try:
+        return p.returncode, p.stdout, json.loads(p.stdout.decode("utf-8"))
+    except ValueError:
+        return p.returncode, p.stdout, None
+
+def swap_fixture(name):
+    """An archive with chat 777 (text 'secret inside') and a look-alike outside it ('secret outside')."""
+    A = archive()
+    day(A, 777, "2026-11-07", blk(130, "09:00", "Alex", "secret inside"))
+    out = os.path.join(SCRATCH, name)
+    day(out, 777, "2026-11-07", blk(131, "09:00", "Mallory", "secret outside"))
+    return A, out
+
+def _case_after_recheck():
+    case("after the recheck, day files are read through the chat directory's descriptor")
+    # The chat directory is swapped for a link to a look-alike just before the first
+    # day file is read; a read by path would return the look-alike's text.
+    A, out = swap_fixture("wb-after-recheck")
+    patch = """
+real = sa.read_day
+done = []
+def hooked(*args, **kwargs):
+    if not done:
+        chat = os.path.join(A, "777")
+        os.rename(chat, chat + ".moved")
+        os.symlink(os.path.join(OUT, "777"), chat)
+        done.append(1)
+    return real(*args, **kwargs)
+sa.read_day = hooked
+"""
+    rc, raw, d = whitebox(patch, A, out, ["--archive", A, "--text", "secret"])
+    check(rc == 0 and b"outside" not in raw and cites(d) == ["telegram:777/130"], f"read via the descriptor: rc={rc} {raw[:300]!r}")
+
+def _case_archive_recheck():
+    case("the archive directory swapped for a link during the search refuses")
+    A, out = swap_fixture("wb-archive")
+    patch = """
+real = sa.guard
+def hooked(*args, **kwargs):
+    result = real(*args, **kwargs)
+    os.rename(A, A + ".moved")
+    os.symlink(OUT, A)
+    return result
+sa.guard = hooked
+"""
+    rc, raw, d = whitebox(patch, A, out, ["--archive", A, "--text", "secret"])
+    check(rc == 4 and d and d.get("error", {}).get("type") == "archive_missing" and b"secret" not in raw,
+          f"refused: rc={rc} {raw[:300]!r}")
+
+def _case_inode_recheck():
+    case("a chat directory swapped for another real directory is caught by its inode")
+    A, out = swap_fixture("wb-inode")
+    patch = """
+real = sa.guard
+def hooked(*args, **kwargs):
+    result = real(*args, **kwargs)
+    chat = os.path.join(A, "777")
+    os.rename(chat, chat + ".moved")
+    os.rename(os.path.join(OUT, "777"), chat)
+    return result
+sa.guard = hooked
+"""
+    rc, raw, d = whitebox(patch, A, out, ["--archive", A, "--text", "secret"])
+    check(rc == 0 and b"outside" not in raw and d and cites(d) == []
+          and {"file": "777", "reason": "changed-during-search"} in d.get("skipped", []), f"skipped: rc={rc} {raw[:300]!r}")
+
+def _case_dir_flag():
+    case("a chat directory replaced by a regular file before it is opened is reported as changed")
+    A, out = swap_fixture("wb-dirflag")
+    patch = """
+real = sa.open_dir
+done = []
+def hooked(name, dir_fd):
+    if name == "777" and not done:
+        chat = os.path.join(A, "777")
+        os.rename(chat, chat + ".moved")
+        open(chat, "w").write("not a directory")
+        done.append(1)
+    return real(name, dir_fd)
+sa.open_dir = hooked
+"""
+    rc, raw, d = whitebox(patch, A, out, ["--archive", A, "--text", "secret"])
+    check(rc == 0 and d and {"file": "777", "reason": "changed-during-search"} in d.get("skipped", []),
+          f"changed-during-search: rc={rc} {raw[:300]!r}")
+
+def _case_dayfile_swap():
+    case("a day file swapped for a link or a FIFO just before it is read is not followed and not waited on")
+    for kind in ("link", "fifo"):
+        A, out = swap_fixture(f"wb-day-{kind}")
+        patch = """
+real = sa.read_day
+def hooked(ref, *args, **kwargs):
+    path = os.path.join(A, "777", "2026-11-07.md")
+    os.rename(path, path + ".moved")
+    if KIND == "link":
+        os.symlink(os.path.join(OUT, "777", "2026-11-07.md"), path)
+    else:
+        os.mkfifo(path)
+    return real(ref, *args, **kwargs)
+sa.read_day = hooked
+""".replace("KIND", repr(kind))
+        rc, raw, d = whitebox(patch, A, out, ["--archive", A, "--text", "secret"], timeout=15)
+        check(rc == 0 and d and b"outside" not in raw
+              and {"file": "777/2026-11-07.md", "reason": "not-regular-file"} in d.get("skipped", []),
+              f"{kind}: rc={rc} {raw[:300]!r}")
+
 def _case_race():
     case("a chat directory swapped for a symlink during the search is not followed")
     # White-box: the script is imported and its guard wrapped, so the swap happens
@@ -490,14 +614,14 @@ def _case_18():
     day(A, 777, "2026-07-01", blk(400, "09:00", "Alex", long_text), blk(401, "09:01", "Alex", "x" * 300))
     rc, raw, d, err = run(["--archive", A, "--text", "needle"])
     s = d["results"][0]["snippet"] if d and d.get("results") else ""
-    check("needle" in s and s.startswith("…") and s.endswith("…") and len(s) <= 82, f"centered snippet ({len(s)}): {s!r}")
+    check("needle" in s and s.startswith("…") and s.endswith("…") and len(s) <= 80, f"centered snippet ({len(s)}): {s!r}")
     rc, raw, d, err = run(["--archive", A, "--sender", "Alex", "--snippet-chars", "20"])
     s = {r["citation"]: r["snippet"] for r in (d or {}).get("results", [])}
-    check(s.get("telegram:777/401") == "x" * 20 + "…", f"start of text without a term: {s.get('telegram:777/401')!r}")
+    check(s.get("telegram:777/401") == "x" * 19 + "…", f"start of text without a term: {s.get('telegram:777/401')!r}")
     long_sender = "N" * 100
     day(A, 777, "2026-07-02", blk(402, "09:00", long_sender, "hello"))
     rc, raw, d, err = run(["--archive", A, "--text", "hello"])
-    check(d and d["results"] and d["results"][0]["sender"] == "N" * 64 + "…", "sender cut to 64")
+    check(d and d["results"] and d["results"][0]["sender"] == "N" * 63 + "…", "sender cut to 64, ellipsis included")
 
 def _case_19():
     case("whole text only for named citations, capped at 4000")
@@ -531,6 +655,47 @@ def _case_20():
         rc, raw, d, err = run(["--archive", bad, "--text", "hi"])
         check(rc == 4 and d and d["error"]["type"] == "archive_missing", f"{bad} is archive_missing: rc={rc}")
 
+def _case_fd_limit():
+    case("descriptors stay bounded: 80 chats under ulimit -n 64")
+    A = archive()
+    for c in range(1, 81):
+        day(A, 1000 + c, "2026-08-01", blk(c, "09:00", "Alex", f"limit word {c}"))
+    p = subprocess.run(["/bin/sh", "-c", 'ulimit -n 64 && exec "$0" -I "$1" --archive="$2" --text=limit --max-results=100',
+                        PY, SEARCH, A], capture_output=True, timeout=60, cwd=SCRATCH, env=env())
+    try:
+        d = json.loads(p.stdout.decode("utf-8"))
+    except ValueError:
+        d = None
+    check(p.returncode == 0 and d and d.get("matched") == 80 and d.get("searched_files") == 80 and d.get("skipped_count") == 0,
+          f"all 80 chats searched: rc={p.returncode} {p.stdout[:200]!r}")
+
+def _case_topn_memory():
+    case("many matches: only the shown ones are kept (120k matches)")
+    A = archive()
+    for f in range(4):
+        blocks = "".join(blk(f * 100000 + i + 1, "09:00", "A", f"hit {i}") for i in range(30000))
+        day(A, 777, f"2026-08-0{f + 1}", blocks)
+    probe = """
+import resource, subprocess, sys
+p = subprocess.run(sys.argv[1:], capture_output=True)
+rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+print(p.returncode, rss if sys.platform == "darwin" else rss * 1024, p.stdout.count(b'"citation"'))
+"""
+    out = subprocess.run([PY, "-I", "-c", probe, PY, "-I", SEARCH, "--archive", A, "--text", "hit"],
+                         capture_output=True, timeout=180, cwd=SCRATCH, env=env()).stdout.decode().split()
+    rc, rss, n = (int(out[0]), int(out[1]), int(out[2])) if len(out) == 3 else (None, None, None)
+    check(rc == 0 and n == 20 and rss is not None and rss < 64 * 1024 * 1024, f"rc={rc} shown={n} max RSS {rss and rss // (1024 * 1024)} MiB")
+
+def _case_budget():
+    case("ellipses count inside every cap")
+    A = archive()
+    day(A, 777, "2026-07-12", blk(480, "09:00", "Alex", "q" * 300 + " middle " + "r" * 300, notes=["a" * 48, "b" * 49]))
+    rc, raw, d = run(["--archive", A, "--text", "middle", "--snippet-chars", "20"])[:3]
+    r = ((d or {}).get("results") or [{}])[0]
+    s = r.get("snippet", "")
+    check(len(s) == 20 and s.startswith(ELL) and s.endswith(ELL) and "middle" in s, f"middle: {s!r}")
+    check(r.get("annotations") == ["a" * 48, "b" * 47 + ELL] and r.get("annotations_truncated") is True, f"annotations: {r.get('annotations')}")
+
 def _case_annotation_cap():
     case("annotations are capped in count and characters")
     A = archive()
@@ -539,8 +704,8 @@ def _case_annotation_cap():
     rc, raw, d, err = run(["--archive", A, "--text", "capped"])
     r = {x["citation"]: x for x in (d or {}).get("results", [])}
     a = r.get("telegram:777/440", {})
-    check(len(a.get("annotations", [])) == 5 and all(len(x) <= 81 for x in a["annotations"])
-          and sum(len(x) for x in a["annotations"]) <= 245 and a.get("annotations_truncated") is True, f"capped: {a}")
+    check(len(a.get("annotations", [])) == 5 and all(len(x) <= 48 for x in a["annotations"])
+          and sum(len(x) for x in a["annotations"]) <= 240 and a.get("annotations_truncated") is True, f"capped: {a}")
     check(r.get("telegram:777/441", {}).get("annotations_truncated") is False, "a block without notes is not truncated")
 
 def _case_rendered_width():
@@ -551,10 +716,10 @@ def _case_rendered_width():
     rc, raw, d, err = run(["--archive", A, "--sender", "Alex", "--snippet-chars", "20"])
     r = {x["citation"]: x["snippet"] for x in (d or {}).get("results", [])}
     s = r.get("telegram:777/450", "")
-    check(s.endswith("…") and len(s.rstrip("…")) <= 20 and s.startswith("ab ⏎ "), f"start of text: {s!r}")
+    check(s.endswith("…") and len(s) == 20 and s.startswith("ab ⏎ "), f"start of text: {s!r}")
     rc, raw, d, err = run(["--archive", A, "--text", "needle", "--snippet-chars", "30"])
     s = ((d or {}).get("results") or [{}])[0].get("snippet", "")
-    check("needle" in s and len(s.strip("…")) <= 30 and s.startswith("…") and s.endswith("…"), f"around the term: {s!r}")
+    check("needle" in s and len(s) == 30 and s.startswith("…") and s.endswith("…"), f"around the term: {s!r}")
 
 def _case_digits():
     case("thousands of digits in an anchor or chat_id do not fail the search")
@@ -585,6 +750,70 @@ print(p.returncode, rss if sys.platform == "darwin" else rss * 1024, len(p.stdou
     rc, rss = (int(out[0]), int(out[1])) if len(out) == 3 else (None, None)
     check(rc == 0 and rss is not None and rss < 512 * 1024 * 1024, f"rc={rc} max RSS {rss and rss // (1024 * 1024)} MiB")
 
+def _case_caps_more():
+    case("caps: 32 MiB day file, 10 terms of 200 characters, 20 skipped entries, 5 refused files")
+    A = archive()
+    day(A, 777, "2026-06-01", blk(500, "09:00", "Alex", "big " + "x" * (32 * 1024 * 1024)))
+    day(A, 777, "2026-06-02", blk(501, "09:00", "Alex", "big small"))
+    rc, raw, d, err = run(["--archive", A, "--text", "big"], timeout=60)
+    check(rc == 0 and cites(d) == ["telegram:777/501"] and {"file": "777/2026-06-01.md", "reason": "too-large"} in (d or {}).get("skipped", []),
+          f"too-large: rc={rc} {raw[:200]!r}")
+    ok = sum((["--text", "s" + str(i)] for i in range(10)), [])
+    check(run(["--archive", A] + ok)[0] == 0, "10 terms accepted")
+    check(run(["--archive", A] + ok + ["--text", "s10"])[0] == 2, "11 terms refused")
+    check(run(["--archive", A, "--text", "t" * 200])[0] == 0, "a 200-character term accepted")
+    check(run(["--archive", A, "--text", "t" * 201])[0] == 2, "a 201-character term refused")
+    B = archive()
+    for i in range(25):
+        write(os.path.join(B, "777", f"2026-05-{i + 1:02d}.md"), (FM.format(chat=777, date=f"2026-05-{i + 1:02d}", off="+08:00") + blk(i + 1, "09:00", "A", "w")).replace("\n", "\r\n"))
+    rc, raw, d, err = run(["--archive", B, "--text", "w"])
+    check(rc == 0 and d and len(d["skipped"]) == 20 and d["skipped_count"] == 25, f"20 of 25 listed: {d and (len(d['skipped']), d['skipped_count'])}")
+    repo, R = repo_archive("r-seven", "*.log\n")
+    for i in range(6):
+        day(R, 777, f"2026-10-{i + 12}", blk(i + 1, "09:00", "A", "hello"))
+    rc, raw, d, err = run(["--archive", R, "--text", "hello"])
+    check(rc == 3 and d and len(d["error"].get("files", [])) == 5 and d["error"].get("count") == 7, f"5 of 7 named: {d}")
+
+def _case_parse_more():
+    case("parsing: exact anchor lines, ordinary backslashes, leading-zero chat_id, duplicate citations, case-fold mapping")
+    A = archive()
+    day(A, 777, "2026-06-03", blk(510, "09:00", "Alex", "head", "<!-- msg:511 -->tail", "<!-- msg:512 --> ", "\\hello", "\\*star", "\\\\"))
+    rc, raw, d, err = run(["--archive", A, "--cite", "telegram:777/510", "--cite", "telegram:777/510", "--cite", "telegram:777/511", "--cite", "telegram:777/512"])
+    b = (d or {}).get("blocks") or [{}]
+    check(len((d or {}).get("blocks", [])) == 1 and (d or {}).get("not_found") == ["telegram:777/511", "telegram:777/512"],
+          f"only exact anchor lines start blocks; a repeated citation once: {d}")
+    check(b[0].get("text") == "head\n<!-- msg:511 -->tail\n<!-- msg:512 --> \n\\hello\n\\*star\n\\\\", f"ordinary backslashes kept: {b[0].get('text')!r}")
+    day(A, 777, "2026-06-04", blk(513, "09:00", "Alex", "zero"), front='---\nchat_id: 0777\ndate: 2026-06-04\nutc_offset: "+08:00"\n---\n\n')
+    rc, raw, d, err = run(["--archive", A, "--text", "zero"])
+    check(d and {"file": "777/2026-06-04.md", "reason": "bad-frontmatter"} in d.get("skipped", []), "leading-zero chat_id is bad-frontmatter")
+    for i, prefix in enumerate([chr(0x130) * 3, chr(0xdf) * 3, chr(0x130) * 3 + "a" * 70000]):
+        day(A, 778, f"2026-06-0{i + 5}", blk(520 + i, "09:00", "Alex", prefix + "b" * 50 + "Needle" + "z" * 50))
+    rc, raw, d, err = run(["--archive", A, "--text", "needle", "--chat", "778"])
+    for r in (d or {}).get("results", []):
+        core = r["snippet"].strip(ELL)
+        check("Needle" in core and len(r["snippet"]) <= 80 and core in ("b" * 50 + "Needle" + "z" * 50), f"mapped snippet: {r['snippet']!r}")
+    check(len((d or {}).get("results", [])) == 3, "three folded matches")
+
+def _case_nits():
+    case("an unreadable archive says it cannot be listed; --chat naming a file is reported")
+    A = archive()
+    day(A, 777, "2026-06-10", blk(530, "09:00", "Alex", "nit"))
+    write(os.path.join(A, "999"), "a file named like a chat")
+    rc, raw, d, err = run(["--archive", A, "--chat", "999", "--text", "nit"])
+    check(rc == 0 and d and {"file": "999", "reason": "not-a-directory"} in d.get("skipped", []) and d.get("missing_chats") == [],
+          f"file named like a chat: {d}")
+    link = os.path.join(SCRATCH, "archive-link")
+    os.symlink(A, link)
+    rc, raw, d, err = run(["--archive", link, "--text", "nit"])
+    check(rc == 0 and d and d.get("archive") == A and cites(d) == ["telegram:777/530"], f"archive given through a link is resolved: {d and d.get('archive')}")
+    if os.getuid() != 0:
+        os.chmod(A, 0)
+        try:
+            rc, raw, d, err = run(["--archive", A, "--text", "nit"])
+            check(rc == 4 and d and "cannot be listed" in d.get("error", {}).get("message", ""), f"mode 000: {d}")
+        finally:
+            os.chmod(A, 0o755)
+
 def _case_21():
     case("output escapes control and bidirectional characters")
     A = archive()
@@ -593,13 +822,17 @@ def _case_21():
     check(rc == 0 and d and d["results"], f"found: rc={rc}")
     for ch in ("\u202e", "\x1b", "\u0085", "\u2028", "\u2066", "\u2069", "\u200f"):
         check(d is not None and ch.encode("utf-8") not in raw, f"U+{ord(ch):04X} not raw in output")
-    hidden = [0x200b, 0x200d, 0x2060, 0xfeff, 0xad, 0xfff9, 0xfffb, 0xe0041, 0xe007f]
+    hidden = [0x200b, 0x200d, 0x2060, 0xfeff, 0xad, 0xfff9, 0xfffb, 0xe0041, 0xe007f,
+              0xfe00, 0xfe0e, 0xe0100, 0xe01ef, 0x34f, 0x180e, 0x115f, 0x1160, 0x3164, 0xffa0, 0xfffc]
     day(A, 777, "2026-07-06", blk(431, "09:00", "Eve", "hidden " + "".join(chr(c) for c in hidden) + " end"))
     rc, raw, d2, err = run(["--archive", A, "--text", "hidden"])
     for c in hidden:
         check(d2 is not None and chr(c).encode("utf-8") not in raw, f"U+{c:04X} not raw in output")
     if d2 and d2.get("results"):
         check("".join(chr(c) for c in hidden) in d2["results"][0]["snippet"], "decoded snippet keeps the invisible characters")
+    day(A, 777, "2026-07-07", blk(432, "09:00", "Eve", "emoji " + chr(0x2764) + chr(0xfe0f) + " kept"))
+    rc, raw, d3, err = run(["--archive", A, "--text", "emoji"])
+    check(d3 is not None and chr(0xfe0f).encode("utf-8") in raw, "U+FE0F after an emoji stays raw (documented)")
     if d and d["results"]:
         check("\u202egnp.exe" in d["results"][0]["snippet"] and "\x1b[31m" in d["results"][0]["snippet"], "decoded text keeps them")
         check(d["results"][0]["sender"] == "Eve\u202e", "sender keeps them")
@@ -723,7 +956,7 @@ def _case_28():
     check(listing(os.path.dirname(A)) == before, "archive listing unchanged")
     check(listing(work) == before_cwd == [], "working directory still empty")
 
-CASES = [_case_82, _case_grapheme, _case_writer_agreement, _case_race, _case_gitenv, _case_globalignore, _case_annotation_cap, _case_rendered_width, _case_digits, _case_memory, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
+CASES = [_case_after_recheck, _case_archive_recheck, _case_inode_recheck, _case_dir_flag, _case_dayfile_swap, _case_fd_limit, _case_topn_memory, _case_budget, _case_caps_more, _case_parse_more, _case_nits, _case_82, _case_grapheme, _case_writer_agreement, _case_race, _case_gitenv, _case_globalignore, _case_annotation_cap, _case_rendered_width, _case_digits, _case_memory, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
 for fn in CASES:
     try:
         fn()
