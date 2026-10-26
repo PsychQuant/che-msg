@@ -274,5 +274,23 @@ final class AuthRunHandlerTests: XCTestCase {
         XCTAssertNil(values.phone)
         XCTAssertNil(values.password)
     }
+
+    // MARK: - Routing after the lookup (#49 verify r2)
+
+    private func afterLookup(_ lookedUp: KeychainCredential?, _ value: String?, now: TDLibClient.AuthState,
+                             code: String? = nil) -> AuthRunAction {
+        decideAuthRunActionAfterLookup(lookedUp: lookedUp, value: value, stateNow: now, phone: nil, code: code,
+                                       password: nil, envApiId: 1, envApiHash: "h", envPhone: nil, envPassword: nil)
+    }
+
+    func testAfterTheLookupTheActionFollowsTheStateAsItIsNow() {
+        XCTAssertEqual(afterLookup(.password, "from-keychain", now: .waitingForPassword), .callSendPassword("from-keychain"))
+        XCTAssertEqual(afterLookup(.password, "from-keychain", now: .ready), .noOpReady,
+                       "the background step already logged in: nothing is sent again")
+        XCTAssertEqual(afterLookup(.phone, "+886912345678", now: .waitingForCode, code: nil),
+                       decideAuthRunAction(state: .waitingForCode, phone: nil, code: nil, password: nil,
+                                           envApiId: 1, envApiHash: "h", envPhone: nil, envPassword: nil),
+                       "a phone number found for an earlier state is not sent at waitingForCode")
+    }
 }
 

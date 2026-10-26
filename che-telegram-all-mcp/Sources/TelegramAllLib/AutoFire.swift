@@ -141,6 +141,12 @@ internal final class CredentialLookupTracker: @unchecked Sendable {
         lock.withLock { lookupGeneration == generation }
     }
 
+    /// Whether a value for the current state is being looked up, or was found
+    /// and not yet reported as failed: something is on its way to TDLib.
+    var isInFlight: Bool {
+        lock.withLock { status == .pending || status == .found }
+    }
+
     /// A found value could not be submitted: nothing is on its way any more,
     /// so the state counts as settled.
     func submissionFailed(_ lookupGeneration: UInt64) {
@@ -155,25 +161,28 @@ internal final class CredentialLookupTracker: @unchecked Sendable {
 /// Runs the credential part of an auto-fire plan, outside TDLib's callback
 /// thread (PsychQuant/che-msg#49): sends the environment's value, or looks the
 /// credential up and sends what it finds while the state is still the one the
-/// lookup was started for. A submission that fails settles the state and is
-/// rethrown for the caller to record. `TDLibClient` passes its Keychain source
-/// and its coalesced send as `lookup` and `submit`.
+/// lookup was started for. A failed submission is passed to `recordFailure`
+/// (for `auth_status`) before the state counts as settled, so an answer given
+/// once it has settled carries the error; a failure for a state that has moved
+/// on is not recorded. `TDLibClient` passes its Keychain source, its coalesced
+/// send and its auto-fire error record.
 internal func runCredentialPlan(_ plan: CredentialPlan, generation: UInt64, tracker: CredentialLookupTracker,
                                 lookup: @Sendable (KeychainCredential) async -> KeychainLookup,
-                                submit: @Sendable (String) async throws -> Void) async throws {
+                                submit: @Sendable (String) async throws -> Void,
+                                recordFailure: @Sendable (Error) -> Void) async {
     switch plan {
     case .nothing:
         return
     case .fire(let value):
-        try await submit(value)
+        do { try await submit(value) } catch { recordFailure(error) }
     case .lookUp(let credential):
         let value = await lookup(credential).value
-        guard tracker.finish(generation, found: value != nil), let value, tracker.isCurrent(generation) else { return }
+        guard tracker.finish(generation, found: value != nil), let value else { return }
         do {
             try await submit(value)
         } catch {
+            if tracker.isCurrent(generation) { recordFailure(error) }
             tracker.submissionFailed(generation)
-            throw error
         }
     }
 }

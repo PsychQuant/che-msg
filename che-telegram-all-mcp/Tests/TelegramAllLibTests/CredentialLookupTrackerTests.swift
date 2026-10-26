@@ -40,4 +40,27 @@ final class CredentialLookupTrackerTests: XCTestCase {
         XCTAssertTrue(tracker.finish(passwordLookup, found: false))
         XCTAssertEqual(tracker.current, .absent)
     }
+
+    // MARK: - In flight (auth_run waits while a Keychain value is on its way; #49 verify r2)
+
+    func testALookupAndAFoundValueAreInFlight() {
+        let tracker = CredentialLookupTracker()
+        let generation = tracker.stateChanged(lookingUp: true)
+        XCTAssertTrue(tracker.isInFlight, "pending")
+        XCTAssertTrue(tracker.finish(generation, found: true))
+        XCTAssertTrue(tracker.isInFlight, "found, not yet sent")
+        tracker.submissionFailed(generation)
+        XCTAssertFalse(tracker.isInFlight, "the submission failed")
+    }
+
+    func testNothingIsInFlightWithoutALookupOrWhenNothingWasFound() {
+        let tracker = CredentialLookupTracker()
+        XCTAssertFalse(tracker.isInFlight)
+        let generation = tracker.stateChanged(lookingUp: true)
+        XCTAssertTrue(tracker.finish(generation, found: false))
+        XCTAssertFalse(tracker.isInFlight)
+        _ = tracker.stateChanged(lookingUp: false)
+        XCTAssertFalse(tracker.isInFlight)
+    }
 }
+

@@ -202,3 +202,20 @@ internal func authRunKeychainValues(lookedUp: KeychainCredential?, value: String
     return lookedUp == .phone ? (value, nil) : (nil, value)
 }
 
+/// The action `auth_run` takes once its Keychain lookup (if any) has returned,
+/// routed on `stateNow`, the state read after the lookup (#49). A value found
+/// for a state that has moved on is dropped by `authRunKeychainValues`.
+internal func decideAuthRunActionAfterLookup(lookedUp: KeychainCredential?, value: String?,
+                                             stateNow: TDLibClient.AuthState,
+                                             phone: String?, code: String?, password: String?,
+                                             envApiId: Int?, envApiHash: String?,
+                                             envPhone: String?, envPassword: String?) -> AuthRunAction {
+    let keychain = authRunKeychainValues(lookedUp: lookedUp, value: value, stateNow: stateNow,
+                                         phone: phone, password: password,
+                                         envPhone: envPhone, envPassword: envPassword)
+    return decideAuthRunAction(state: stateNow, phone: phone, code: code, password: password,
+                               envApiId: envApiId, envApiHash: envApiHash,
+                               envPhone: envPhone, envPassword: envPassword,
+                               keychainPhone: keychain.phone, keychainPassword: keychain.password)
+}
+

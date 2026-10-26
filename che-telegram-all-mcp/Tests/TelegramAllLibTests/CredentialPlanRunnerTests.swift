@@ -11,38 +11,40 @@ final class CredentialPlanRunnerTests: XCTestCase {
         private let lock = NSLock()
         private var lookups: [KeychainCredential] = []
         private var sent: [String] = []
+        private var failures: [(error: Error, inFlightWhenRecorded: Bool)] = []
         func lookedUp(_ c: KeychainCredential) { lock.withLock { lookups.append(c) } }
         func send(_ v: String) { lock.withLock { sent.append(v) } }
+        func failed(_ e: Error, inFlight: Bool) { lock.withLock { failures.append((e, inFlight)) } }
         var lookupList: [KeychainCredential] { lock.withLock { lookups } }
         var sentList: [String] { lock.withLock { sent } }
+        var failureList: [(error: Error, inFlightWhenRecorded: Bool)] { lock.withLock { failures } }
     }
 
     private struct Rejected: Error {}
 
     private func run(_ plan: CredentialPlan, lookupResult: KeychainLookup = .absent,
                      duringLookup: (@Sendable (CredentialLookupTracker) -> Void)? = nil,
+                     duringSubmit: (@Sendable (CredentialLookupTracker) -> Void)? = nil,
                      submitFails: Bool = false) async -> (Calls, CredentialLookupTracker, Error?) {
         let calls = Calls()
         let tracker = CredentialLookupTracker()
         var lookingUp = false
         if case .lookUp = plan { lookingUp = true }
         let generation = tracker.stateChanged(lookingUp: lookingUp)
-        do {
-            try await runCredentialPlan(
-                plan, generation: generation, tracker: tracker,
-                lookup: { credential in
-                    calls.lookedUp(credential)
-                    duringLookup?(tracker)
-                    return lookupResult
-                },
-                submit: { value in
-                    calls.send(value)
-                    if submitFails { throw Rejected() }
-                })
-            return (calls, tracker, nil)
-        } catch {
-            return (calls, tracker, error)
-        }
+        await runCredentialPlan(
+            plan, generation: generation, tracker: tracker,
+            lookup: { credential in
+                calls.lookedUp(credential)
+                duringLookup?(tracker)
+                return lookupResult
+            },
+            submit: { value in
+                calls.send(value)
+                duringSubmit?(tracker)
+                if submitFails { throw Rejected() }
+            },
+            recordFailure: { error in calls.failed(error, inFlight: tracker.isInFlight) })
+        return (calls, tracker, calls.failureList.first?.error)
     }
 
     func testAnEnvironmentValueIsSentWithoutALookup() async {
@@ -85,8 +87,23 @@ final class CredentialPlanRunnerTests: XCTestCase {
     func testAFailedSubmissionSettlesAndIsReported() async {
         let (calls, tracker, error) = await run(.lookUp(.password), lookupResult: .found("wrong"), submitFails: true)
         XCTAssertEqual(calls.sentList, ["wrong"])
-        XCTAssertNotNil(error, "the caller records the error for auth_status")
+        XCTAssertNotNil(error, "the error is recorded for auth_status")
+        XCTAssertEqual(calls.failureList.first?.inFlightWhenRecorded, true,
+                       "recorded before the state counts as settled, so a settled answer carries the error")
         XCTAssertEqual(tracker.current, .absent, "a settle check must not wait for a submission that failed")
+    }
+
+    func testAFailureAfterTheStateMovedOnIsNotRecorded() async {
+        let (calls, tracker, _) = await run(.lookUp(.password), lookupResult: .found("old"),
+                                            duringSubmit: { _ = $0.stateChanged(lookingUp: false) }, submitFails: true)
+        XCTAssertEqual(calls.failureList.count, 0, "the error belongs to a state that is gone")
+        XCTAssertEqual(tracker.current, .notNeeded)
+    }
+
+    func testAFailedEnvironmentSubmissionIsRecorded() async {
+        let (calls, _, error) = await run(.fire("+886900000417"), submitFails: true)
+        XCTAssertEqual(calls.sentList, ["+886900000417"])
+        XCTAssertNotNil(error)
     }
 
     func testNothingToDoDoesNothing() async {

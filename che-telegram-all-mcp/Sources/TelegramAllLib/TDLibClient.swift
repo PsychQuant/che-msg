@@ -355,14 +355,11 @@ public final class TDLibClient {
         let source = credentials
         let tracker = credentialLookups
         Task { [weak self] in
-            do {
-                try await runCredentialPlan(
-                    plan, generation: generation, tracker: tracker,
-                    lookup: { await source.lookup($0) },
-                    submit: { [weak self] value in try await self?.submitCredential(value, for: state) })
-            } catch {
-                self?.recordAutoFireError(error)
-            }
+            await runCredentialPlan(
+                plan, generation: generation, tracker: tracker,
+                lookup: { await source.lookup($0) },
+                submit: { [weak self] value in try await self?.submitCredential(value, for: state) },
+                recordFailure: { [weak self] error in self?.recordAutoFireError(error) })
         }
     }
 
@@ -380,10 +377,7 @@ public final class TDLibClient {
     /// up or submitted for the current state (`auth_run` waits for it rather
     /// than asking the caller for the value).
     public var isSubmittingKeychainCredential: Bool {
-        lock.withLock {
-            let status = credentialLookups.current
-            return status == .pending || status == .found
-        }
+        lock.withLock { credentialLookups.isInFlight }
     }
 
     /// Reads the phone number or the 2FA password from the Keychain source, for

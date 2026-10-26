@@ -508,21 +508,15 @@ public final class CheTelegramAllMCPServer {
                 let stored = if let needed { await tdlib.lookUpKeychainCredential(needed) } else { String?.none }
                 // The lookup awaited with no lock: route on the state as it is now.
                 let stateNow: TDLibClient.AuthState = needed == nil ? state : tdlib.getAuthState()
-                let keychain = authRunKeychainValues(lookedUp: needed, value: stored, stateNow: stateNow,
-                                                     phone: phoneArg, password: passwordArg,
-                                                     envPhone: env["TELEGRAM_PHONE"],
-                                                     envPassword: env["TELEGRAM_2FA_PASSWORD"])
-                let action = decideAuthRunAction(
-                    state: stateNow,
+                let action = decideAuthRunActionAfterLookup(
+                    lookedUp: needed, value: stored, stateNow: stateNow,
                     phone: phoneArg,
                     code: args["code"]?.stringValue,
                     password: passwordArg,
                     envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init),
                     envApiHash: env["TELEGRAM_API_HASH"],
                     envPhone: env["TELEGRAM_PHONE"],
-                    envPassword: env["TELEGRAM_2FA_PASSWORD"],
-                    keychainPhone: keychain.phone,
-                    keychainPassword: keychain.password
+                    envPassword: env["TELEGRAM_2FA_PASSWORD"]
                 )
                 switch action {
                 case .callSetParameters(let apiId, let apiHash):

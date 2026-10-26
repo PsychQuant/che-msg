@@ -227,4 +227,25 @@ final class AuthStatusNextStepTests: XCTestCase {
             XCTAssertEqual((payload["next_step"] as? [String: Any])?["tool"] as? String, "auth_run", "\(state)")
         }
     }
+
+    // MARK: - A failed Keychain submission never shows the value (#49 verify r2)
+    // (The phone hint's own example is +886912345678, so the value here differs from it.)
+
+    func testAFailedKeychainSubmissionNeverShowsTheValue() async throws {
+        let tracker = CredentialLookupTracker()
+        let generation = tracker.stateChanged(lookingUp: true)
+        final class Box: @unchecked Sendable { var error: Error? }
+        let box = Box()
+        await runCredentialPlan(.lookUp(.phone), generation: generation, tracker: tracker,
+                                lookup: { _ in .found("+886900000417") },
+                                submit: { _ in throw TDLibClient.TDError.tdlibError(code: 400, message: "PHONE_NUMBER_INVALID") },
+                                recordFailure: { box.error = $0 })
+        let error = try XCTUnwrap(box.error as? TDLibClient.TDError)
+        XCTAssertFalse("\(error)".contains("886900000417"))
+        let result = authStatusResult(state: .waitingForPhoneNumber, lastError: error)
+        guard case .text(let json, _, _) = result.content.first else { return XCTFail("no text") }
+        XCTAssertTrue(json.contains("PHONE_NUMBER_INVALID"), json)
+        XCTAssertFalse(json.contains("886900000417"), json)
+    }
 }
+
