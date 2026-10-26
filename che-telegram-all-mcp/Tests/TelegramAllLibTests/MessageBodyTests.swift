@@ -113,4 +113,14 @@ final class MessageBodyTests: XCTestCase {
         XCTAssertEqual(MessageBody.render(["type": "photo", "question": "Q", "emoji": "😀"], placeholder: "[photo]"), "[photo]")
         XCTAssertEqual(MessageBody.render(["type": "poll", "caption": "c"], placeholder: "[poll]"), "[poll]")
     }
+
+    /// A line break followed by a combining mark (or ZWJ, a variation selector, CGJ) still ends the
+    /// line for a reader comparing code points, so inside an option it becomes a space as well (#82).
+    func testALineBreakFollowedByAMarkInAnOptionBecomesASpace() {
+        for mark in ["\u{301}", "\u{200D}", "\u{FE0F}", "\u{34F}"] {
+            let body = MessageBody.render(poll("Q", ["one\n" + mark + "two", "three\r" + mark + "four"]), placeholder: "[poll]")
+            XCTAssertEqual(body.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false).count, 3, body)
+            XCTAssertFalse(body.unicodeScalars.contains("\r"))
+        }
+    }
 }

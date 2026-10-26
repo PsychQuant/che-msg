@@ -63,10 +63,9 @@ enum MessageBody {
         return number.doubleValue
     }
 
-    /// One option per line: a line break inside an option becomes a space.
+    /// One option per line: a line break inside an option becomes a space, found by scalar so that
+    /// a mark after it does not hide it.
     private static func oneLine(_ text: String) -> String {
-        text.replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
+        ScalarText.replacingLineBreaks(in: text, with: " ")
     }
 }
