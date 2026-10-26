@@ -41,6 +41,8 @@ public final class CheTelegramAllMCPServer {
     /// timeout; nothing is opened or locked at startup (PsychQuant/che-msg#58).
     private let lifecycle: TDLibLifecycle<TDLibClient>
     private let idleTimeout: TimeInterval?
+    /// One `logout` at a time (#64, finding 3).
+    let logoutGate = LogoutGate()
 
     private let reader: LocalCacheReading
     /// Whether TDLib is synced with Telegram (#63). Lives as long as the
@@ -457,6 +459,16 @@ public final class CheTelegramAllMCPServer {
             return errorResult("Unknown tool: \(name)")
         }
         if let argumentError = preflightArgumentError(name: name, arguments: args) { return argumentError }
+        // Taken before TDLib is asked for, so a logout never starts on a
+        // client that a running logout is about to discard (#64, finding 3).
+        if name == "logout" {
+            return await logoutGate.run { await self.callTool(name: name, arguments: args) }
+        }
+        return await callTool(name: name, arguments: args)
+    }
+
+    /// `handleToolCall` for a tool this server defines.
+    private func callTool(name: String, arguments args: [String: Value]) async -> CallTool.Result {
         let tdlib: TDLibClient
         do {
             tdlib = try await lifecycle.beginCall()
