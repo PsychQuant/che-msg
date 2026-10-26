@@ -53,8 +53,10 @@
 #        for (j)) ends with a bare `-w`, so security prompts for the secret
 #        instead of taking it as an argument, which would stay in the shell
 #        history and show in the process list (PsychQuant/che-msg#51). `-p` and
-#        `-X` (other ways to pass the value) and a value piped into security
-#        fail too; a command that cannot be parsed is reported as such.
+#        `-X` (other ways to pass the value) and a value piped straight into
+#        security fail too; a command that cannot be parsed is reported as
+#        such. It guards against mistakes, not evasion: a pipe through `env`
+#        or `xargs`, or a quoted command name, is not recognised.
 #   (fm) every skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (see below)
 #
@@ -334,11 +336,16 @@ def keychain_command_files():
                 yield rel
 for rel in keychain_command_files():
     try:
-        with open(os.path.join(root, rel), encoding="utf-8") as fh:
-            lines = fh.read().splitlines()
-    except (OSError, UnicodeDecodeError) as e:
+        with open(os.path.join(root, rel), "rb") as fh:
+            data = fh.read()
+    except OSError as e:
         bad("k", f"{rel}: cannot be read ({e}) — not checked")
         continue
+    # A file that never names the command (a .DS_Store, an image) has nothing to check;
+    # one that does is read even if it is not valid UTF-8.
+    if b"add-generic-password" not in data and b"add-internet-password" not in data:
+        continue
+    lines = data.decode("utf-8", errors="replace").splitlines()
     for n, line in enumerate(lines, 1):
         m = re.search(r"add-(generic|internet)-password", line)
         if not m:
@@ -359,7 +366,7 @@ for rel in keychain_command_files():
         if toks is None:
             bad("k", f"{rel}:{n}: cannot be parsed, check it by hand: {line.strip()}")
             continue
-        if "-p" in toks or "-X" in toks:
+        if any(t.startswith(("-p", "-X")) for t in toks):
             bad("k", f"{rel}:{n}: `-p` / `-X` pass the secret as an argument: {line.strip()}")
         elif not toks or toks[-1] != "-w" or toks.count("-w") != 1:
             bad("k", f"{rel}:{n}: `-w` is not the last argument (a secret after it stays in shell history): {line.strip()}")

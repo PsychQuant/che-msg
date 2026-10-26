@@ -461,6 +461,19 @@ expect_fail "-p with a value in a dotfile under hooks/ (#51 verify)" "hooks/\.no
 P=$(fresh); printf '%s\n' '' "printf '%s' \"\$TOKEN\" | security add-generic-password -a x -s Y -U -w" >> "$P/README.md"
 expect_fail "a value piped into security (#51 verify)" "a value is piped into security"
 
+P=$(fresh); printf '\377\376\000binary\n' > "$P/hooks/icon.png"
+out=$(run_layout)
+if printf '%s\n' "$out" | grep -q 'FAIL (k)'; then
+    echo "  ✗ a binary file that never names the command does not fail (k) (#51 verify r2)"; printf '%s\n' "$out" | sed 's/^/      /'; FAILED=$((FAILED + 1))
+else
+    echo "  ✓ a binary file that never names the command does not fail (k) (#51 verify r2)"; PASSED=$((PASSED + 1))
+fi
+P=$(fresh); printf '\377\nsecurity add-generic-password -a x -s Y -w hunter2\n' > "$P/hooks/notes.bin"
+expect_fail "a non-UTF-8 file with a Keychain command is still checked (#51 verify r2)" "hooks/notes\.bin:2: .-w. is not the last"
+
+P=$(fresh); printf '%s\n' '' 'security add-generic-password -a x -s Y -pSECRET -U -w' >> "$P/README.md"
+expect_fail "-p attached to its value (#51 verify r2)" "README\.md:[0-9]+: .-p. / .-X."
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
