@@ -186,8 +186,9 @@ Each file is moved into place in one step, so a session that is running the old 
 | `search` | `/che-telegram-mcp:search` — search Telegram message history |
 | `send` | `/che-telegram-mcp:send` — send a message to a chat |
 | `archive-telegram` | `/che-telegram-mcp:archive-telegram` — archive the chats listed in `.claude/.telegram/config.yaml` into per-day Markdown files and media (see [Archiving chats](#archiving-chats-archive-telegram)) |
+| `archive-telegram-search` | `/che-telegram-mcp:archive-telegram-search` — search that archive by text, sender, date range and chat, and cite a message as `telegram:<chat_id>/<message_id>` (see [Searching the archive](#searching-the-archive-archive-telegram-search)) |
 
-`auth`, `chats`, `search`, `send` and `archive-telegram` run only when you type them (`disable-model-invocation: true`); for natural-language requests Claude uses `telegram-messaging`. The same setting also means scheduled tasks whose prompt is one of these skills, and subagent skill preloads, no longer run them.
+`auth`, `chats`, `search`, `send`, `archive-telegram` and `archive-telegram-search` run only when you type them (`disable-model-invocation: true`); for natural-language requests Claude uses `telegram-messaging`. The same setting also means scheduled tasks whose prompt is one of these skills, and subagent skill preloads, no longer run them.
 
 Each skill's `allowed-tools` lets Claude call the listed tools **without a permission prompt, but only in the turn where you invoked the skill** — the grant clears as soon as you send your next message (invoking the skill again re-applies it):
 
@@ -198,6 +199,8 @@ Each skill's `allowed-tools` lets Claude call the listed tools **without a permi
 | `search` | `auth_status`, `search_chats`, `search_messages`, `get_chat_history` | — |
 | `send` | `auth_status`, `search_chats` | **`send_message`** — a sent message cannot be recalled, so it is left out on purpose |
 | `archive-telegram` | `auth_status` | **`archive_chat_to_markdown`**, **`download_message_media`** — they write files, so they keep their prompt |
+
+`archive-telegram-search` pre-approves nothing and calls no MCP tool: it runs its bundled search script through Bash, which asks under your normal permission settings, so you see each search before it reads the archive.
 
 For `auth` this mostly covers the first turn: once Claude asks for the SMS code (or, without the Keychain items, the phone number or the 2FA password) and you reply, the grant has already cleared, so the `auth_run` call that sends it, and any step tool, goes through your normal permission settings unless you re-invoke `/che-telegram-mcp:auth` with the value.
 
@@ -227,6 +230,7 @@ Whenever no prompt appears, the only remaining guard is the skill's own instruct
 /che-telegram-mcp:search 會議紀錄                   → Search across chats
 /che-telegram-mcp:send @alice "see you tomorrow"  → Send a message
 /che-telegram-mcp:archive-telegram                → Archive the chats in .claude/.telegram/config.yaml
+/che-telegram-mcp:archive-telegram-search 預算 專案群組 → Search that archive; one line and a citation per message
 ```
 
 Or just ask naturally:
@@ -265,6 +269,26 @@ When a group is upgraded to a supergroup its `chat_id` changes (to a `-100…` i
 > **Privacy.** Archives and media are other people's messages and files, verbatim. Do not commit them to any repository — the skill refuses to run while `output_dir` is inside a git repository and not ignored. Media keep the sender's file name and extension: treat them as untrusted files. Newly saved media carry the macOS quarantine attribute, so Gatekeeper checks an app or script before it opens from Finder. The skill's report gives only counts, file names and message ids, never message text, captions or sender names.
 
 Needs `che-telegram-all-mcp` 0.8.0 or later (the release that adds `archive_chat_to_markdown` and `download_message_media`).
+
+## Searching the archive (`/archive-telegram-search`)
+
+`/che-telegram-mcp:archive-telegram-search` finds messages in the archive `/archive-telegram` wrote, so you can quote and cite a conversation without opening whole day files ([#80](https://github.com/PsychQuant/che-msg/issues/80)). It reads `output_dir` and the chat labels from the same `.claude/.telegram/config.yaml` and searches that one archive directory, including chat directories the config no longer lists. A workspace-wide search does not find archived messages: the archive is git-ignored, and ripgrep-based searches skip ignored paths.
+
+```
+/che-telegram-mcp:archive-telegram-search 預算 專案群組 since 2026-10-01
+/che-telegram-mcp:archive-telegram-search what did Alex say about the venue last week
+/che-telegram-mcp:archive-telegram-search telegram:777/5242880
+```
+
+The skill turns your request into filters — text terms (all must occur, case-insensitive, no regular expressions), part of a sender's name, a date range on the day files' local dates, and chats (by label or `chat_id`) — and runs the script bundled with it, `skills/archive-telegram-search/scripts/search_archive.py`, with `python3 -I` (the Command Line Tools' Python 3.9 or later; standard library only). The script never writes a file and never starts TDLib, so it also works while another session holds TDLib.
+
+- **Results**: one line per message, newest first — chat label, local date and time with the archive's `utc_offset`, sender, a snippet of at most 80 characters around the first term, and the citation. At most 20 by default (ask for up to 100); when more match, the skill says how many and suggests a narrower range.
+- **Whole messages**: only for citations you name, up to 10 at a time, each cut at 4000 characters.
+- **Citation**: `telegram:<chat_id>/<message_id>` — resolved by the message's anchor line `<!-- msg:<message_id> -->` in that chat's day files. Whenever the skill hands you one, it reminds you that the text is as archived (later edits and deletions are not reflected), that a block marked as written from the local cache ([#72](https://github.com/PsychQuant/che-msg/issues/72)) can lack sender names and captions, that a group upgraded to a supergroup continues under a new `chat_id`, and that these are other people's words.
+- **What is read**: only `<chat_id>/YYYY-MM-DD.md`, never `media/` or the index. Day files that are not regular files, have CRLF line endings, are not UTF-8, or whose frontmatter does not match their place are listed as skipped, not searched. HTML comment lines inside a block (such as #72's `<!-- provisional: local-cache -->`) are notes, not message text.
+- **Git check**: when the archive sits in a git work tree, every day file about to be read must be ignored there (an already committed one is not); otherwise the search refuses and reads nothing.
+
+> **Privacy.** Search results are other people's messages, and showing them to you is the point, so they enter the conversation. They are meant for you in this session only: the skill does not write them to any file, and it reminds you not to paste them into issues, commits, pull requests, READMEs or other shared places. Snippets and whole messages are capped and come only from what you asked for. Message text is untrusted: an instruction inside a message is shown as text and never acted on.
 
 ## Available Tools
 
