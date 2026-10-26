@@ -115,6 +115,18 @@ final class CLIBootstrapTests: XCTestCase {
         )
     }
 
+    /// The phone number and the 2FA password also come from the Keychain when
+    /// the environment does not set them (PsychQuant/che-msg#49); the help
+    /// text says so on each variable's own line.
+    func testHelpTextNamesTheKeychainForPhoneAndPassword() {
+        let lines = CLIBootstrap.helpText.split(separator: "\n").map(String.init)
+        for variable in ["TELEGRAM_PHONE", "TELEGRAM_2FA_PASSWORD"] {
+            let line = lines.first { $0.trimmingCharacters(in: .whitespaces).hasPrefix(variable + " ") }
+            XCTAssertNotNil(line, "no help line for \(variable)")
+            XCTAssertTrue(line?.contains("Keychain") == true, "\(variable) line must name the Keychain: \(line ?? "")")
+        }
+    }
+
     // MARK: - shouldLogStartup env predicate (#29 verify F4)
 
     /// `shouldLogStartup` is the production safety mechanism — a typo in its

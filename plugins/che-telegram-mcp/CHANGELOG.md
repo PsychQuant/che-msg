@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The Keychain items `TELEGRAM_PHONE` and `TELEGRAM_2FA_PASSWORD` that Track A sets up are read, by che-telegram-all-mcp 0.9.0 and later, while Telegram waits for them ([#49](https://github.com/PsychQuant/che-msg/issues/49)); the README describes this. The wrapper still passes only the API ID and hash, and a test now checks that it never exports or reads the other two.
+
 ## [1.7.0] - 2026-10-14
 
 Pins binaries v0.8.0 (`DESIRED_VERSION`); the telegram-all minimum stays 0.7.0.

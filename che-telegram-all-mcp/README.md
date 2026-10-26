@@ -96,11 +96,13 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 |----------|----------|-------------|
 | `TELEGRAM_API_ID` | Yes | Telegram API ID (numeric). Auto-fired when state is `waitingForParameters`. |
 | `TELEGRAM_API_HASH` | Yes | Telegram API hash (string). Auto-fired alongside `TELEGRAM_API_ID`. |
-| `TELEGRAM_PHONE` | No | Phone number in international format (e.g., `+886912345678`). Auto-fired when state is `waitingForPhoneNumber`. Useful for SSH / remote setup. |
-| `TELEGRAM_2FA_PASSWORD` | No | 2FA password. Auto-fired when state is `waitingForPassword`. |
+| `TELEGRAM_PHONE` | No | Phone number in international format (e.g., `+886912345678`). Auto-fired when state is `waitingForPhoneNumber`. Useful for SSH / remote setup. When unset, the server reads the Keychain item of the same name (account `che-telegram-all-mcp`) at that moment (0.9.0 and later). |
+| `TELEGRAM_2FA_PASSWORD` | No | 2FA password. Auto-fired when state is `waitingForPassword`. When unset, the server reads the Keychain item of the same name (account `che-telegram-all-mcp`) at that moment (0.9.0 and later). |
 | `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` | No | Seconds TDLib may stay idle before the server closes it and releases the lock (default `600`; `0` keeps it open). A non-numeric or negative value falls back to 600 with a warning on stderr. |
 
-> SMS verification code is **never** auto-fired from environment — it must be supplied via `auth_run(code: "...")` or `auth_send_code(code: "...")` in a one-shot delivery.
+> SMS verification code is **never** auto-fired, from the environment or the Keychain — it must be supplied via `auth_run(code: "...")` or `auth_send_code(code: "...")` in a one-shot delivery.
+>
+> The Keychain lookup runs `/usr/bin/security` with a 10-second limit, only when the environment has no value. A locked Keychain or a lookup that does not finish counts as "not stored": `auth_run` then asks for the value as before. The value is used for that one submission and never logged.
 >
 > If env vars are not set, you can still drive the flow manually via `auth_run` (or the per-step `auth_set_parameters` / `auth_send_phone` / `auth_send_password` tools).
 
@@ -110,13 +112,13 @@ Authentication is a **one-time process**. After the first login, TDLib stores th
 
 ### Recommended: `auth_run` (single tool, repeat until ready)
 
-Set env vars for the steps you want auto-fired (`TELEGRAM_API_ID` / `TELEGRAM_API_HASH` / `TELEGRAM_PHONE` / `TELEGRAM_2FA_PASSWORD`), then call `auth_run` repeatedly:
+Set env vars for the steps you want auto-fired (`TELEGRAM_API_ID` / `TELEGRAM_API_HASH` / `TELEGRAM_PHONE` / `TELEGRAM_2FA_PASSWORD`; the phone number and the 2FA password can instead be Keychain items), then call `auth_run` repeatedly. Each value comes from the call's argument, then the environment, then the Keychain:
 
 ```
 auth_run                 →  fires auto-set params (if env present)
-auth_run                 →  fires auto-send phone (if env present)
+auth_run                 →  fires auto-send phone (if env or Keychain has it)
 auth_run(code: "12345")  →  caller MUST supply SMS code
-auth_run                 →  fires auto-send 2FA password (if env present)
+auth_run                 →  fires auto-send 2FA password (if env or Keychain has it)
 auth_run                 →  state == "ready"
 ```
 

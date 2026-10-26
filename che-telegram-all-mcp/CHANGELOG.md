@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- The phone number and the 2FA password are read from the Keychain ([#49](https://github.com/PsychQuant/che-msg/issues/49)). The plugin README has long told users to store `TELEGRAM_PHONE` and `TELEGRAM_2FA_PASSWORD` there, but nothing read them, so the 2FA password had to be typed into the conversation. When TDLib waits for one of them and the environment has no value, the server now reads the Keychain item of the same name (account `che-telegram-all-mcp`) with `/usr/bin/security`, inside the auto-fire task and never on TDLib's callback thread, and sends it. `auth_run` takes each value from its argument, then the environment, then the Keychain. A lookup has a 10-second limit; a locked Keychain or a lookup that does not finish counts as "not stored". The value is used for that submission only: never stored, logged or included in an error. The SMS code is never looked up. A client opened on demand still waits for the lookup before its first call (#58).
+
 ## [0.8.0] - 2026-10-14
 
 Archive chats incrementally into per-day Markdown files with their media, and download a single message's media ([#69](https://github.com/PsychQuant/che-msg/issues/69), [#17](https://github.com/PsychQuant/che-msg/issues/17)). Use with plugin `che-telegram-mcp` 1.7.0.

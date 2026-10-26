@@ -30,15 +30,17 @@ You want to read/send messages as **yourself**.
 security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_ID" -w 'YOUR_API_ID' -U
 security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_HASH" -w 'YOUR_API_HASH' -U
 
-# Optional: 2FA password (auto-entered if your account has 2FA)
+# Optional: 2FA password (read by the server when Telegram asks for it, so you never type it into the conversation)
 security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_2FA_PASSWORD" -w 'YOUR_2FA_PASSWORD' -U
 
-# Optional: phone number (auto-entered to skip the prompt)
+# Optional: phone number (read the same way, to skip the prompt)
 security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_PHONE" -w '+886912345678' -U
 
 # 3. Authenticate (one-time; SMS code is the only thing you must enter live)
 /che-telegram-mcp:auth
 ```
+
+From che-telegram-all-mcp 0.9.0, the server reads the phone number and the 2FA password from these Keychain items itself, only while Telegram is waiting for them, and keeps no copy. The wrapper never passes them on. An environment variable of the same name takes precedence; `auth_run`'s own arguments take precedence over both. If the stored 2FA password is wrong, every `auth_run` sends it again, so update the Keychain item instead of retrying. Before 0.9.0 these two items were not read at all, and the phone number and the password had to be typed into the conversation.
 
 Don't want the bot server spawning at startup? Add this to `.claude/settings.json` in your project (or `~/.claude/settings.json` for user-wide):
 
