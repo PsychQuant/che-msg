@@ -754,4 +754,36 @@ final class ArchiveDayFileTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8),
                        validHead + "<!-- msg:100 -->\n**09:00 Alex**：\nnew\n\n" + block200)
     }
+
+    // MARK: - Parser checks pinned (#72 verify)
+
+    /// An anchor is `<!-- msg:`, ASCII digits and ` -->`, nothing else: no closing, a sign, a space,
+    /// no digits or another script's digits make it text.
+    func testAnAnchorNeedsItsClosingAndASCIIDigitsOnly() {
+        let fakes = ["<!-- msg:12345", "<!-- msg:12345 --", "<!-- msg:+5 -->", "<!-- msg:-5 -->", "<!-- msg: 5 -->",
+                     "<!-- msg:5  -->", "<!-- msg: -->", "<!-- msg:\u{0665} -->", "<!-- msg:５ -->"]
+        let content = head + "<!-- msg:4 -->\n**09:00 Alex**：\nx\n" + fakes.joined(separator: "\n") + "\n\n"
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(content).map(\.id), [4])
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(head + "<!-- msg:12345 -->\nx\n").map(\.id), [12345])
+    }
+
+    /// The frontmatter opens with a line that is exactly `---`.
+    func testTheFrontmatterOpensWithExactlyThreeDashes() {
+        XCTAssertEqual(ArchiveDayFile.recordedOffset("---\nchat_id: 1\nutc_offset: \"+08:00\"\n---\n"), "+08:00")
+        for opening in ["----", "--- ", " ---", "--"] {
+            XCTAssertNil(ArchiveDayFile.recordedOffset(opening + "\nchat_id: 1\nutc_offset: \"+08:00\"\n---\n"), opening)
+        }
+    }
+
+    // Scenario "Line separators inside a message": only LF, CR and CR LF break a line.
+    func testOtherLineSeparatorsStayInsideTheLine() {
+        let separators = ["\u{0B}", "\u{0C}", "\u{1C}", "\u{1D}", "\u{1E}", "\u{85}", "\u{2028}", "\u{2029}"]
+        for separator in separators {
+            let body = "a" + separator + "<!-- msg:9 -->" + separator + "**09:00 Manager**："
+            let out = ArchiveDayFile.render(chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+                                            messages: [message(10, minute: 0, body: body)])
+            XCTAssertTrue(out.contains("**09:00 Alex**：\n" + body + "\n\n"), "written as one line, unescaped")
+            XCTAssertEqual(ArchiveDayFile.parseBlocks(out).map(\.id), [10])
+        }
+    }
 }

@@ -19,3 +19,7 @@
 ## 5. 以 Unicode scalar 比對日檔的行
 
 - [x] 5.1 先寫失敗的測試（Requirement: Day file format 的 Scenario: Comment followed by a combining mark、Line break followed by a combining mark、Anchor with a mark fused into it）：U+0301、U+200D、U+FE0F、U+034F 接在 `<!--`、`<!-- msg:9 -->`、標記、`**09:00` 之後的內文行都被加上反斜線，以 LF scalar 切開輸出後，以 `<!--` 開頭的只有工具寫的錨點；寄件人與內文裡「換行＋記號」仍是換行、輸出沒有 CR；混了記號的錨點與標記不算；含 CR 的日檔裡「CRLF＋記號」仍結束錨點行。依設計「日檔的行一律以 Unicode scalar 比對」以 `ScalarText` 取代 `hasPrefix`、`==`、正規表示式與 `replacingOccurrences`。驗證：修改前 `swift test --filter ArchiveDayFileTests` 有 22 個 assertion 失敗、CRLF 那一項被誤拒；修改後通過 [after: 4.1]
+
+## 6. verify 之後補的測試與文字
+
+- [x] 6.1 補測試釘住三個解析條件（verify 時這三個 mutant 沒被抓到，程式本身正確）：錨點要有結尾的 ` -->`、id 只能是 ASCII 數字（`+5`、`-5`、空白、其他文字系統的數字都不算）、frontmatter 第一行恰為 `---`；另依 Requirement: Day file format 的 Scenario: Line separators inside a message 測 VT、FF、FS、GS、RS、NEL、U+2028、U+2029 留在行內。驗證：三個 mutant 各自讓 `swift test --filter ArchiveDayFileTests` 的新測試失敗，還原後通過 [after: 5.1]
