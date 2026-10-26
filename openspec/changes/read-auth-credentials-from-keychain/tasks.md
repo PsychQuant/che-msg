@@ -17,7 +17,7 @@
 
 ## 4. wrapper 回歸測試
 
-- [ ] 4.1 依 design〈wrapper 不 export 電話與 2FA 密碼〉新增 `tests/che-telegram-mcp/test-wrapper-no-auth-secrets.sh`：沿用 `tests/lib/wrapper_harness.sh` 的私人 HOME，另放一個對四個項目（API ID、API hash、電話、2FA 密碼）都回合成值的假 `security`，假 binary 只記錄它看得到的 `TELEGRAM_*` 變數名稱，斷言只有 `TELEGRAM_API_HASH` 與 `TELEGRAM_API_ID`。這是防止日後改回修法 1 的守門測試，對現行 wrapper 一開始就會通過；另以暫時在 scratch 複本的 wrapper 裡加一行 export 確認測試會失敗（不改 repo 裡的 wrapper）。驗證：`bash tests/che-telegram-mcp/test-wrapper-no-auth-secrets.sh` 通過，對 export 版本失敗。
+- [x] 4.1 依 design〈wrapper 不 export 電話與 2FA 密碼〉新增 `tests/che-telegram-mcp/test-wrapper-no-auth-secrets.sh`：沿用 `tests/lib/wrapper_harness.sh` 的私人 HOME，另放一個對四個項目（API ID、API hash、電話、2FA 密碼）都回合成值的假 `security`，假 binary 只記錄它看得到的 `TELEGRAM_*` 變數名稱，斷言只有 `TELEGRAM_API_HASH` 與 `TELEGRAM_API_ID`。這是防止日後改回修法 1 的守門測試，對現行 wrapper 一開始就會通過；另以暫時在 scratch 複本的 wrapper 裡加一行 export 確認測試會失敗（不改 repo 裡的 wrapper）。驗證：`bash tests/che-telegram-mcp/test-wrapper-no-auth-secrets.sh` 通過，對 export 版本失敗。
 
 ## 5. 文件與收尾
 
