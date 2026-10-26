@@ -66,17 +66,18 @@ notify_if_outdated() {
 
 check_keychain_required() {
     local account="$1" service="$2" label="$3"
-    if security find-generic-password -a "$account" -s "$service" -w &>/dev/null; then
+    # Without -w: only the item's attributes are read, never its value.
+    if security find-generic-password -a "$account" -s "$service" &>/dev/null; then
         echo "✓ $label in Keychain"
     else
-        echo "⚠️  $label not in Keychain"
+        echo "⚠️  $label not in Keychain — in your own terminal (security prompts for the value):"
         echo "   security add-generic-password -a $account -s $service -U -w"
     fi
 }
 
 check_keychain_optional() {
     local account="$1" service="$2" label="$3"
-    if security find-generic-password -a "$account" -s "$service" -w &>/dev/null; then
+    if security find-generic-password -a "$account" -s "$service" &>/dev/null; then
         echo "✓ $label in Keychain (optional)"
     fi
     # Silent when missing — optional creds shouldn't generate warnings.

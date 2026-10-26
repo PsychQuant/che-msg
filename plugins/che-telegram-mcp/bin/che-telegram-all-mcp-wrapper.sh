@@ -221,7 +221,7 @@ export TELEGRAM_API_HASH="$(security find-generic-password -a "che-telegram-all-
 
 if [[ -z "$TELEGRAM_API_ID" || -z "$TELEGRAM_API_HASH" ]]; then
     echo "Telegram API credentials not found in Keychain." >&2
-    echo "Set them up:" >&2
+    echo "Set them up in your own terminal (security prompts for each value):" >&2
     echo "  security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_ID -U -w" >&2
     echo "  security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_HASH -U -w" >&2
     echo "Get credentials at: https://my.telegram.org" >&2
