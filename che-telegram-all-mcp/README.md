@@ -157,7 +157,7 @@ Several Claude Code sessions can run this server at the same time ([#58](https:/
 - The reader accepts only the TDLib version it was verified against (1.8.60); otherwise it returns `local_reader_unavailable` with reason `unsupported_tdlib_version` rather than guess.
 - A wrapper from plugin che-telegram-mcp 1.4.x or older still holds its own lock directory (`~/.cache/che-telegram-all-mcp.lock`); 0.6.0 servers treat it as a holder while that wrapper runs.
 
-The `telegram-all` CLI does not take this lock yet ([#61](https://github.com/PsychQuant/che-msg/issues/61)); do not run it while a session holds TDLib. The CLI never reads the Keychain ([#96](https://github.com/PsychQuant/che-msg/issues/96)): give the phone number and the 2FA password with `auth-phone` and `auth-password`, or in the environment, which it still sends automatically.
+The `telegram-all` CLI takes the same lock ([#61](https://github.com/PsychQuant/che-msg/issues/61)). While a session, or another `telegram-all` command, holds TDLib, a command opens nothing: it prints `TDLib is in use by process <PID>` (or `another process (unknown holder)` when the holder recorded no PID) on stderr and exits with status 1; try again once that session has gone idle. A command closes TDLib before it releases the lock; if TDLib does not close within 30 seconds, it keeps the lock until it exits. The CLI never reads the Keychain ([#96](https://github.com/PsychQuant/che-msg/issues/96)): give the phone number and the 2FA password with `auth-phone` and `auth-password`, or in the environment, which it still sends automatically.
 
 ## When telegram-all stops syncing
 

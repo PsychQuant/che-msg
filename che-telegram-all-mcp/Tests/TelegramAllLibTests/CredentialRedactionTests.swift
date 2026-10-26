@@ -54,6 +54,6 @@ final class CredentialRedactionTests: XCTestCase {
                 XCTAssertTrue(line.contains("credentials: NoKeychainCredentialSource()"), "\(file.lastPathComponent): \(line)")
             }
         }
-        XCTAssertEqual(constructions, 2, "makeClient and makeAuthedClient")
+        XCTAssertEqual(constructions, 1, "TelegramAll.withTDLib opens TDLib for every command (#61)")
     }
 }

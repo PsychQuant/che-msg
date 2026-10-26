@@ -14,7 +14,8 @@ struct TelegramAll: AsyncParsableCommand {
 // MARK: - Shared
 
 extension TelegramAll {
-    static func makeClient() async throws -> TDLibClient {
+    /// Runs `body` with a TDLib client, opened under the TDLib lock (#61).
+    static func withClient<T>(_ body: (TDLibClient) async throws -> T) async throws -> T {
         let env = ProcessInfo.processInfo.environment
         guard env["TELEGRAM_API_ID"] != nil, env["TELEGRAM_API_HASH"] != nil else {
             throw ValidationError(
@@ -22,8 +23,23 @@ extension TelegramAll {
                 + "Get them from https://my.telegram.org"
             )
         }
-        // The CLI never reads the Keychain (#96): see NoKeychainCredentialSource.
-        return try await TDLibClient(credentials: NoKeychainCredentialSource())
+        return try await withTDLib(body)
+    }
+
+    /// Takes the TDLib lock the server takes, opens TDLib, runs `body`, then
+    /// closes TDLib and releases the lock (#61). While another process holds
+    /// TDLib, prints which one on stderr and exits with status 1 without
+    /// opening it.
+    static func withTDLib<T>(_ body: (TDLibClient) async throws -> T) async throws -> T {
+        do {
+            // The CLI never reads the Keychain (#96): see NoKeychainCredentialSource.
+            return try await TDLibCommandSession.run(lock: TDLibProcessLock(),
+                                                     open: { try await TDLibClient(credentials: NoKeychainCredentialSource()) },
+                                                     body: body)
+        } catch let held as TDLibCommandSession.Held {
+            fputs(held.message + "\n", stderr)
+            throw ExitCode.failure
+        }
     }
 
     static func waitForAuth(_ client: TDLibClient) async throws {
@@ -72,9 +88,10 @@ extension TelegramAll {
         static let configuration = CommandConfiguration(abstract: "Get your profile info")
 
         func run() async throws {
-            let client = try await TelegramAll.makeClient()
-            try await TelegramAll.waitForAuth(client)
-            print(try await client.getMe())
+            try await TelegramAll.withClient { client in
+                try await TelegramAll.waitForAuth(client)
+                print(try await client.getMe())
+            }
         }
     }
 
@@ -85,9 +102,10 @@ extension TelegramAll {
         var limit: Int = 50
 
         func run() async throws {
-            let client = try await TelegramAll.makeClient()
-            try await TelegramAll.waitForAuth(client)
-            print(try await client.getChats(limit: limit))
+            try await TelegramAll.withClient { client in
+                try await TelegramAll.waitForAuth(client)
+                print(try await client.getChats(limit: limit))
+            }
         }
     }
 
@@ -116,34 +134,35 @@ extension TelegramAll {
         var selfLabel: String = "我"
 
         func run() async throws {
-            let client = try await TelegramAll.makeClient()
-            try await TelegramAll.waitForAuth(client)
+            try await TelegramAll.withClient { client in
+                try await TelegramAll.waitForAuth(client)
 
-            let sinceDate = try parseCLIDate(since, flagName: "--since", endOfDay: false)
-            let untilDate = try parseCLIDate(until, flagName: "--until", endOfDay: true)
+                let sinceDate = try parseCLIDate(since, flagName: "--since", endOfDay: false)
+                let untilDate = try parseCLIDate(until, flagName: "--until", endOfDay: true)
 
-            if let path = dumpMarkdown {
-                let exporter = MarkdownExporter(client: client)
-                let summary = try await exporter.dumpChatToMarkdown(
+                if let path = dumpMarkdown {
+                    let exporter = MarkdownExporter(client: client)
+                    let summary = try await exporter.dumpChatToMarkdown(
+                        chatId: chatID,
+                        outputPath: path,
+                        maxMessages: maxMessages ?? 5000,
+                        sinceDate: sinceDate,
+                        untilDate: untilDate,
+                        selfLabel: selfLabel
+                    )
+                    print(summary)
+                    return
+                }
+
+                print(try await client.getChatHistory(
                     chatId: chatID,
-                    outputPath: path,
-                    maxMessages: maxMessages ?? 5000,
+                    limit: limit,
+                    fromMessageId: 0,
+                    maxMessages: maxMessages,
                     sinceDate: sinceDate,
-                    untilDate: untilDate,
-                    selfLabel: selfLabel
-                )
-                print(summary)
-                return
+                    untilDate: untilDate
+                ))
             }
-
-            print(try await client.getChatHistory(
-                chatId: chatID,
-                limit: limit,
-                fromMessageId: 0,
-                maxMessages: maxMessages,
-                sinceDate: sinceDate,
-                untilDate: untilDate
-            ))
         }
 
         /// Wraps `TelegramAllLib.parseISODate` / `parseUntilDate` so CLI shares
@@ -177,9 +196,10 @@ extension TelegramAll {
         var limit: Int = 50
 
         func run() async throws {
-            let client = try await TelegramAll.makeClient()
-            try await TelegramAll.waitForAuth(client)
-            print(try await client.searchMessages(chatId: chatID, query: query, limit: limit))
+            try await TelegramAll.withClient { client in
+                try await TelegramAll.waitForAuth(client)
+                print(try await client.searchMessages(chatId: chatID, query: query, limit: limit))
+            }
         }
     }
 
@@ -193,9 +213,10 @@ extension TelegramAll {
         var text: String
 
         func run() async throws {
-            let client = try await TelegramAll.makeClient()
-            try await TelegramAll.waitForAuth(client)
-            print(try await client.sendMessage(chatId: chatID, text: text))
+            try await TelegramAll.withClient { client in
+                try await TelegramAll.waitForAuth(client)
+                print(try await client.sendMessage(chatId: chatID, text: text))
+            }
         }
     }
 
@@ -203,9 +224,10 @@ extension TelegramAll {
         static let configuration = CommandConfiguration(abstract: "List your contacts")
 
         func run() async throws {
-            let client = try await TelegramAll.makeClient()
-            try await TelegramAll.waitForAuth(client)
-            print(try await client.getContacts())
+            try await TelegramAll.withClient { client in
+                try await TelegramAll.waitForAuth(client)
+                print(try await client.getContacts())
+            }
         }
     }
 }
