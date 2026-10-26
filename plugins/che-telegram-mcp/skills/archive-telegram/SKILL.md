@@ -101,7 +101,7 @@ chats:
 
 工具在讀任何訊息之前會檢查聊天目錄裡的日檔：有日檔用了別的 offset 時回錯誤「utc_offset X differs from Y, the offset this archive's day files were written with」。這時取出 Y，確認它符合 `+HH:MM` / `-HH:MM`，寫回索引的 `utc_offset`，再用 Y 重新呼叫一次；Y 不符合格式時，停止這個聊天並在報告中說明。
 
-錯誤寫著「cannot be merged into safely」時，是聊天目錄裡有一個日檔不能安全合併：讀不到 `utc_offset`、不是一般檔案（symlink、FIFO、目錄）、或含有 CR（例如被 Windows 編輯器存成 CRLF）。停止這個聊天，在報告中寫出錯誤點名的日檔與原因，請使用者處理那個檔案（換成檔案本身、改成 LF、或移開）後再跑。含 CR 的日檔只在這次有那一天的新訊息要寫進去時才被拒絕（那一天沒有新訊息時，檔案原樣保留、不拒絕），所以同一次呼叫可能已經寫好別的日檔；那些日檔是完整的，書籤不動，重跑時會照常合併。
+錯誤寫著「cannot be merged into safely」時，是聊天目錄裡有一個日檔不能安全合併：讀不到 `utc_offset`、不是一般檔案（symlink、FIFO、目錄）、或含有 CR（例如被 Windows 編輯器存成 CRLF）。停止這個聊天，在報告中寫出錯誤點名的日檔與原因，請使用者處理那個檔案（換成檔案本身、改成 LF、或移開）後再跑。含 CR 的日檔只在這次要改寫它時才被拒絕：有那一天的新訊息要寫進去，或透過 TDLib 跑時要把那一天的暫時區塊換成完整版本（#72）；兩者都沒有時，檔案原樣保留、不拒絕，所以同一次呼叫可能已經寫好別的日檔；那些日檔是完整的，書籤不動，重跑時會照常合併。
 
 一次一個聊天呼叫 `archive_chat_to_markdown`：
 

@@ -419,7 +419,7 @@ public final class CheTelegramAllMCPServer {
                  anchor, and a later call through TDLib over the same range replaces them (upgraded_messages). \
                  Other existing blocks are never rewritten. Day files are owner-only; one \
                  archive per chat directory runs at a time; a day file that is not a regular file (a symbolic \
-                 link, FIFO or directory) or that contains a carriage return is refused. Saved media carry the \
+                 link, FIFO or directory), or that contains a carriage return and would be rewritten, is refused. Saved media carry the \
                  macOS quarantine attribute.
                  """,
                  properties: [
