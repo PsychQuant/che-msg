@@ -170,6 +170,48 @@ final class MarkdownFormatTests: XCTestCase {
         }
     }
 
+    // MARK: - Media captions (#70)
+
+    private func media(_ type: String, caption: String?) -> [String: Any] {
+        var m: [String: Any] = ["id": Int64(1), "type": type, "text": ""]
+        if let caption { m["caption"] = caption }
+        return m
+    }
+
+    func testACaptionFollowsThePlaceholder() {
+        XCTAssertEqual(messageBody(media("photo", caption: "menu")), "[photo] menu")
+    }
+
+    func testAMediaMessageWithoutACaptionIsUnchanged() {
+        XCTAssertEqual(messageBody(media("photo", caption: "")), "[photo]", "TDLib writes an empty caption when there is none")
+        XCTAssertEqual(messageBody(media("photo", caption: nil)), "[photo]")
+    }
+
+    func testAMultiLineCaptionKeepsItsLineBreaks() {
+        XCTAssertEqual(messageBody(media("video", caption: "line one\nline two")), "[video] line one\nline two")
+    }
+
+    func testEveryCaptionedTypeKeepsItsCaption() {
+        let cases: [(String, String)] = [
+            ("photo", "[photo]"), ("video", "[video]"), ("voice_note", "[voice]"),
+            ("document", "[document]"), ("animation", "[animation]"), ("audio", "[audio]"),
+        ]
+        for (type, placeholder) in cases {
+            XCTAssertEqual(messageBody(media(type, caption: "c")), "\(placeholder) c", type)
+            XCTAssertEqual(messageBody(media(type, caption: "")), placeholder, type)
+        }
+    }
+
+    func testACaptionInTheExportSitsUnderTheHeader() {
+        let calendar = Calendar(identifier: .gregorian)
+        let at = calendar.date(from: DateComponents(year: 2026, month: 4, day: 14, hour: 14, minute: 34))!
+        var m = msg(id: 1, date: at, senderId: 1, isOutgoing: false, type: "photo")
+        m["caption"] = "menu"
+        let md = formatMarkdown(messages: [m], senderNames: [1: "X"], selfLabel: "我", chatTitle: "T", chatId: 1,
+                                sinceDate: nil, untilDate: nil, exportedAt: anchor)
+        XCTAssertTrue(md.contains("X**：\n[photo] menu\n"), md)
+    }
+
     // MARK: - Consecutive same-sender messages NOT merged
 
     func testConsecutiveSameSenderRetainIndependentTimestamps() {

@@ -337,7 +337,7 @@ The Markdown file produced by `dump_chat_to_markdown` SHALL conform to the follo
 - Level-2 headings per calendar day in local timezone, formatted `## YYYY-MM-DD`, in chronological order (oldest day first within the exported range).
 - Each message rendered as `**HH:mm <sender>**：` followed by a newline and the message body on the next line(s).
 - Outgoing messages MUST use the configured `self_label` value as `<sender>`.
-- Non-text message types MUST render as bracketed placeholders on a single line: `[photo]`, `[voice]`, `[video]`, `[sticker]`, `[document]`, `[location]`, `[other]`.
+- Non-text message types MUST render as bracketed placeholders: `[photo]`, `[voice]`, `[video]`, `[video_note]`, `[sticker]`, `[document]`, `[location]`, `[animation]`, `[poll]`, `[audio]`, `[other]`. When the message has a non-empty caption (photo, video, voice note, document, animation, audio), the placeholder MUST be followed by a space and the caption, with the caption's own line breaks kept; an empty caption MUST be treated as no caption.
 - Consecutive messages from the same sender MUST each retain their own timestamp line; the implementation MUST NOT merge them into a single block.
 
 #### Scenario: Text message formatting
@@ -348,8 +348,13 @@ The Markdown file produced by `dump_chat_to_markdown` SHALL conform to the follo
 
 #### Scenario: Photo placeholder
 
-- **WHEN** a message of type `messagePhoto` is encountered
+- **WHEN** a message of type `messagePhoto` with no caption (TDLib's caption text is empty) is encountered
 - **THEN** the Markdown body for that message is exactly `[photo]`
+
+#### Scenario: Caption kept
+
+- **WHEN** a message of type `messagePhoto` has the caption `menu`
+- **THEN** the Markdown body for that message is exactly `[photo] menu`
 
 #### Scenario: Day heading chronological order
 

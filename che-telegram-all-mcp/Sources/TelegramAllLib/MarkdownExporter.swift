@@ -281,23 +281,29 @@ internal func renderSingleMessage(
 }
 
 /// Produce the rendered body for a message dict: either its text, or a placeholder
-/// such as `[photo]`, `[voice]`, `[video]` for non-text media types.
+/// such as `[photo]`, `[voice]`, `[video]` for non-text media types, followed by the
+/// message's caption when it has one (#70). TDLib writes an empty caption when there
+/// is none, so an empty string counts as no caption.
 internal func messageBody(_ msg: [String: Any]) -> String {
     let type = (msg["type"] as? String) ?? "other"
+    let placeholder: String
     switch type {
     case "text":
         return (msg["text"] as? String) ?? ""
-    case "photo": return "[photo]"
-    case "video": return "[video]"
-    case "voice_note": return "[voice]"
-    case "video_note": return "[video_note]"
-    case "sticker": return "[sticker]"
-    case "document": return "[document]"
-    case "location": return "[location]"
-    case "animation": return "[animation]"
-    case "poll": return "[poll]"
-    default: return "[other]"
+    case "photo": placeholder = "[photo]"
+    case "video": placeholder = "[video]"
+    case "voice_note": placeholder = "[voice]"
+    case "video_note": placeholder = "[video_note]"
+    case "sticker": placeholder = "[sticker]"
+    case "document": placeholder = "[document]"
+    case "location": placeholder = "[location]"
+    case "animation": placeholder = "[animation]"
+    case "poll": placeholder = "[poll]"
+    case "audio": placeholder = "[audio]"
+    default: placeholder = "[other]"
     }
+    guard let caption = msg["caption"] as? String, !caption.isEmpty else { return placeholder }
+    return "\(placeholder) \(caption)"
 }
 
 internal func buildSummaryJSON(
