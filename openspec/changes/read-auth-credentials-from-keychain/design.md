@@ -61,7 +61,7 @@ Diagnosis 建議進入等待狀態時跑一次不帶 `-w` 的存在檢查，結�
 - 進入 `waitingForPhoneNumber` 或 `waitingForPassword`、而環境變數沒有值時，callback 在 lock 內同步把狀態設成 `pending`，並把世代號加一，接著才開 `Task` 讀取。
 - `Task` 讀完後在 lock 內比對世代號：沒變才寫入 `found` 或 `absent`；`found` 時送出值。
 - 其他狀態一律設成 `notNeeded`，並把世代號加一。這樣舊狀態的 `Task` 晚到時，不會覆寫新狀態的查詢狀態，也不會送出過時的值。
-- 查詢狀態和 `authState` 用同一把 lock（spec「Authentication state and credential cache are lock-protected」）。
+- 查詢狀態由追蹤器自己的 lock 保護；進入新狀態時，`TDLibClient` 在持有 `authState` 那把 lock 的期間呼叫追蹤器，所以兩者一起改變（spec「Authentication state and credential cache are lock-protected」）。鎖的順序固定是外層 `authState`、內層追蹤器，追蹤器從不反過來取外層的 lock。
 
 `authorizationIsSettled` 多一個 `keychainLookup: CredentialLookupStatus` 參數：
 - `pending` 與 `found` 都不算定案。
