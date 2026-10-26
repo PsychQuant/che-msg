@@ -125,16 +125,19 @@ public final class TDLibClient {
         /// restarts, and the message says so. It must stay within
         /// `errorResultFromParse`'s 256-character cap.
         case sessionClosed
-        /// TDLib has not loaded the chat and it could not be created from its id; `code` and
-        /// `message` are those of TDLib's `getChat` error (#71, see `loadChat`).
+        /// TDLib has not loaded the chat and has no information about its user or group, so it
+        /// could not be created from its id; `code` and `message` are those of TDLib's
+        /// `getChat` error (#71, see `loadChat`).
         case unknownChat(chatId: Int64, code: Int, message: String)
 
         /// What the caller can do next, for the errors that have a next step: only `unknownChat`.
+        /// `get_chats` sends `getChats` with no chat list, which TDLib reads as the main list.
         public var hint: String? {
             guard case .unknownChat(let chatId, _, _) = self else { return nil }
-            return "TDLib has not loaded chat \(chatId) and could not load it by its id. "
+            return "TDLib has no information about chat \(chatId), so it could not load the chat by its id. "
                 + "Call get_chats (CLI: telegram-all chats) with a limit large enough to reach this chat, "
-                + "so that TDLib loads it, then try again."
+                + "so that TDLib loads it, then try again. get_chats reads only the main chat list, "
+                + "so it does not load a chat archived in Telegram."
         }
 
         public var errorDescription: String? {
@@ -461,20 +464,18 @@ public final class TDLibClient {
         }
     }
 
-    /// The chat `chatId`, made known to TDLib first (#71): see `loadChat`. Every method that
-    /// takes a chat id calls this before its first request on the chat (`TDLibRequestTests`).
+    /// The chat `chatId`, made known to TDLib first (#71): see `loadChat`, which decides which
+    /// request to send and with what; these closures pass the arguments through unchanged
+    /// (`TDLibRequestTests` pins them). Every method that takes a chat id calls this before
+    /// its first request on the chat.
     @discardableResult
     func knownChat(_ chatId: Int64) async throws -> Chat {
-        try await loadChat(chatId, get: { try await tdlibCall { try await openClient.getChat(chatId: chatId) } }) { kind in
-            switch kind {
-            case .user(let userId):
-                return try await tdlibCall { try await openClient.createPrivateChat(force: false, userId: userId) }
-            case .basicGroup(let groupId):
-                return try await tdlibCall { try await openClient.createBasicGroupChat(basicGroupId: groupId, force: false) }
-            case .supergroup(let supergroupId):
-                return try await tdlibCall { try await openClient.createSupergroupChat(force: false, supergroupId: supergroupId) }
-            }
-        }
+        try await loadChat(
+            chatId,
+            get: { try await tdlibCall { try await openClient.getChat(chatId: chatId) } },
+            createPrivateChat: { force, userId in try await tdlibCall { try await openClient.createPrivateChat(force: force, userId: userId) } },
+            createBasicGroupChat: { basicGroupId, force in try await tdlibCall { try await openClient.createBasicGroupChat(basicGroupId: basicGroupId, force: force) } },
+            createSupergroupChat: { force, supergroupId in try await tdlibCall { try await openClient.createSupergroupChat(force: force, supergroupId: supergroupId) } })
     }
 
     // MARK: - Authentication

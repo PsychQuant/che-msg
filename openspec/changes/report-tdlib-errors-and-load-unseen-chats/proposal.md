@@ -9,7 +9,7 @@
 
 - `TDLibClient` 的每一個 TDLib 請求（四個認證步驟除外）都經過同一個轉換：`TDLibKit.Error` 變成帶 TDLib code 與 message 的 `TDError.tdlibError`。code 406 照樣丟出錯誤，但 message 留空。server 對任何工具回 `{"type":"tdlib_error","code":…,"message":…}`，CLI 印出 `TDLib error <code>: <message>`。原本封存專用的 `archiveTDLibCall` 改名 `tdlibCall`，成為唯一的轉換點；一個讀原始碼的測試確認沒有請求繞過它。
 - 每個接受聊天 id 的 `TDLibClient` 方法（`getChat`、`getChatHistory`、`searchMessages`、寫入類方法、`getChatMembers`、封存的讀取）在第一個請求前先讓 TDLib 認得這個聊天：`getChat`，回 400 時依 TDLib 的 id 範圍用 `createPrivateChat`／`createBasicGroupChat`／`createSupergroupChat` 建立。這段邏輯從 `loadChatForArchive` 抽出，封存與其他工具共用。
-- 建立不了時（id 不在可建立的範圍，或建立請求回 400），丟出新的 `TDError.unknownChat`，帶原本 `getChat` 的 code 與 message。server 回 `tdlib_error` 並多一個 `hint` 欄位：說明 TDLib 沒有載入這個聊天、用 id 也載入不了，請先呼叫 `get_chats`（limit 要夠大）再重試。其他錯誤（rate limit、session 已關閉）原樣丟出。
+- 建立請求回 400「Chat info not found」（TDLib 對這個使用者或群組毫無資訊）時，丟出新的 `TDError.unknownChat`，帶原本 `getChat` 的 code 與 message；server 回 `tdlib_error` 並多一個 `hint` 欄位：說明 TDLib 沒有這個聊天的資訊、用 id 載入不了，請先呼叫 `get_chats`（limit 要夠大）再重試，並說 `get_chats` 只讀主清單、不載入在 Telegram 裡封存的聊天。id 不在可建立範圍時原樣回報 `getChat` 的錯誤；建立請求的其他錯誤（「Can't access the chat」、rate limit、session 已關閉）也原樣回報，都不加提示。
 
 ## Non-Goals
 

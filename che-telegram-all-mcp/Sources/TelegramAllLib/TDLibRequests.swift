@@ -20,7 +20,9 @@ internal func tdlibCall<T>(_ body: () async throws -> T) async throws -> T {
 }
 
 /// What a TDLib chat id can be created as, by TDLib's id ranges (td/telegram/DialogId.cpp);
-/// nil for secret chats and ids TDLib does not use, which no chat can be created from.
+/// nil for every other id. Secret chats are among them by choice: TDLib has `createSecretChat`
+/// (by secret chat id), but this client opens TDLib with `useSecretChats: false`, and ids
+/// outside the ranges name no chat at all.
 internal enum TDLibChatID: Equatable {
     case user(Int64)
     case basicGroup(Int64)
@@ -45,30 +47,52 @@ internal enum TDLibChatID: Equatable {
     }
 }
 
+/// TDLib's answer to a create request when it has no information about the user or group
+/// (`MessagesManager::create_dialog`, td at cb863c16). TDLib's messages are "subject to future
+/// changes"; if this one changes, the create error is reported as it is, without the hint.
+let tdlibChatInfoNotFound = "Chat info not found"
+
 /// Makes a chat known to TDLib before a request on it (PsychQuant/che-msg#71; the archive's
-/// since #69). `getChat` answers for chats TDLib has seen (its chat database keeps them), but
-/// a new login has seen few, so on a 400 the chat is created from its id. When it cannot be
-/// (an id no chat can be created from, or a 400 from the create request), the `getChat`
-/// error is reported as `unknownChat`: the caller asked about the chat, and the create
-/// request's error ("Supergroup not found") would name the wrong thing. Any other error,
-/// such as a rate limit or a closed session, is thrown as it is, and after one from
-/// `getChat` nothing is created.
+/// since #69). `getChat` answers for chats TDLib has loaded (its chat database keeps them),
+/// but a new login has loaded few, and a 400 ("Chat not found") then means TDLib may still be
+/// able to load the chat: it is created from its id with `force: false`, so TDLib asks the
+/// server when it has not loaded the chat rather than making one up.
 ///
-/// The two requests are passed in, so this is tested without TDLib (`UnseenChatTests`).
-internal func loadChat<Found>(_ chatId: Int64,
-                              get: () async throws -> Found,
-                              create: (TDLibChatID) async throws -> Found) async throws -> Found {
-    let message: String
+/// - `getChat`'s other errors (a rate limit, a closed session) are thrown as they are, and
+///   nothing is created.
+/// - An id no chat can be created from keeps `getChat`'s error, without a hint.
+/// - A create request answered "Chat info not found" (TDLib has no information about the user
+///   or group) is reported as `unknownChat` with `getChat`'s error, the one the caller asked
+///   about, so the server adds a hint to call `get_chats`.
+/// - Any other create error is thrown as it is: "Can't access the chat" (a private supergroup
+///   or channel the account has left or is banned from), which `get_chats` cannot fix, a rate limit the archive waits out, a
+///   closed session.
+///
+/// The requests are passed in, one per kind of id with TDLib's own arguments, so this is
+/// tested without TDLib (`UnseenChatTests`).
+internal func loadChat<Found>(
+    _ chatId: Int64,
+    get: () async throws -> Found,
+    createPrivateChat: (_ force: Bool, _ userId: Int64) async throws -> Found,
+    createBasicGroupChat: (_ basicGroupId: Int64, _ force: Bool) async throws -> Found,
+    createSupergroupChat: (_ force: Bool, _ supergroupId: Int64) async throws -> Found
+) async throws -> Found {
+    let notFound: String
     do {
         return try await get()
-    } catch TDLibClient.TDError.tdlibError(code: 400, message: let notFound) {
-        message = notFound
+    } catch TDLibClient.TDError.tdlibError(code: 400, message: let message) {
+        notFound = message
     }
-    let unknown = TDLibClient.TDError.unknownChat(chatId: chatId, code: 400, message: message)
-    guard let kind = TDLibChatID(chatId) else { throw unknown }
+    guard let kind = TDLibChatID(chatId) else {
+        throw TDLibClient.TDError.tdlibError(code: 400, message: notFound)
+    }
     do {
-        return try await create(kind)
-    } catch TDLibClient.TDError.tdlibError(code: 400, message: _) {
-        throw unknown
+        switch kind {
+        case .user(let userId): return try await createPrivateChat(false, userId)
+        case .basicGroup(let basicGroupId): return try await createBasicGroupChat(basicGroupId, false)
+        case .supergroup(let supergroupId): return try await createSupergroupChat(false, supergroupId)
+        }
+    } catch TDLibClient.TDError.tdlibError(code: 400, message: tdlibChatInfoNotFound) {
+        throw TDLibClient.TDError.unknownChat(chatId: chatId, code: 400, message: notFound)
     }
 }

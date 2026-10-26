@@ -149,6 +149,26 @@ final class TDLibRequestTests: XCTestCase {
                       "not checked: \(methodsWithAChatId.subtracting(checked).sorted())")
     }
 
+    /// `knownChat` hands `loadChat` the real requests, each passing its arguments through
+    /// unchanged, so the kind → request mapping and `force: false` tested in `UnseenChatTests`
+    /// are what TDLib receives. Each request appears exactly once in the sources.
+    func testKnownChatSendsTheRequestsLoadChatAsksFor() throws {
+        let client = try String(contentsOf: Self.sources.appendingPathComponent("TDLibClient.swift"), encoding: .utf8)
+        let wiring = [
+            "get: { try await tdlibCall { try await openClient.getChat(chatId: chatId) } }",
+            "createPrivateChat: { force, userId in try await tdlibCall { try await openClient.createPrivateChat(force: force, userId: userId) } }",
+            "createBasicGroupChat: { basicGroupId, force in try await tdlibCall { try await openClient.createBasicGroupChat(basicGroupId: basicGroupId, force: force) } }",
+            "createSupergroupChat: { force, supergroupId in try await tdlibCall { try await openClient.createSupergroupChat(force: force, supergroupId: supergroupId) } }",
+        ]
+        for line in wiring {
+            XCTAssertEqual(count(line, in: client), 1, "knownChat does not pass this request through: \(line)")
+        }
+        let all = try codeLines().map(\.line).joined(separator: "\n")
+        for request in ["openClient.createPrivateChat(", "openClient.createBasicGroupChat(", "openClient.createSupergroupChat("] {
+            XCTAssertEqual(count(request, in: all), 1, "\(request) is sent only from knownChat")
+        }
+    }
+
     /// What the `telegram-all` CLI prints for it (ArgumentParser prints `errorDescription`).
     func testTheCLIShowsTheCodeAndTheMessage() {
         XCTAssertEqual(TDLibClient.TDError.tdlibError(code: 400, message: "User not found").errorDescription,

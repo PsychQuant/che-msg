@@ -19,3 +19,4 @@
 ## 5. 驗證後的修正
 
 - [x] 5.1 先寫失敗的測試：原始碼測試改為掃 `Sources/TelegramAllLib` 所有檔案、辨認任何 `…chatId: Int64`／`…ChatId: Int64` 參數、略過註解行，並要求 `knownChat` 單獨一行、不帶條件、在第一個請求之前；封存的 `page` 只在 `fromMessageId == 0` 時載入而失敗。再讓 `page` 每一頁都呼叫 `knownChat`（Requirement: A chat TDLib has not loaded is loaded by its id）。驗證：`swift test --filter TDLibRequestTests` 先失敗後通過 [after: 2.2]
+- [x] 5.2 先寫失敗的測試：`loadChat` 改收三個依種類的建立請求（參數同 TDLib，含 `force`），測每種 id 送哪個請求、`force: false`；四種失敗依 TDLib 原始碼（cb863c16）的回答：`getChat` 非 400 原樣、id 不可建立時原樣丟出 `getChat` 的錯誤、建立請求回 400「Chat info not found」才丟 `unknownChat` 加提示、建立請求的其他錯誤（含「Can't access the chat」）原樣；原始碼釘住 `knownChat` 把參數原樣交給 `openClient` 的四行。再實作，提示加上 `get_chats` 只讀主清單、不載入封存的聊天（Requirement: A chat TDLib has not loaded is loaded by its id）。驗證：`swift build --build-tests` 先失敗；換掉群組與 supergroup 的請求、或改成 `force: true` 時測試失敗 [after: 5.1]

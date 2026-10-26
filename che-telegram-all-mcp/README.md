@@ -178,12 +178,14 @@ To recover (a new login sends a code to your account, so it is always your actio
 
 When TDLib answers a tool with an error, the tool returns `{"type": "tdlib_error", "code": <int>, "message": <string>}` with `isError: true`, for example `{"type":"tdlib_error","code":400,"message":"User not found"}`; the `telegram-all` CLI prints `TDLib error <code>: <message>` ([#71](https://github.com/PsychQuant/che-msg/issues/71)). A 406 comes with an empty message: TDLib asks that it never be shown.
 
-TDLib reads only chats it has loaded, and after a new login it has loaded few. A tool given a `chat_id` (`get_chat`, `get_chat_history`, `search_messages`, `dump_chat_to_markdown`, the message, group and read-state tools, and the archive tools) first makes that chat known: when TDLib does not know it, the chat is created from its id as a user, basic group, supergroup or channel chat. That changes only TDLib's local state; nothing is sent to the chat. When the chat cannot be created (a secret chat, or TDLib cannot create it from the id), the result keeps TDLib's original error and adds a `hint`:
+TDLib reads only chats it has loaded, and after a new login it has loaded few. A tool given a `chat_id` (`get_chat`, `get_chat_history`, `search_messages`, `dump_chat_to_markdown`, the message, group and read-state tools, and the archive tools) first makes that chat known: when TDLib does not know it, the chat is created from its id as a user, basic group, supergroup or channel chat. That changes only TDLib's local state; nothing is sent to the chat. When TDLib has no information about the chat's user or group, the result keeps TDLib's original error and adds a `hint`:
 
 ```json
 {"type": "tdlib_error", "code": 400, "message": "Chat not found",
- "hint": "TDLib has not loaded chat -1001234567890 and could not load it by its id. Call get_chats (CLI: telegram-all chats) with a limit large enough to reach this chat, so that TDLib loads it, then try again."}
+ "hint": "TDLib has no information about chat -1001234567890, so it could not load the chat by its id. Call get_chats (CLI: telegram-all chats) with a limit large enough to reach this chat, so that TDLib loads it, then try again. get_chats reads only the main chat list, so it does not load a chat archived in Telegram."}
 ```
+
+Any other failure comes back as TDLib reported it, without a hint: for example `{"type":"tdlib_error","code":400,"message":"Can't access the chat"}` for a private supergroup or channel the account has left or is banned from, a rate limit, or TDLib's own error for an id that no chat can be created from (a secret chat id: this server runs TDLib with secret chats off).
 
 Whether TDLib can create a chat with a user or group it has never seen, on a database fresh from a new login, has not been checked on a live account yet; until it is, a chat id kept from an earlier session or a config file may still need that `get_chats` call first.
 
