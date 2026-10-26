@@ -5,12 +5,19 @@
 # reaches the network, and the real Keychain is never read.
 #
 #   make_fake_signing_tools <bindir> <log> [mode]
-#     mode: no-identity    the keychain lists no identity
-#           no-runtime     a signed binary reports no hardened-runtime flag
-#           not-notarized  spctl does not accept the binary as notarized
+#     mode: no-identity        the keychain lists no identity
+#           apple-development  the keychain's identity is an Apple Development one
+#           no-runtime         a signed binary reports no hardened-runtime flag
+#           extra-entitlement  a signed binary carries an entitlement
+#           not-notarized      spctl does not accept the binary as notarized
+#           rejected-notarized spctl says "rejected" but names a notarized source
+#
+# "Signing" appends the line FAKE_SIGNED_MARK to the file, so a test can tell a
+# signed file from an unsigned copy of it.
 
 FAKE_IDENTITY="Developer ID Application: Test Maintainer (TEAMID1234)"
 FAKE_IDENTITY_SHA1="0123456789ABCDEF0123456789ABCDEF01234567"
+FAKE_SIGNED_MARK="fake-codesign: signed"
 
 make_fake_signing_tools() {
     local bin=$1 log=$2 mode=${3:-}
@@ -20,13 +27,26 @@ make_fake_signing_tools() {
 #!/bin/bash
 echo "security \$*" >> "$log"
 [ "$mode" = no-identity ] && { echo "     0 valid identities found"; exit 0; }
-echo '  1) $FAKE_IDENTITY_SHA1 "$FAKE_IDENTITY"'
+if [ "$mode" = apple-development ]; then
+    echo '  1) $FAKE_IDENTITY_SHA1 "Apple Development: Test Maintainer (TEAMID1234)"'
+else
+    echo '  1) $FAKE_IDENTITY_SHA1 "$FAKE_IDENTITY"'
+fi
 echo "     1 valid identities found"
 EOF
     cat > "$bin/codesign" <<EOF
 #!/bin/bash
 echo "codesign \$*" >> "$log"
 case " \$* " in
+    *" --force "*)
+        for last; do :; done
+        printf '\n%s\n' "$FAKE_SIGNED_MARK" >> "\$last" ;;
+    *" --entitlements - "*)
+        if [ "$mode" = extra-entitlement ]; then
+            printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>com.apple.security.cs.disable-library-validation</key><true/></dict></plist>\n'
+        else
+            printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict/></plist>\n'
+        fi ;;
     *" -dv "*|*" -d "*)
         echo "Authority=$FAKE_IDENTITY" >&2
         echo "TeamIdentifier=TEAMID1234" >&2
@@ -47,6 +67,7 @@ EOF
 #!/bin/bash
 echo "spctl \$*" >> "$log"
 if [ "$mode" = not-notarized ]; then echo "\$4: rejected"; echo "source=Unnotarized Developer ID"; exit 3; fi
+if [ "$mode" = rejected-notarized ]; then echo "\$4: rejected"; echo "source=Notarized Developer ID"; exit 3; fi
 echo "\$4: accepted"; echo "source=Notarized Developer ID"
 EOF
     cat > "$bin/ditto" <<EOF

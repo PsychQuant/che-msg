@@ -23,6 +23,13 @@
 #   8. Full mode when spctl does not see a notarized binary: fails.
 #   9. --preflight: checks the prerequisites only, with no binary; with
 #      --sign-only it does not need NOTARY_PROFILE and never calls notarytool.
+#  10. Checks added after the #40 verify: an identity that is not a Developer
+#      ID Application, the "valid identities" summary line and a path that
+#      merely contains "Mach-O" are refused before codesign; a lowercase SHA-1
+#      is accepted; ENTITLEMENTS from the environment is ignored; an invalid
+#      entitlements plist and a bad SPCTL_TIMEOUT_SECONDS are refused before
+#      codesign; signed entitlements that differ, and an spctl "rejected", fail;
+#      the notarization's temp files are removed.
 #
 # Usage:
 #   bash tests/release/test-release-preflight.sh
@@ -158,6 +165,66 @@ D="$SCRATCH/preflight-sign-only"; make_env "$D"
 run_sign "$D" "DEVELOPER_ID=$IDENTITY" -- --preflight --sign-only
 if [ "$RC" -eq 0 ]; then pass "--sign-only without NOTARY_PROFILE: exit 0"; else fail "--sign-only: exit $RC: $OUT"; fi
 if called "$D" "xcrun notarytool"; then fail "notarytool ran"; else pass "notarytool never ran"; fi
+
+test_case "an identity that is not a Developer ID Application"
+D="$SCRATCH/apple-dev"; make_env "$D" apple-development
+run_sign "$D" "DEVELOPER_ID=Apple Development: Test Maintainer (TEAMID1234)" -- --sign-only "$D/Bin"
+expect_refused_before_codesign "$D"
+run_sign "$D" "DEVELOPER_ID=$IDENTITY_SHA1" -- --sign-only "$D/Bin"
+expect_refused_before_codesign "$D"
+
+test_case "DEVELOPER_ID that matches the summary line"
+D="$SCRATCH/summary"; make_env "$D"
+run_sign "$D" "DEVELOPER_ID=valid" -- --sign-only "$D/Bin"
+expect_refused_before_codesign "$D"
+
+test_case "a lowercase SHA-1"
+D="$SCRATCH/lower"; make_env "$D"
+run_sign "$D" "DEVELOPER_ID=$(printf '%s' "$IDENTITY_SHA1" | tr 'A-F' 'a-f')" -- --sign-only "$D/Bin"
+if [ "$RC" -eq 0 ]; then pass "accepted (exit 0)"; else fail "exit $RC: $OUT"; fi
+
+test_case "a script whose path contains Mach-O"
+D="$SCRATCH/macho-path"; make_env "$D"; mkdir -p "$D/Mach-O-dir"; printf '#!/bin/sh\n' > "$D/Mach-O-dir/script"
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" -- --sign-only "$D/Mach-O-dir/script"
+expect_refused_before_codesign "$D"
+
+test_case "ENTITLEMENTS in the environment"
+D="$SCRATCH/ent-env"; make_env "$D"; printf 'not a plist\n' > "$D/evil.plist"
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" "ENTITLEMENTS=$D/evil.plist" -- --sign-only "$D/Bin"
+if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC: $OUT"; fi
+case "$(calls_matching "$D" "codesign --force" | head -1)" in *"--entitlements $ROOT/scripts/release/Entitlements.plist"*) pass "signs with the repository's entitlements" ;; *) fail "signed with other entitlements" ;; esac
+
+test_case "an entitlements file that is not a valid plist"
+D="$SCRATCH/bad-plist"; make_env "$D"; mkdir -p "$D/copy"
+cp "$SIGN" "$D/copy/sign-and-notarize.sh"; printf '<plist><dict>\n' > "$D/copy/Entitlements.plist"
+OUT=$(env -u DEVELOPER_ID -u NOTARY_PROFILE PATH="$D/fakebin:/usr/bin:/bin:/usr/sbin:/sbin" "DEVELOPER_ID=$IDENTITY" bash "$D/copy/sign-and-notarize.sh" --sign-only "$D/Bin" 2>&1); RC=$?
+expect_refused_before_codesign "$D"
+
+test_case "SPCTL_TIMEOUT_SECONDS that is not a positive integer"
+D="$SCRATCH/spctl-timeout"; make_env "$D"
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile SPCTL_TIMEOUT_SECONDS=0 -- "$D/Bin"
+expect_refused_before_codesign "$D"
+
+test_case "signed entitlements that differ from the repository's"
+D="$SCRATCH/extra-ent"; make_env "$D" extra-entitlement
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" -- --sign-only "$D/Bin"
+if [ "$RC" -ne 0 ]; then pass "fails (exit $RC)"; else fail "exit 0"; fi
+if printf '%s' "$OUT" | grep -qi entitlement; then pass "says the entitlements differ"; else fail "no entitlements message: $OUT"; fi
+
+test_case "spctl says rejected but names a notarized source"
+D="$SCRATCH/rejected-notarized"; make_env "$D" rejected-notarized
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile -- "$D/Bin"
+if [ "$RC" -ne 0 ]; then pass "fails (exit $RC)"; else fail "exit 0"; fi
+
+test_case "the notarization's temp files are removed"
+D="$SCRATCH/temp-files"; make_env "$D"
+before=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile -- "$D/Bin"
+after=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
+if [ "$RC" -eq 0 ] && [ "$after" = "$before" ]; then pass "nothing left in TMPDIR"; else fail "exit $RC, TMPDIR entries $before -> $after"; fi
+# mktemp -t ignores TMPDIR on macOS, so "nothing left in TMPDIR" alone would pass
+# while the files land in the system temp directory: the zip must be under TMPDIR.
+case "$(calls_matching "$D" ditto | head -1)" in *" $TMPDIR/"*) pass "the zip is made under TMPDIR" ;; *) fail "zip made elsewhere: $(calls_matching "$D" ditto | head -1)" ;; esac
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."
