@@ -134,6 +134,25 @@ expect_fail "wrapper loses its literal pin" "FAIL \(b2\)"
 P=$(fresh); perl -pi -e 's/^(DESIRED_VERSION="[0-9.]+")$/$1\n[ -n "\${TG_PIN:-}" ] && DESIRED_VERSION="\$TG_PIN"/' "$P/bin/che-telegram-all-mcp-wrapper.sh"
 expect_fail "conditional override after the literal pin" "FAIL \(b2\)"
 
+# --- (b3) the sha256 pin (#50) ---
+HEX=$(printf '%064d' 0 | tr 0 a)
+DV=$(sed -n 's/^DESIRED_VERSION="\(.*\)"$/\1/p' "$SRC_PLUGIN/bin/che-telegram-all-mcp-wrapper.sh")
+P=$(fresh); perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"$DV\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"$HEX\"/" "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_pass "a pin for DESIRED_VERSION passes (#50)"
+P=$(fresh); perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"0.0.1\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"$HEX\"/" "$P/bin/che-telegram-bot-mcp-wrapper.sh"
+expect_fail "a pin left from another version (#50)" "pins a sha256 for v0\.0\.1, but DESIRED_VERSION is"
+P=$(fresh); perl -pi -e "s/^SHA256_PIN=.*/SHA256_PIN=\"$HEX\"/" "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "a pin without its version (#50)" "sets only one of SHA256_PIN_VERSION and SHA256_PIN"
+P=$(fresh); perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"$DV\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"\U$HEX\E\"/" "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "an uppercase pin (#50)" "must assign SHA256_PIN exactly once, as a literal empty or 64"
+HEX63=${HEX:1}
+P=$(fresh); perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"$DV\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"$HEX63\"/" "$P/bin/che-telegram-all-mcp-wrapper.sh"
+expect_fail "a pin of 63 digits (#50)" "must assign SHA256_PIN exactly once"
+P=$(fresh); perl -pi -e 's/^(SHA256_PIN="[^"]*")$/$1\n[ -n "\${TG_SHA:-}" ] && SHA256_PIN="\$TG_SHA"/' "$P/bin/che-telegram-bot-mcp-wrapper.sh"
+expect_fail "a conditional override of the pin (#50)" "must assign SHA256_PIN exactly once.*found 2"
+P=$(fresh); perl -ni -e 'print unless /^SHA256_PIN_VERSION=/' "$P/bin/che-telegram-bot-mcp-wrapper.sh"
+expect_fail "the pin version line missing (#50)" "must assign SHA256_PIN_VERSION exactly once"
+
 # --- (c) hook quoting ---
 P=$(fresh); perl -pi -e 's#"\\"\$\{CLAUDE_PLUGIN_ROOT\}\\"/hooks#"\${CLAUDE_PLUGIN_ROOT}/hooks#' "$P/hooks/hooks.json"
 expect_fail "unquoted hook path" "FAIL \(c\)"

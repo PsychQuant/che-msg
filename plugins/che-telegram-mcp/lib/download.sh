@@ -21,6 +21,14 @@
 #   the partial file. Two wrappers started together both wrote
 #   ~/bin/<Binary>.tmp before, and curl truncates its output file when it
 #   opens it, so the second emptied what the first was still writing.
+# - It installs nothing it has not checked (PsychQuant/che-msg#50). The
+#   finished file's sha256 must equal the one the wrapper pins next to
+#   DESIRED_VERSION (SHA256_PIN, used only while SHA256_PIN_VERSION equals the
+#   version downloaded). Without such a pin, the sha256 digest GitHub's release
+#   API reports for the asset is used. That digest comes from the same place as
+#   the asset, so it catches a damaged, cut-off or wrongly resumed file but not
+#   a replaced asset; only the pin does that. With neither, nothing is
+#   downloaded. A file that does not match is removed.
 #
 # The functions keep to bash 3.2, the /bin/bash the wrappers run with.
 
@@ -43,8 +51,9 @@ read_version_record() {
     printf '%s' "$v"
 }
 
-# download_install <binary name> <version> <url> <install dir>: downloads and
-# installs that version, waiting for the result; returns download_fetch's status.
+# download_install <binary name> <version> <url> <install dir> <pin version>
+# <pin> <release API url>: downloads and installs that version, waiting for the
+# result; returns download_fetch's status.
 download_install() {
     /bin/bash "$DOWNLOAD_LIB" fetch "$@"
 }
@@ -57,9 +66,25 @@ download_failure() {
         10) echo "another session is downloading it" ;;
         20) echo "the transfer was interrupted; the next start resumes it" ;;
         21) echo "the server answered with an HTTP error, so the release or its asset may not exist" ;;
+        23) echo "GitHub could not be reached to look up its sha256; the next start tries again" ;;
+        30) echo "no sha256 is known to check it against: this plugin pins none for this version, and GitHub reported no digest for the asset" ;;
+        31) echo "the downloaded file does not match its sha256, so it was removed" ;;
         40) echo "the downloaded file could not be put in place in ~/bin" ;;
         *)  echo "the download stopped with status $1" ;;
     esac
+}
+
+# download_manual_hint <binary name> <version> <url> <pin version> <pin>: the
+# commands to install that version by hand, on stderr. The file goes to
+# ~/bin/<Binary>.new and is moved into place in one step, so a session running
+# the old binary keeps it; curl -C - continues a download that stopped.
+download_manual_hint() {
+    local name=$1 version=$2 url=$3 expected="the sha256 shown for $1 on the v$2 release page"
+    [[ "$4" == "$2" && -n "$5" ]] && expected=$5
+    echo "  To install it by hand (see Manual install in the che-telegram-mcp README):" >&2
+    echo "    curl -fL -C - $url -o ~/bin/$name.new" >&2
+    echo "    shasum -a 256 ~/bin/$name.new    # must print $expected" >&2
+    echo "    chmod +x ~/bin/$name.new && mv ~/bin/$name.new ~/bin/$name && echo $version > ~/bin/.$name.version" >&2
 }
 
 # ---------------------------------------------------------------- the lock
@@ -94,19 +119,48 @@ _dl_release_lock() {
     return 0
 }
 
+# ------------------------------------------------------------ the checksum
+
+# _dl_sha256 <file>: the file's sha256 in lowercase hex.
+_dl_sha256() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'; }
+
+# _dl_api_digest <release API url> <binary name>: the sha256 GitHub reports for
+# that asset of the release, or nothing (no such asset, or "digest": null).
+# Exit status: curl's, so a failed lookup is not mistaken for a missing digest.
+# The JSON is split at commas first, so a compact response reads as GitHub's
+# pretty-printed one; an asset's digest comes before its download URL.
+_dl_api_digest() {
+    local json
+    json=$(curl -fsSL --retry 2 --retry-all-errors --connect-timeout 30 --max-time 60 "$1") || return $?
+    printf '%s\n' "$json" | tr ',' '\n' | awk -v name="$2" '
+        /"digest"[[:space:]]*:/ {
+            d = $0
+            if (sub(/.*"digest"[[:space:]]*:[[:space:]]*"sha256:/, "", d)) { sub(/".*/, "", d); digest = d } else digest = ""
+            next
+        }
+        /"browser_download_url"[[:space:]]*:/ {
+            if (index($0, "/" name "\"") > 0) { print digest; exit }
+            digest = ""
+        }'
+}
+
 # ------------------------------------------------------------ the download
 
-# download_fetch <binary name> <version> <url> <install dir>: runs in the
-# process `download.sh fetch` starts. Exit status:
+# download_fetch <binary name> <version> <url> <install dir> <pin version>
+# <pin> <release API url>: runs in the process `download.sh fetch` starts.
+# Exit status:
 #   0   installed, or another process installed this version meanwhile
 #   10  another download holds the lock; nothing was done
 #   20  the transfer failed; the partial file is kept for the next attempt
 #   21  the server answered with an HTTP error; the partial file is removed
+#   23  the release API could not be reached; nothing was downloaded
+#   30  no sha256 to check the download against; nothing was downloaded
+#   31  the download does not match its sha256; it was removed
 #   40  the downloaded file could not be put in place
 download_fetch() {
-    local name=$1 version=$2 url=$3 dir=$4
+    local name=$1 version=$2 url=$3 dir=$4 pin_version=${5:-} pin=${6:-} api_url=${7:-}
     local binary="$dir/$name" record="$dir/.$name.version"
-    local part="$dir/.$name.$version.part" f rc
+    local part="$dir/.$name.$version.part" f rc expected checked_against
 
     mkdir -p "$dir" || return 40
     DL_LOCK="$dir/.$name.download.lock"
@@ -131,6 +185,34 @@ download_fetch() {
         [ "$f" = "$part" ] || rm -f "$f"
     done
 
+    # The sha256 the result must have, known before anything is downloaded.
+    if [[ -n "$pin" && "$pin_version" != "$version" ]]; then
+        echo "$name: the sha256 this plugin pins is for v$pin_version, not v$version, so it is not used; checking against GitHub's digest instead" >&2
+        pin=""
+    fi
+    if [[ -n "$pin" ]]; then
+        if ! [[ "$pin" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "$name: the sha256 this plugin pins for v$version is not 64 lowercase hex digits; nothing was downloaded" >&2
+            return 30
+        fi
+        expected=$pin
+        checked_against="the sha256 this plugin pins"
+    else
+        expected=$(_dl_api_digest "$api_url" "$name"); rc=$?
+        case "$rc" in
+            0) ;;
+            22) echo "$name: GitHub's release API answered $api_url with an HTTP error; nothing was downloaded" >&2
+                return 21 ;;
+            *)  echo "$name: GitHub's release API could not be reached (curl exit status $rc); nothing was downloaded" >&2
+                return 23 ;;
+        esac
+        if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "$name: v$version has no pinned sha256 and GitHub reported no digest for its asset; nothing was downloaded" >&2
+            return 30
+        fi
+        checked_against="the sha256 digest GitHub reports for the asset"
+    fi
+
     # In the background with wait, so that a TERM stops the transfer at once
     # instead of after curl finishes.
     curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 30 \
@@ -154,6 +236,13 @@ download_fetch() {
             return 20 ;;
     esac
 
+    f=$(_dl_sha256 "$part")
+    if [[ "$f" != "$expected" ]]; then
+        rm -f "$part"
+        echo "$name: the download of v$version has sha256 ${f:-unknown}, not $expected ($checked_against); it was removed and nothing was installed" >&2
+        return 31
+    fi
+
     if ! chmod +x "$part" || ! mv -f "$part" "$binary"; then
         echo "$name: the download could not be moved into place at $binary" >&2
         return 40
@@ -163,13 +252,13 @@ download_fetch() {
         echo "$name: v$version is installed, but its version record $record could not be written" >&2
         return 40
     fi
-    echo "$name: installed v$version" >&2
+    echo "$name: installed v$version (sha256 checked against $checked_against)" >&2
     return 0
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     case "${1:-}" in
         fetch) shift; download_fetch "$@"; exit $? ;;
-        *) echo "usage: download.sh fetch <binary name> <version> <url> <install dir>" >&2; exit 2 ;;
+        *) echo "usage: download.sh fetch <binary name> <version> <url> <install dir> <pin version> <pin> <release API url>" >&2; exit 2 ;;
     esac
 fi

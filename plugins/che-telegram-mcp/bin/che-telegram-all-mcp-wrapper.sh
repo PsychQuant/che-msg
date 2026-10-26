@@ -12,6 +12,7 @@
 # - The download (lib/download.sh, shared with the bot wrapper) retries,
 #   resumes a cut-off transfer from a version-named partial file, refuses an
 #   HTTP error, and lets one process at a time write (PsychQuant/che-msg#56).
+#   It installs nothing whose sha256 does not match (PsychQuant/che-msg#50).
 # - Source builds in $HOME/Developer/... are NEVER auto-replaced.
 
 BINARY_NAME="CheTelegramAllMCP"
@@ -20,6 +21,18 @@ INSTALL_DIR="$HOME/bin"
 INSTALLED_BINARY="$INSTALL_DIR/$BINARY_NAME"
 VERSION_FILE="$INSTALL_DIR/.${BINARY_NAME}.version"
 DESIRED_VERSION="0.9.0"
+# The sha256 of the v$DESIRED_VERSION release asset, and the version it was
+# taken from (PsychQuant/che-msg#50). A download is installed only if its
+# sha256 equals SHA256_PIN; the pin counts only while SHA256_PIN_VERSION equals
+# DESIRED_VERSION. A release sets both after its build (RELEASING.md); a version
+# bump clears them. Empty for 0.8.0, which was released before pins existed:
+# the download is then checked against the sha256 digest GitHub's release API
+# reports, which catches a damaged file but not a replaced asset.
+SHA256_PIN_VERSION=""
+SHA256_PIN=""
+# The pinned release only, never releases/latest: a pin could not match it.
+DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME"
+RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIRED_VERSION"
 
 # --- Startup errors Claude Code can show (#31, PsychQuant/che-msg#58) ---
 # When the wrapper exits before starting the server, Claude Code's MCP
@@ -128,52 +141,22 @@ elif [[ "$BINARY" == "$INSTALLED_BINARY" ]] && ! version_at_least "$INSTALLED_VE
 fi
 
 if $NEED_DOWNLOAD; then
-    echo "$BINARY_NAME: $REASON — downloading from $GITHUB_REPO..." >&2
-    mkdir -p "$INSTALL_DIR"
-
-    # Try pinned tag first, then fall back to latest release.
-    URL=""
-    for API_URL in \
-        "https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIRED_VERSION" \
-        "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
-    do
-        URL=$(curl -sL --max-time 30 "$API_URL" 2>/dev/null \
-            | grep '"browser_download_url"' | grep "/$BINARY_NAME\"" | head -1 \
-            | sed 's/.*"\(https[^"]*\)".*/\1/')
-        [[ -n "$URL" ]] && break
-    done
-
-    if [[ -z "$URL" ]]; then
+    echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO..." >&2
+    download_install "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$INSTALL_DIR" \
+        "$SHA256_PIN_VERSION" "$SHA256_PIN" "$RELEASE_API_URL"
+    DOWNLOAD_STATUS=$?
+    if [[ "$DOWNLOAD_STATUS" -eq 0 ]]; then
+        BINARY="$INSTALLED_BINARY"
+    else
+        DOWNLOAD_PROBLEM=$(download_failure "$DOWNLOAD_STATUS")
         if [[ -x "$INSTALLED_BINARY" ]]; then
-            echo "$BINARY_NAME: WARNING — no download URL found, keeping existing binary" >&2
+            echo "$BINARY_NAME: WARNING — v$DESIRED_VERSION not installed: $DOWNLOAD_PROBLEM. Keeping the existing binary." >&2
             BINARY="$INSTALLED_BINARY"
             KEPT_AFTER_FAILED_DOWNLOAD=true
-            DOWNLOAD_PROBLEM="no release asset was found"
         else
-            echo "$BINARY_NAME: ERROR — no release asset found at $GITHUB_REPO." >&2
-            echo "  Install manually: https://github.com/$GITHUB_REPO/releases" >&2
-            echo "  Or build from source:" >&2
-            echo "    git clone https://github.com/$GITHUB_REPO.git ~/Developer/che-msg" >&2
-            echo "    cd ~/Developer/che-msg/che-telegram-all-mcp && swift build -c release --product $BINARY_NAME" >&2
-            fail_startup "CheTelegramAllMCP is not installed and no release asset was found to download. Install it by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
-        fi
-    else
-        download_install "$BINARY_NAME" "$DESIRED_VERSION" "$URL" "$INSTALL_DIR"
-        DOWNLOAD_STATUS=$?
-        if [[ "$DOWNLOAD_STATUS" -eq 0 ]]; then
-            BINARY="$INSTALLED_BINARY"
-        else
-            DOWNLOAD_PROBLEM=$(download_failure "$DOWNLOAD_STATUS")
-            if [[ -x "$INSTALLED_BINARY" ]]; then
-                echo "$BINARY_NAME: WARNING — v$DESIRED_VERSION not installed: $DOWNLOAD_PROBLEM. Keeping the existing binary." >&2
-                BINARY="$INSTALLED_BINARY"
-                KEPT_AFTER_FAILED_DOWNLOAD=true
-            else
-                echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $DOWNLOAD_PROBLEM." >&2
-                echo "  To install it by hand (see Manual install in the che-telegram-mcp README):" >&2
-                echo "    curl -fL https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME -o ~/bin/$BINARY_NAME.tmp && chmod +x ~/bin/$BINARY_NAME.tmp && mv ~/bin/$BINARY_NAME.tmp ~/bin/$BINARY_NAME && echo $DESIRED_VERSION > ~/bin/.$BINARY_NAME.version" >&2
-                fail_startup "CheTelegramAllMCP v$DESIRED_VERSION could not be installed: $DOWNLOAD_PROBLEM. Reconnect with /mcp to try again, or install it by hand as the che-telegram-mcp README describes."
-            fi
+            echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $DOWNLOAD_PROBLEM." >&2
+            download_manual_hint "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$SHA256_PIN_VERSION" "$SHA256_PIN"
+            fail_startup "CheTelegramAllMCP v$DESIRED_VERSION could not be installed: $DOWNLOAD_PROBLEM. Reconnect with /mcp to try again, or install it by hand as the che-telegram-mcp README describes."
         fi
     fi
 fi

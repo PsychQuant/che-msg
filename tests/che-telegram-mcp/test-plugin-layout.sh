@@ -31,6 +31,11 @@
 #   (b2) every wrapper assigns DESIRED_VERSION exactly once, as a literal x.y.z.
 #        devtools reads the LAST assignment, so a later or conditional override
 #        makes the pin unreadable.
+#   (b3) every wrapper assigns SHA256_PIN_VERSION and SHA256_PIN exactly once
+#        each, as literals: both empty, or SHA256_PIN_VERSION equal to its
+#        DESIRED_VERSION and SHA256_PIN 64 lowercase hex digits
+#        (PsychQuant/che-msg#50). A pin left from the previous version would
+#        fail every install of the new one; a version bump has to clear it.
 #   (c)  every ${CLAUDE_PLUGIN_ROOT} in a hook command sits inside double quotes
 #   (d)  allowed-tools lists only this plugin's MCP tools (no Bash, Write, …),
 #        with the real prefix, each documented in the README under ITS server
@@ -307,6 +312,26 @@ for name, spec in servers.items():
     if len(assigns) != 1 or len(literal) != 1:
         bad("b2", f"{name}: {os.path.basename(path)} must assign DESIRED_VERSION exactly once, as a literal x.y.z "
                   f"(found {len(assigns)} assignment(s), {len(literal)} literal)")
+    # (b3) the sha256 pin belongs to DESIRED_VERSION, or there is none.
+    base = os.path.basename(path)
+    pins = {}
+    for var, form in (("SHA256_PIN_VERSION", r"(|[0-9]+\.[0-9]+\.[0-9]+)"), ("SHA256_PIN", r"(|[0-9a-f]{64})")):
+        found = [l for l in code if re.search(r"(^|[\s;&|(])" + var + "=", l)]
+        lit = [m.group(1) for m in (re.match(r'^' + var + r'="' + form + r'"$', l) for l in found) if m]
+        if len(found) != 1 or len(lit) != 1:
+            bad("b3", f"{name}: {base} must assign {var} exactly once, as a literal "
+                      + ("empty or x.y.z" if var == "SHA256_PIN_VERSION" else "empty or 64 lowercase hex digits")
+                      + f" (found {len(found)} assignment(s), {len(lit)} such literal)")
+        else:
+            pins[var] = lit[0]
+    if len(pins) == 2 and len(literal) == 1:
+        desired = re.match(r'^\s*DESIRED_VERSION="([^"]*)"', literal[0]).group(1)
+        pv, pin = pins["SHA256_PIN_VERSION"], pins["SHA256_PIN"]
+        if bool(pv) != bool(pin):
+            bad("b3", f"{name}: {base} sets only one of SHA256_PIN_VERSION and SHA256_PIN")
+        elif pv and pv != desired:
+            bad("b3", f"{name}: {base} pins a sha256 for v{pv}, but DESIRED_VERSION is {desired} "
+                      f"(clear both when bumping DESIRED_VERSION; RELEASING.md sets them after the build)")
 
 # ---------- (c) hook quoting ----------
 def inside_double_quotes(s, i):
@@ -596,6 +621,7 @@ report a  "only reviewed components: bin/ wrappers, hooks/, lib/, skills/, metad
 report a2 "every file a wrapper sources from lib/ exists"
 report b  ".mcp.json commands are \${CLAUDE_PLUGIN_ROOT}/bin/*-wrapper.sh and executable"
 report b2 "every wrapper assigns DESIRED_VERSION exactly once, as a literal"
+report b3 "every wrapper pins a sha256 for its DESIRED_VERSION, or none"
 report c  "hook commands quote \${CLAUDE_PLUGIN_ROOT}"
 report fm "every skill has frontmatter Claude Code reads the same way"
 report d  "allowed-tools list only this plugin's documented MCP tools"
