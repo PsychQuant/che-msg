@@ -39,7 +39,10 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 | `plugins/che-telegram-mcp` | Claude Code plugin：包上面兩個 MCP server（wrapper 從本 repo 的 release 下載 binary） | bash wrapper + skills |
 | `plugins/che-archive-lines` | Claude Code plugin：LINE macOS「儲存聊天」自動化 | bash + cliclick |
 | `.claude-plugin/marketplace.json` | marketplace `che-msg`，用相對路徑列出上面兩個 plugin | — |
-| `tests/` | 兩個 plugin 的結構、wrapper、設定檔測試；`tests/lib/` 是共用 helper | bash + python3 |
+| `tests/` | 兩個 plugin 的結構、wrapper、設定檔測試（`tests/che-telegram-mcp/`、`tests/che-archive-lines/`），`tests/release/` 是發布腳本的測試；`tests/lib/` 是共用 helper | bash + python3 |
+| `scripts/release/` | 發布腳本：版號一致性檢查、universal build、簽章與 notarize、打包（#40） | bash |
+| `Makefile` | 發布入口：`check-versions`、`check-pins`、`sign-check`、`release-signed`、`test-release` | make |
+| `RELEASING.md` | 發布 binary 的步驟（唯一的 source of truth） | — |
 
 ## 架構
 
@@ -67,7 +70,8 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 - 安裝：`claude plugin marketplace add PsychQuant/che-msg`，再 `claude plugin install <plugin>@che-msg`
 - 改版：`plugins/<name>/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json` 的 `version` 一起改，CHANGELOG 同步
-- binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（目前 0.8.0）。發新 binary 後要 bump 這個 pin，plugin 版號也跟著 bump
+- binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（目前 0.8.0）。`scripts/release/check-versions.sh` 從這一行讀 pin，所以這句的寫法要保留，也不要在別處再寫一次同樣的版號句型
+- 發新 binary 的順序照 `RELEASING.md`：先在 branch 上把所有 pin（這一行、兩支 wrapper、plugin 版號等）一起 bump，`make check-versions` 在 build 前要求它們一致；GitHub release 建好之後才合進 `main`。這樣 `main` 上的 pin 永遠指向已存在的 release
 - 結構測試的 check (j) 把關使用者會被導向哪個 marketplace，規則在 `tests/lib/install_refs.py`。它防的是不小心留下的舊引用，不防蓄意規避（能改 README 的人也能改這支測試）：
   - plugin 目錄內除最上層 CHANGELOG.md 以外的所有檔案、根 README.md、`.claude-plugin/marketplace.json` 裡，舊 marketplace 名稱只能出現在三種地方：uninstall 那一行的 install id、舊 repo 某個 issue／PR 的連結（`/issues/<n>`、`/pull/<n>`，不接受 `Owner/repo#N` 簡寫）、一般字詞。其他形式（`owner/舊名`，例如 `GITHUB_REPO`、`marketplace add` 的參數、plugin 的 `source`，以及任何指進舊 repo 的連結）都算錯
   - plugin README 的 `<plugin>@X` 都要是 `@che-msg`（uninstall 那行除外），而且至少要有一次 `install <plugin>@che-msg` 和一次 `marketplace add …/che-msg`。這兩項是「至少出現一次」，不擋另外再寫一行指向第三個 marketplace 的 `marketplace add`
@@ -110,6 +114,16 @@ for t in tests/che-telegram-mcp/*.sh tests/che-archive-lines/*.sh; do bash "$t" 
 claude plugin validate . && claude plugin validate plugins/che-telegram-mcp && claude plugin validate plugins/che-archive-lines
 bash tests/frontmatter-subset-fuzz/run.sh   # 另需 bun：比對 PyYAML 與 Bun.YAML 對 frontmatter 的讀法
 ```
+
+發布腳本的測試（離線，全部用假的 `swift`／`codesign`／`xcrun`／`security`，不會簽章也不會上傳）：
+
+```bash
+make test-release            # 等同 for t in tests/release/*.sh; do bash "$t"; done
+```
+
+## 發布
+
+步驟在 `RELEASING.md`。入口是 `make check-versions`（版號一致、tag 還沒用過）→ 可選的 `make sign-check`（簽章但不上傳）→ `make release-signed`（簽章、notarize、打包，產物在 `.build/dist/vX/`）。上傳 GitHub release、bump plugin 與合進 `main` 是之後的步驟，見 `RELEASING.md`。
 
 ## all-mcp 認證流程（一次性）
 
