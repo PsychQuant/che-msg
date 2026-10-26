@@ -14,6 +14,10 @@
 # otherwise), and HOME points at a scratch directory so the real config under
 # ~/.config/che-archive-lines is never read or written.
 #
+# calibrate refuses to run unless stdin is a terminal (PsychQuant/che-msg#52),
+# so its cases run under a pseudo-terminal from tests/lib/pty_run.py (run_pty),
+# typing the lines the case gives and then end of input.
+#
 # Usage:
 #   bash tests/che-archive-lines/test-config-validation.sh
 
@@ -37,11 +41,13 @@ exit 0
 EOF
 # STUB_OSA_FAIL=1 makes the window query fail the way real osascript does when
 # LINE is not running or has no window (an AppleScript error, exit status 1).
-cat > "$STUB/osascript" <<'EOF'
+# Every call is logged, so a case can check that LINE was never activated.
+cat > "$STUB/osascript" <<EOF
 #!/bin/bash
-case "$*" in *"System Events"*)
-    if [ -n "${STUB_OSA_FAIL:-}" ]; then echo "execution error: Can't get window 1 of process \"LINE\". (-1719)" >&2; exit 1; fi
-    echo "${STUB_WINDOW:-100 100 800 600}" ;;
+echo "\$*" >> "$SCRATCH/osascript.log"
+case "\$*" in *"System Events"*)
+    if [ -n "\${STUB_OSA_FAIL:-}" ]; then echo "execution error: Can't get window 1 of process \\"LINE\\". (-1719)" >&2; exit 1; fi
+    echo "\${STUB_WINDOW:-100 100 800 600}" ;;
 esac
 exit 0
 EOF
@@ -53,7 +59,7 @@ CONFIG="$SCRATCH/home/.config/che-archive-lines/config.json"
 MARK="$SCRATCH/PWNED"
 
 reset() {
-    rm -rf "$SCRATCH/home" "$SCRATCH/clicks.log" "$MARK"
+    rm -rf "$SCRATCH/home" "$SCRATCH/clicks.log" "$SCRATCH/osascript.log" "$MARK"
     mkdir -p "$SCRATCH/home"
 }
 write_config() {  # $1 offset_x, $2 offset_y, $3 menu_offset_y line (empty = omit)
@@ -71,6 +77,12 @@ write_config() {  # $1 offset_x, $2 offset_y, $3 menu_offset_y line (empty = omi
 run() {  # $@ = script arguments; stdin passes through. Runs the script by its
          # shebang (/bin/bash, 3.2 on macOS), as the skill does — not PATH's bash.
     HOME="$SCRATCH/home" PATH="$STUB:$PATH" "$TARGET" "$@" > "$SCRATCH/out.log" 2>&1
+}
+PTY_RUN="$(cd "$SCRIPT_DIR/../lib" && pwd)/pty_run.py"
+run_pty() {  # $1 = what the user types (empty, or lines ending in a newline), then
+             # script arguments. stdin, stdout and stderr are a pseudo-terminal.
+    local typed="$1"; shift
+    HOME="$SCRATCH/home" PATH="$STUB:$PATH" python3 "$PTY_RUN" "$SCRATCH/out.log" "$typed" "$TARGET" "$@"
 }
 ok()   { echo "  ✓ $1"; PASSED=$((PASSED + 1)); }
 bad()  { echo "  ✗ $1"; sed 's/^/      /' "$SCRATCH/out.log"; FAILED=$((FAILED + 1)); }
@@ -99,6 +111,13 @@ SHEBANG_BASH=$(head -1 "$TARGET" | sed 's/^#! *//')
 if [ -e "$MARK" ]; then rm -f "$MARK"
 else echo "✗ positive control: the payload does not run in this environment ($MARK) — payload cases would be vacuous"; exit 1; fi
 [ -x "$TARGET" ] || { echo "✗ $TARGET is not executable"; exit 1; }
+# Positive control for run_pty: the command must see a terminal on stdin and
+# read the typed lines in order, then end of input. Otherwise the calibrate
+# cases below would stop at its terminal check and test nothing they name.
+python3 "$PTY_RUN" "$SCRATCH/out.log" $'\n250\n' "$SHEBANG_BASH" -c \
+    '[ -t 0 ] || exit 3; read -r a || exit 4; read -r b || exit 5; [ -z "$a" ] && [ "$b" = 250 ] || exit 6; read -r c && exit 7; exit 0'
+rc=$?
+[ "$rc" -eq 0 ] || { echo "✗ positive control: run_pty does not give a terminal that delivers the typed lines (exit $rc)"; cat "$SCRATCH/out.log" 2>/dev/null; exit 1; }
 
 echo "test-config-validation.sh (#149)"
 
@@ -155,7 +174,7 @@ for cmd in save test; do
     else bad "no LINE window ($cmd) (exit $rc, clicks: $(clicks | tr '\n' ' '))"; fi
 done
 reset
-export STUB_OSA_FAIL=1; printf '\n\n' | run calibrate; rc=$?; unset STUB_OSA_FAIL
+export STUB_OSA_FAIL=1; run_pty $'\n\n' calibrate; rc=$?; unset STUB_OSA_FAIL
 if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && grep -q '無法取得 LINE 視窗資訊' "$SCRATCH/out.log"; then ok "no LINE window (calibrate): reports it, writes nothing"
 else bad "no LINE window (calibrate) (exit $rc)"; fi
 
@@ -168,29 +187,34 @@ if grep -q '尚未校準' "$SCRATCH/out.log"; then ok "missing config: \"not cal
 else bad "missing config message"; fi
 
 # ---- write side: calibrate stores only integers ----
+# Each rejection also checks its own message, so a case cannot pass by stopping
+# earlier for another reason (such as the terminal check).
 reset
-printf '\n%s\n' "$PAYLOAD" | run calibrate; rc=$?
-if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && [ ! -e "$MARK" ]; then ok "calibrate refuses a non-integer menu offset and writes nothing"
+run_pty $'\n'"$PAYLOAD"$'\n' calibrate; rc=$?
+if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && [ ! -e "$MARK" ] && grep -q '請輸入整數像素值' "$SCRATCH/out.log"; then ok "calibrate refuses a non-integer menu offset and writes nothing"
 else bad "calibrate payload (exit $rc, config written: $([ -e "$CONFIG" ] && echo yes || echo no))"; fi
 reset
 export STUB_POS="500,$PAYLOAD"
-printf '\n250\n' | run calibrate; rc=$?
+run_pty $'\n250\n' calibrate; rc=$?
 unset STUB_POS
-if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && [ ! -e "$MARK" ]; then ok "calibrate refuses a cursor y that is not an integer"
+if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && [ ! -e "$MARK" ] && grep -q '無法取得滑鼠位置' "$SCRATCH/out.log"; then ok "calibrate refuses a cursor y that is not an integer"
 else bad "calibrate cursor-y payload (exit $rc)"; fi
 reset
 export STUB_POS="$PAYLOAD,300"
-printf '\n250\n' | run calibrate; rc=$?
+run_pty $'\n250\n' calibrate; rc=$?
 unset STUB_POS
-if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && [ ! -e "$MARK" ]; then ok "calibrate refuses a cursor position that is not an integer"
+if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && [ ! -e "$MARK" ] && grep -q '無法取得滑鼠位置' "$SCRATCH/out.log"; then ok "calibrate refuses a cursor position that is not an integer"
 else bad "calibrate cursor payload (exit $rc, config written: $([ -e "$CONFIG" ] && echo yes || echo no), payload ran: $([ -e "$MARK" ] && echo yes || echo no))"; fi
 reset
-printf '\n250\n' | run calibrate; rc=$?
-if [ "$rc" -eq 0 ] && grep -q '"menu_offset_y": 250,' "$CONFIG" && grep -q '"offset_x": -400,' "$CONFIG" && grep -q '"offset_y": 200,' "$CONFIG"
+run_pty $'\n250\n' calibrate; rc=$?
+# The activate check is also the positive control for the osascript log, which
+# the terminal cases below expect to stay empty.
+if [ "$rc" -eq 0 ] && grep -q '"menu_offset_y": 250,' "$CONFIG" && grep -q '"offset_x": -400,' "$CONFIG" && grep -q '"offset_y": 200,' "$CONFIG" \
+    && grep -q 'tell application "LINE" to activate' "$SCRATCH/osascript.log"
 then ok "calibrate stores the computed offsets and a typed menu offset"
 else bad "calibrate valid (exit $rc): $(tr '\n' ' ' < "$CONFIG" 2>/dev/null)"; fi
 reset
-printf '\n\n' | run calibrate; rc=$?
+run_pty $'\n\n' calibrate; rc=$?
 if [ "$rc" -eq 0 ] && grep -q '"menu_offset_y": 240,' "$CONFIG"; then ok "calibrate: an empty menu offset stores the default 240"
 else bad "calibrate empty (exit $rc): $(tr '\n' ' ' < "$CONFIG" 2>/dev/null)"; fi
 
