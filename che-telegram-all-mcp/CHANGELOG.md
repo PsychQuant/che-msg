@@ -340,7 +340,7 @@ Not released on its own: there is no `v0.3.0` tag or GitHub Release. These chang
 
 ## [0.2.0] - 2026-02-10
 
-Not released on its own: there is no `v0.2.0` tag or GitHub Release. These changes first shipped in `v0.4.1` (2026-04-16).
+Released as `v0.2.0` (2026-02-10) in the earlier repository [PsychQuant/che-telegram-all-mcp](https://github.com/PsychQuant/che-telegram-all-mcp/releases/tag/v0.2.0), before this package moved into che-msg; this repository has no `v0.2.0` tag or GitHub Release.
 
 ### Added
 - Auto-authentication via environment variables (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_2FA_PASSWORD`)
@@ -352,7 +352,7 @@ Not released on its own: there is no `v0.2.0` tag or GitHub Release. These chang
 
 ## [0.1.0] - 2026-02-08
 
-Not released on its own: there is no `v0.1.0` tag or GitHub Release. These changes first shipped in `v0.4.1` (2026-04-16).
+Released as `v0.1.0` (2026-02-08) in the earlier repository [PsychQuant/che-telegram-all-mcp](https://github.com/PsychQuant/che-telegram-all-mcp/releases/tag/v0.1.0), before this package moved into che-msg; this repository has no `v0.1.0` tag or GitHub Release.
 
 ### Added
 - Initial release with TDLib integration
