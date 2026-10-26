@@ -517,8 +517,11 @@ P=$(fresh); perl -pi -e 's{^(\| `chats` .*)$}{$1\n| `ghost` | `auth_status` | â€
 expect_fail "the table has a row for a skill that does not exist (#86)" "ghost"
 P=$(fresh); perl -ni -e 'print unless /^\| `chats` \|/' "$P/README.md"
 expect_fail "the table has no row for a skill that pre-approves tools (#86)" "no row for chats"
-P=$(fresh); perl -0pi -e 's{(allowed-tools:(\r?)\n(?:  - .*\n)*)}{$1  - mcp__plugin_che-telegram-mcp_telegram-all__auth_run$2\n}' "$P/skills/auth/SKILL.md"
-expect_fail "only the auth skill gains auth_run, the table is unchanged (#48's half edit, #86)" "auth_run"
+# #48 put auth_run in both places; each half of that edit alone must fail.
+P=$(fresh); perl -pi -e 's{^\| `auth` \| `auth_status`, `auth_run`, }{| `auth` | `auth_status`, }' "$P/README.md"
+expect_fail "the auth skill pre-approves auth_run, its table row does not (#48's half edit, #86)" "auth_run"
+P=$(fresh); perl -ni -e 'print unless /^  - mcp__plugin_che-telegram-mcp_telegram-all__auth_run\r?$/' "$P/skills/auth/SKILL.md"
+expect_fail "the table row lists auth_run, the auth skill does not pre-approve it (#48's half edit, #86)" "auth_run"
 P=$(fresh); perl -pi -e 's{^\| Skill \| Pre-approved \| Not pre-approved \|}{| Skill | Allowed | Not allowed |}' "$P/README.md"
 expect_fail "the table's header is rewritten, so the table cannot be found (#86)" "FAIL \(l\)"
 P=$(fresh); perl -pi -e 's{^\| `search` \| `auth_status`, `search_chats`, `search_messages`, `get_chat_history` \|}{| `search` | `get_chat_history`, `search_messages`, `auth_status`, `search_chats` |}' "$P/README.md"

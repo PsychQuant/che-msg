@@ -47,7 +47,7 @@ From che-telegram-all-mcp 0.9.0, the server reads the phone number and the 2FA p
 
 What to expect once the items are stored:
 
-- The `/che-telegram-mcp:auth` skill still walks through the older step-by-step login and asks for the phone number and the 2FA password ([#48](https://github.com/PsychQuant/che-msg/issues/48)). With 0.9.0 and both items stored, ask Claude to run `auth_run` without arguments instead; the login code is then the only value you type.
+- The `/che-telegram-mcp:auth` skill logs in with `auth_run` ([#48](https://github.com/PsychQuant/che-msg/issues/48)): with 0.9.0 and both items stored, the login code is the only value you type. Without them, or with an earlier binary, Claude asks you for the phone number and the 2FA password, and a password typed there stays in the conversation transcript.
 - After the login code is sent, `auth_run` can take up to 15 seconds to answer while the stored 2FA password is being sent, so that its answer is the state after the password, not a request for it.
 - With the phone number stored, while the account is logged out, the first tool call that opens TDLib sends the stored phone number, and Telegram sends you a login code. That is the same as having `TELEGRAM_PHONE` in the environment. The `telegram-all` CLI never reads the Keychain ([#96](https://github.com/PsychQuant/che-msg/issues/96)).
 - If the Keychain is locked, macOS may ask you to unlock it. The server waits up to 10 seconds for the value, so that first call can be slow; after that it carries on without the value.
@@ -170,13 +170,13 @@ Each skill's `allowed-tools` lets Claude call the listed tools **without a permi
 
 | Skill | Pre-approved | Not pre-approved |
 |-------|--------------|------------------|
-| `auth` | `auth_status`, `auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password` | — |
+| `auth` | `auth_status`, `auth_run`, `auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password` | — |
 | `chats` | `auth_status`, `get_chats` | — |
 | `search` | `auth_status`, `search_chats`, `search_messages`, `get_chat_history` | — |
 | `send` | `auth_status`, `search_chats` | **`send_message`** — a sent message cannot be recalled, so it is left out on purpose |
 | `archive-telegram` | `auth_status` | **`archive_chat_to_markdown`**, **`download_message_media`** — they write files, so they keep their prompt |
 
-For `auth` this mostly covers the first turn: once Claude asks for your phone number or the SMS code and you reply, the grant has already cleared, so `auth_send_phone` / `auth_send_code` / `auth_send_password` go through your normal permission settings unless you re-invoke `/che-telegram-mcp:auth` with the value.
+For `auth` this mostly covers the first turn: once Claude asks for the SMS code (or, without the Keychain items, the phone number or the 2FA password) and you reply, the grant has already cleared, so the `auth_run` call that sends it, and any step tool, goes through your normal permission settings unless you re-invoke `/che-telegram-mcp:auth` with the value.
 
 Leaving `send_message` out means it goes through your normal [permission settings](https://code.claude.com/docs/en/permissions). If you want to be asked before Claude sends or changes anything, whatever mode you are in, add ask rules to `permissions.ask` in your settings: Claude Code never auto-approves a tool matched by an explicit ask rule, not even in auto or `bypassPermissions` mode, and in `dontAsk` mode it refuses the call instead of asking. Hooks can still approve such a call without asking you: for example a `PermissionRequest` hook — in your settings, in a plugin's `hooks.json`, or in a skill's or agent's frontmatter — can answer the prompt, and an installed mod that handles `tool.check` can approve the call (permissions docs, *Extend permissions with hooks*; permission-modes docs).
 
