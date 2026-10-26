@@ -72,14 +72,14 @@ public enum ArchiveDayFile {
     /// The media directory of a message, relative to its day file.
     public static func mediaLink(_ messageId: Int64) -> String { "media/\(messageId)/" }
 
-    /// The body line(s) for a message of `type`: its text; for a type that carries a file,
-    /// `[type](media/<id>/)`; otherwise `[type]` — each followed by the caption when there is
-    /// one. The link does not depend on whether the file has been downloaded.
-    public static func body(type: String, text: String?, caption: String?, messageId: Int64) -> String {
-        if type == "text" { return text ?? "" }
+    /// The body line(s) of `message` (its JSON object): its text; for a type that carries a file,
+    /// `[type](media/<id>/)`; otherwise `[type]` — each followed by the message's detail, as
+    /// `MessageBody` defines it (a caption, a poll's question and options, a sticker's emoji, a
+    /// location's coordinates; #82). The link does not depend on whether the file has been downloaded.
+    public static func body(of message: [String: Any], messageId: Int64) -> String {
+        let type = (message["type"] as? String) ?? "other"
         let label = fileTypes.contains(type) ? "[\(type)](\(mediaLink(messageId)))" : "[\(type)]"
-        if let caption, !caption.isEmpty { return "\(label) \(caption)" }
-        return label
+        return MessageBody.render(message, placeholder: label)
     }
 
     /// The anchor line that starts each message block.

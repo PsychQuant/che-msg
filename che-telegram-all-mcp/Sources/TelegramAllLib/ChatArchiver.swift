@@ -265,10 +265,8 @@ public struct ChatArchiver {
             // message, and that run never advances the bookmark, so a later TDLib run adds it.
             guard let date = messageDate(message) else { result.undatedMessagesSkipped += 1; continue }
             let type = (message["type"] as? String) ?? "other"
-            let body = ArchiveDayFile.body(type: type, text: message["text"] as? String,
-                                           caption: message["caption"] as? String, messageId: id)
             let archived = ArchiveMessage(id: id, date: date, sender: senderLabel(message, names, request.selfLabel),
-                                          body: body)
+                                          body: ArchiveDayFile.body(of: message, messageId: id))
             let day = ArchiveDayFile.dayKey(for: date, offsetSeconds: offset)
             byDay[day, default: []].append(archived)
             media[id] = ArchiveDayFile.fileTypes.contains(type)

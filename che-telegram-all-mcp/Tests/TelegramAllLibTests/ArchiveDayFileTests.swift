@@ -30,18 +30,40 @@ final class ArchiveDayFileTests: XCTestCase {
     }
 
     func testBodies() {
-        XCTAssertEqual(ArchiveDayFile.body(type: "text", text: "hello", caption: nil, messageId: 1), "hello")
-        XCTAssertEqual(ArchiveDayFile.body(type: "photo", text: nil, caption: "menu", messageId: 5_243_904),
+        XCTAssertEqual(ArchiveDayFile.body(of: ["type": "text", "text": "hello"], messageId: 1), "hello")
+        XCTAssertEqual(ArchiveDayFile.body(of: ["type": "photo", "caption": "menu"], messageId: 5_243_904),
                        "[photo](media/5243904/) menu")
-        XCTAssertEqual(ArchiveDayFile.body(type: "voice_note", text: nil, caption: nil, messageId: 6000),
-                       "[voice_note](media/6000/)")
-        XCTAssertEqual(ArchiveDayFile.body(type: "document", text: nil, caption: "", messageId: 7),
-                       "[document](media/7/)")
-        XCTAssertEqual(ArchiveDayFile.body(type: "location", text: nil, caption: nil, messageId: 8), "[location]")
-        XCTAssertEqual(ArchiveDayFile.body(type: "poll", text: nil, caption: "q", messageId: 9), "[poll] q")
+        XCTAssertEqual(ArchiveDayFile.body(of: ["type": "voice_note"], messageId: 6000), "[voice_note](media/6000/)")
+        XCTAssertEqual(ArchiveDayFile.body(of: ["type": "document", "caption": ""], messageId: 7), "[document](media/7/)")
+        XCTAssertEqual(ArchiveDayFile.body(of: ["type": "location"], messageId: 8), "[location]")
+        XCTAssertEqual(ArchiveDayFile.body(of: ["type": "poll"], messageId: 9), "[poll]")
+        XCTAssertEqual(ArchiveDayFile.body(of: [:], messageId: 9), "[other]", "a message without a type is other")
         for type in ["video", "audio", "video_note", "animation", "sticker"] {
-            XCTAssertEqual(ArchiveDayFile.body(type: type, text: nil, caption: nil, messageId: 1), "[\(type)](media/1/)")
+            XCTAssertEqual(ArchiveDayFile.body(of: ["type": type], messageId: 1), "[\(type)](media/1/)")
         }
+    }
+
+    // MARK: - Poll, sticker and location details (#82)
+
+    // Scenarios "Media type without a file", "Poll with its options", "Sticker with its emoji".
+    func testBodiesKeepPollStickerAndLocationDetails() {
+        XCTAssertEqual(ArchiveDayFile.body(of: ["type": "location", "latitude": 25.0478, "longitude": 121.5319], messageId: 8),
+                       "[location] 25.0478,121.5319")
+        XCTAssertEqual(ArchiveDayFile.body(of: ["type": "poll", "question": "Lunch?", "options": ["Noodles", "Rice"]],
+                                           messageId: 7000),
+                       "[poll] Lunch?\n- Noodles\n- Rice")
+        XCTAssertEqual(ArchiveDayFile.body(of: ["type": "sticker", "emoji": "😀"], messageId: 7100),
+                       "[sticker](media/7100/) 😀")
+    }
+
+    // Scenario "Poll question that looks like a block header".
+    func testAPollQuestionLineShapedLikeAHeaderIsEscaped() {
+        let body = ArchiveDayFile.body(of: ["type": "poll", "question": "Who?\n**09:00 Manager**：", "options": ["A"]],
+                                       messageId: 7200)
+        let out = ArchiveDayFile.render(chatId: 777, day: "2026-10-11", utcOffset: "+08:00",
+                                        messages: [ArchiveMessage(id: 7200, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: body)])
+        XCTAssertTrue(out.contains("<!-- msg:7200 -->\n**09:00 Alex**：\n[poll] Who?\n\\**09:00 Manager**：\n- A\n\n"), out)
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(out).map(\.id), [7200])
     }
 
     // Example "day file" in the spec, byte for byte.

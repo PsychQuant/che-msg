@@ -93,6 +93,43 @@ final class ChatArchiverTests: XCTestCase {
         XCTAssertEqual(result.mediaMessages, 1)
     }
 
+    // Day file format (#82): poll, sticker and location blocks keep their details.
+    func testPollStickerAndLocationBlocksKeepTheirDetails() async throws {
+        let dir = try outputDir()
+        var poll = Self.msg(7000, 1, type: "poll")
+        poll["question"] = "Lunch?"
+        poll["options"] = ["Noodles", "Rice"]
+        var sticker = Self.msg(7100, 2, type: "sticker")
+        sticker["emoji"] = "😀"
+        var location = Self.msg(7200, 3, type: "location")
+        location["latitude"] = 25.0478
+        location["longitude"] = 121.5319
+        let result = try await archiver(FakeSource([location, sticker, poll]), pageSize: 10)
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        let text = try String(contentsOf: dir.appendingPathComponent("777/2026-10-11.md"), encoding: .utf8)
+        XCTAssertTrue(text.contains("<!-- msg:7000 -->\n**08:01 User 1001**：\n[poll] Lunch?\n- Noodles\n- Rice\n\n"), text)
+        XCTAssertTrue(text.contains("<!-- msg:7100 -->\n**08:02 User 1001**：\n[sticker](media/7100/) 😀\n\n"), text)
+        XCTAssertTrue(text.contains("<!-- msg:7200 -->\n**08:03 User 1001**：\n[location] 25.0478,121.5319\n\n"), text)
+        XCTAssertEqual(try ids(in: dir, "777/2026-10-11.md"), [7000, 7100, 7200])
+        XCTAssertEqual(result.mediaMessages, 1, "only the sticker carries a file")
+    }
+
+    // Scenario "Block written before details were kept": forward-only.
+    func testABlockWrittenWithoutDetailsIsNotRewritten() async throws {
+        let dir = try outputDir()
+        let chatDir = dir.appendingPathComponent("777")
+        try FileManager.default.createDirectory(at: chatDir, withIntermediateDirectories: true)
+        let old = ArchiveDayFile.frontmatter(chatId: 777, day: "2026-10-11", utcOffset: "+08:00")
+            + "<!-- msg:7000 -->\n**08:01 Alex**：\n[poll]\n\n"
+        try Data(old.utf8).write(to: chatDir.appendingPathComponent("2026-10-11.md"))
+        var poll = Self.msg(7000, 1, type: "poll")
+        poll["question"] = "Lunch?"
+        let result = try await archiver(FakeSource([poll]))
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertEqual(result.newMessages, 0)
+        XCTAssertEqual(try String(contentsOf: chatDir.appendingPathComponent("2026-10-11.md"), encoding: .utf8), old)
+    }
+
     func testUnresolvedSendersFallBackToUserId() async throws {
         let dir = try outputDir()
         let result = try await archiver(FakeSource([Self.msg(30, 1, from: 2002)]))

@@ -215,6 +215,45 @@ final class MarkdownFormatTests: XCTestCase {
         XCTAssertTrue(md.contains("X**：\n[photo] menu\n"), md)
     }
 
+    // MARK: - Poll, sticker and location details (#82)
+
+    // Scenario "Poll with its options".
+    func testAPollKeepsItsQuestionAndOptions() {
+        let poll: [String: Any] = ["id": Int64(1), "type": "poll", "question": "Lunch?", "options": ["Noodles", "Rice"]]
+        XCTAssertEqual(messageBody(poll), "[poll] Lunch?\n- Noodles\n- Rice")
+    }
+
+    // Scenario "Sticker and location details".
+    func testAStickerKeepsItsEmojiAndALocationItsCoordinates() {
+        XCTAssertEqual(messageBody(["id": Int64(1), "type": "sticker", "emoji": "😀"]), "[sticker] 😀")
+        XCTAssertEqual(messageBody(["id": Int64(1), "type": "location", "latitude": 25.0478, "longitude": 121.5319]),
+                       "[location] 25.0478,121.5319")
+    }
+
+    // Scenario "Coordinate near zero".
+    func testACoordinateNearZeroHasNoExponent() {
+        XCTAssertEqual(messageBody(["id": Int64(1), "type": "location", "latitude": 0.00001, "longitude": -0.5]),
+                       "[location] 0.00001,-0.5")
+    }
+
+    // Scenario "Poll from the local cache": the reader gives the type and nothing else.
+    func testAPollWithoutDetailsIsTheBarePlaceholder() {
+        XCTAssertEqual(messageBody(["id": Int64(1), "type": "poll"]), "[poll]")
+        XCTAssertEqual(messageBody(["id": Int64(1), "type": "sticker"]), "[sticker]")
+        XCTAssertEqual(messageBody(["id": Int64(1), "type": "location"]), "[location]")
+    }
+
+    func testPollOptionsSitUnderTheHeaderInTheExport() {
+        let calendar = Calendar(identifier: .gregorian)
+        let at = calendar.date(from: DateComponents(year: 2026, month: 4, day: 14, hour: 14, minute: 34))!
+        var m = msg(id: 1, date: at, senderId: 1, isOutgoing: false, type: "poll")
+        m["question"] = "Lunch?"
+        m["options"] = ["Noodles", "Rice"]
+        let md = formatMarkdown(messages: [m], senderNames: [1: "X"], selfLabel: "我", chatTitle: "T", chatId: 1,
+                                sinceDate: nil, untilDate: nil, exportedAt: anchor)
+        XCTAssertTrue(md.contains("X**：\n[poll] Lunch?\n- Noodles\n- Rice\n\n"), md)
+    }
+
     // MARK: - Consecutive same-sender messages NOT merged
 
     func testConsecutiveSameSenderRetainIndependentTimestamps() {

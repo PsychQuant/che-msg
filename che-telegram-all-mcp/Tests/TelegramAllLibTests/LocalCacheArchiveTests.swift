@@ -72,6 +72,17 @@ final class LocalCacheArchiveTests: XCTestCase {
         XCTAssertTrue(text.contains("**08:03 User 1001**："), text)
     }
 
+    // Scenario "Poll archived from the local cache" (#82): the reader gives a poll's type only.
+    func testAPollFromTheLocalCacheIsTheBareLabel() async throws {
+        let reader = StrictReader([local(30, 3, type: "poll"), local(20, 2, type: "location")])
+        let dir = outputDir()
+        _ = try await ChatArchiver.localCache(LocalCacheHistorySource(reader: reader))
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        let text = try String(contentsOf: dir.appendingPathComponent("777/2026-10-11.md"), encoding: .utf8)
+        XCTAssertTrue(text.contains("**08:03 User 1001**：\n[poll]\n\n"), text)
+        XCTAssertTrue(text.contains("**08:02 User 1001**：\n[location]\n\n"), text)
+    }
+
     // Scenario "Cache record without a date" (#75): not written (its day is unknown), but counted.
     func testUndatedCacheRecordIsCountedAndNotWritten() async throws {
         var undated = local(20, 2)
