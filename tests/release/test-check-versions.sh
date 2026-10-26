@@ -25,7 +25,8 @@
 #      reported; a warning from git ls-remote on stderr is not a tag.
 #   9. git ls-remote's stderr goes to a file made by mktemp (owner-only), not
 #      to a predictable name in TMPDIR, and the file is removed whether the
-#      listing succeeds or fails (#94).
+#      listing succeeds or fails; when no such file can be made, the tag check
+#      fails instead of being skipped (#94).
 #
 # Usage:
 #   bash tests/release/test-check-versions.sh

@@ -27,7 +27,8 @@
 #      --version: refused before anything is signed, nothing in dist; another
 #      version also in --sign-only and unsigned mode. One that reports another
 #      version once signed: refused after signing, in the full mode and with
-#      --sign-only, nothing in dist (#94).
+#      --sign-only, nothing in dist (#94). One that prints the version and then
+#      exits non-zero: refused, naming the status.
 #   7. A per-arch build that has the wrong architecture: refused.
 #   8. --sign-only without NOTARY_PROFILE: signed, never notarized, written to
 #      .build/dist/vX-sign-only, even though tag vX exists.
@@ -36,7 +37,8 @@
 #      .build/dist/vX-unsigned, with a warning.
 #  11. Full mode refuses an uncommitted change to a tracked file, an untracked
 #      file in a package's Sources, an untracked or ignored Package@swift-*.swift
-#      and an ignored file in Sources (not an ignored .DS_Store), before
+#      and an ignored file in Sources (not a .DS_Store, untracked or ignored,
+#      also under a non-ASCII folder, which is named unquoted), before
 #      building; --sign-only builds a dirty tree with a warning. A symlink
 #      tracked in a package's Sources, as its Package.swift, or in its mcpb
 #      directory is refused before building in every mode (#94).
@@ -58,6 +60,8 @@
 #  17. The checkout changes during a full build (a commit, an edit to a tracked
 #      file, an untracked file in Sources): refused after both notarizations,
 #      naming the change, with no .build/dist/vX and no staging left (#94).
+#  18. A git ls-tree that starts listing and then fails, for the symlink scan
+#      or for packing: refused, nothing in dist, no temporary file left (#94).
 #
 # Usage:
 #   bash tests/release/test-build-release.sh
@@ -168,7 +172,11 @@ make_repo() {
     cp "$ROOT"/scripts/release/* "$repo/scripts/release/"
     cp "$ROOT/Makefile" "$repo/Makefile"
     echo "left over from an older build" > "$repo/che-telegram-all-mcp/mcpb/stale.mcpb"
-    git -C "$repo" init -q && git -C "$repo" add -A . ':!che-telegram-all-mcp/mcpb/stale.mcpb' &&
+    # Independent of the machine's git setup: no global excludes (a global
+    # .DS_Store rule would hide the untracked case) and quoted paths.
+    git -C "$repo" init -q && git -C "$repo" config core.excludesFile /dev/null &&
+        git -C "$repo" config core.quotePath true &&
+        git -C "$repo" add -A . ':!che-telegram-all-mcp/mcpb/stale.mcpb' &&
         git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q -m base || exit 1
     git clone -q --bare "$repo" "$base/origin.git" && git -C "$repo" remote add origin "$base/origin.git" || exit 1
     : > "$base/calls"
@@ -355,8 +363,11 @@ case " \$* " in *" ls-tree "*" -- $listed ") "$REAL_GIT" "\$@" | head -c 40; exi
 exec "$REAL_GIT" "\$@"
 EOF
     chmod +x "$R/../fakebin/git"
+    tmp_before=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
     build "$R" --
+    tmp_after=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
     if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF "cannot list $listed"; then pass "$listed: refused"; else fail "$listed: exit $RC: $(printf '%s' "$OUT" | tail -2)"; fi
+    if [ "$tmp_after" = "$tmp_before" ]; then pass "$listed: no temporary file left"; else fail "$listed: TMPDIR entries $tmp_before -> $tmp_after"; fi
     if ls "$R/.build/dist" 2>/dev/null | grep -q .; then fail "$listed: wrote dist: $(ls "$R/.build/dist")"; else pass "$listed: nothing in dist"; fi
 done
 
@@ -467,8 +478,12 @@ test_case "an untracked .DS_Store, also under a non-ASCII folder (#94 verify)"
 R=$(make_repo untracked-ds-store)
 mkdir -p "$R/che-telegram-all-mcp/Sources/Ünicode"
 : > "$R/che-telegram-all-mcp/Sources/.DS_Store"; : > "$R/che-telegram-all-mcp/Sources/Ünicode/.DS_Store"
+if [ -n "$(git -C "$R" ls-files --others --exclude-standard -- che-telegram-all-mcp/Sources)" ]; then pass "the .DS_Store files are untracked, not ignored"; else fail "fixture: the .DS_Store files are ignored"; fi
+tmp_before=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
 build "$R" "${SIGN_ENV[@]}" --
+tmp_after=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
 if [ "$RC" -eq 0 ]; then pass "a .DS_Store Finder made does not stop the release"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+if [ "$tmp_after" = "$tmp_before" ]; then pass "a successful build leaves no temporary file"; else fail "TMPDIR entries $tmp_before -> $tmp_after"; fi
 R=$(make_repo untracked-unicode)
 mkdir -p "$R/che-telegram-all-mcp/Sources/Ünicode"; echo "// extra" > "$R/che-telegram-all-mcp/Sources/Ünicode/Extra.swift"
 build "$R" "${SIGN_ENV[@]}" --
@@ -492,11 +507,14 @@ for link in che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Linked.swift che-
         rm -f "$R/$link" && ln -s "$SCRATCH/outside.swift" "$R/$link" &&
             git -C "$R" add "$link" && commit_in "$R" -m "add a symlink" &&
             [ "$(git -C "$R" ls-tree HEAD -- "$link" | cut -c1-6)" = 120000 ] || { fail "$mode, $link: fixture not committed"; continue; }
+        tmp_before=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
         case "$mode" in
             full)      build "$R" "${SIGN_ENV[@]}" -- ;;
             sign-only) build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only ;;
             unsigned)  build "$R" -- ;;
         esac
+        tmp_after=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
+        [ "$tmp_after" = "$tmp_before" ] || fail "$mode, $link: TMPDIR entries $tmp_before -> $tmp_after"
         if [ "$RC" -ne 0 ] && ! calls "$R" "swift build" >/dev/null; then pass "$mode, $link: refused before any build"; else fail "$mode, $link: exit $RC"; fi
         if printf '%s' "$OUT" | grep -q symlink && printf '%s' "$OUT" | grep -qF "$link"; then pass "$mode, $link: names it"; else fail "$mode, $link: no message: $(printf '%s' "$OUT" | tail -2)"; fi
     done
