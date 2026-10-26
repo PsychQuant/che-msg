@@ -14,6 +14,7 @@ How a binary release of `che-telegram-all-mcp`, `che-telegram-bot-mcp` and `che-
 
 ## One-time setup
 
+- macOS 26 or later on the Mac that builds the release: the binaries need it, and the build starts telegram-all (`--version`) ([#91](https://github.com/PsychQuant/che-msg/issues/91)).
 - A Developer ID Application certificate in the login keychain. `security find-identity -p codesigning -v` lists it.
 - A notarytool keychain profile: `xcrun notarytool store-credentials <name> --apple-id <id> --team-id <team-id>`. It prompts for an app-specific password; never pass the password on the command line. `xcrun notarytool history --keychain-profile <name>` checks that the profile still works.
 - The `mcpb` CLI (`npm install -g @anthropic-ai/mcpb`), the Xcode Command Line Tools, and `python3`.

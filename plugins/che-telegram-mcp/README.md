@@ -311,6 +311,10 @@ A v1.4.x wrapper that was killed outright (or a Mac that lost power) leaves that
 rm -rf ~/.cache/che-telegram-all-mcp.lock
 ```
 
+## Requirements
+
+- **macOS 26 or later.** The binaries after v0.8.0 are built for macOS 26, and an earlier macOS refuses to start them ([#91](https://github.com/PsychQuant/che-msg/issues/91)). The v0.8.0 binaries say macOS 13, but they load `libswiftCompatibilitySpan.dylib`, which macOS 13–15 do not have, so they most likely do not start there either unless Xcode 26 or later is installed (not tested on those systems).
+
 ## Permissions
 
 This plugin requires:

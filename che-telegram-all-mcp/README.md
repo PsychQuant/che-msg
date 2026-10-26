@@ -27,7 +27,7 @@ Full Telegram client MCP Server powered by [TDLib](https://core.telegram.org/tdl
 
 ### 2. Build
 
-Requires Swift 5.9+ and macOS 13+.
+Runs on macOS 26 or later ([#91](https://github.com/PsychQuant/che-msg/issues/91)). Built and tested with Xcode 27.1 (Swift 6.4); the manifests of the dependency versions in `Package.resolved` need at least Swift 6.0.
 
 > **First build will download ~300MB** of TDLibFramework binary. This is normal.
 

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `plugin.json` description field. Section categorization is best-effort —
 > review and refine `Added` / `Changed` / `Fixed` etc. as needed.
 
+## [Unreleased]
+
+### Changed
+- README: a Requirements section: macOS 26 or later ([#91](https://github.com/PsychQuant/che-msg/issues/91)). The binaries after v0.8.0 are built for macOS 26; the v0.8.0 binaries most likely do not start on macOS 13–15 either unless Xcode 26 or later is installed.
+
 ## [1.8.0] - 2026-11-01
 
 Pins binaries v0.9.0 (`DESIRED_VERSION`); the telegram-all minimum stays 0.7.0.
