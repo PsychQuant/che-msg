@@ -398,7 +398,7 @@ public final class CheTelegramAllMCPServer {
                  """,
                  properties: [
                     "chat_id": prop("integer", "Chat ID"),
-                    "output_path": prop("string", "Absolute filesystem path to write the .md file"),
+                    "output_path": prop("string", "Absolute path of the Markdown file to write: must end in .md, contain no '..' component, and lie inside CHE_TELEGRAM_ALL_EXPORT_ROOT when the server sets it. An existing file is replaced"),
                     "max_messages": prop("integer", "Upper bound on messages fetched (default 5000)"),
                     "since_date": prop("string", "Lower bound inclusive, ISO date YYYY-MM-DD (optional)"),
                     "until_date": prop("string", "Upper bound inclusive — includes the whole day, to its last instant in the server's zone. ISO date YYYY-MM-DD (optional)"),

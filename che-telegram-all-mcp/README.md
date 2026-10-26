@@ -110,6 +110,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `TELEGRAM_PHONE` | No | Phone number in international format (e.g., `+886912345678`). Auto-fired when state is `waitingForPhoneNumber`. Useful for SSH / remote setup. When unset, the server reads the Keychain item of the same name (account `che-telegram-all-mcp`) at that moment (0.9.0 and later); the `telegram-all` CLI never reads the Keychain. |
 | `TELEGRAM_2FA_PASSWORD` | No | 2FA password. Auto-fired when state is `waitingForPassword`. When unset, the server reads the Keychain item of the same name (account `che-telegram-all-mcp`) at that moment (0.9.0 and later). |
 | `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` | No | Seconds TDLib may stay idle before the server closes it and releases the lock (default `600`; `0` keeps it open). A non-numeric or negative value falls back to 600 with a warning on stderr. |
+| `CHE_TELEGRAM_ALL_EXPORT_ROOT` | No | Directory `dump_chat_to_markdown` may write into ([#21](https://github.com/PsychQuant/che-msg/issues/21)). When set, `output_path` must lie inside it once symbolic links are resolved, or the dump is refused before any message is read. A value that is not an absolute path to an existing directory refuses every dump (it is never ignored); `~` is not expanded. Unset or empty: no restriction. Read once at startup. It does not restrict `archive_chat_to_markdown`, `download_message_media` or the CLI's `--dump-markdown`. |
 
 > SMS verification code is **never** auto-fired, from the environment or the Keychain — it must be supplied via `auth_run(code: "...")` or `auth_send_code(code: "...")` in a one-shot delivery.
 >
@@ -224,7 +225,7 @@ Whether TDLib can create a chat with a user or group it has never seen, on a dat
 | Tool | Description |
 |------|-------------|
 | `get_chat_history` | Read message history (single page, thin wrapper) |
-| `dump_chat_to_markdown` | Export full chat history to a `.md` file (auto-paginates + date filter + sender resolve + Markdown format). Writes to `output_path`, returns summary metadata. |
+| `dump_chat_to_markdown` | Export full chat history to a `.md` file (auto-paginates + date filter + sender resolve + Markdown format). Writes to `output_path` — absolute, ending in `.md`, no `..` component, inside `CHE_TELEGRAM_ALL_EXPORT_ROOT` when that is set — replacing an existing file, and returns summary metadata. |
 | `send_message` | Send a text message |
 | `edit_message` | Edit your message |
 | `delete_messages` | Delete messages |
@@ -282,6 +283,8 @@ dump_chat_to_markdown({
   "self_label": "我"                 // optional, default "我"
 })
 ```
+
+`output_path` must be an absolute path (`~` is not expanded) with no `..` component, ending in `.md` in any letter case; anything else is refused before a message is read, for example `Error: output_path must end in .md; got "/Users/me/.zshrc"`. An existing file at that path is replaced. With `CHE_TELEGRAM_ALL_EXPORT_ROOT` set, the path must also lie inside that directory once symbolic links are resolved ([#21](https://github.com/PsychQuant/che-msg/issues/21)).
 
 Response (summary metadata only — no Markdown body):
 
@@ -403,6 +406,7 @@ Sources/
 - `logout` is a local reset only: the session stays valid on Telegram's side, and the renamed `tdlib.invalidated-*` directory still holds a working auth key and the cached messages. To revoke access, end the session in Telegram → Settings → Devices, then delete the `tdlib.invalidated-*` directories (and `tdlib/`, if you are done with this Mac) under `~/Library/Application Support/che-telegram-all-mcp/` by hand.
 - Never share the TDLib database directory with others.
 - `archive_chat_to_markdown`, `download_message_media` and `dump_chat_to_markdown` write other people's messages and files to disk. Keep their output out of public repositories.
+- A chat participant chooses the text `dump_chat_to_markdown` writes, so a caller steered by such text could aim it at a file the shell or the system loads. The tool writes only absolute `.md` paths without `..`; set `CHE_TELEGRAM_ALL_EXPORT_ROOT` to keep dumps inside one directory. The MCP client's confirmation of each tool call remains the last check.
 
 ## License
 

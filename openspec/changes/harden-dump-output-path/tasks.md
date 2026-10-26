@@ -12,4 +12,4 @@
 
 ## 3. 文件
 
-- [ ] 3.1 tool schema 的 `output_path` 說明寫出三條規則、根目錄與既有檔案會被取代；README 環境變數表加 `CHE_TELEGRAM_ALL_EXPORT_ROOT`、Messages 表的 `dump_chat_to_markdown` 說明更新；CHANGELOG `[Unreleased]` 記錄行為變更（相對路徑與非 `.md` 路徑現在被拒絕）與新變數，並寫明三個預設是維護者不在時選的。驗證：人工核對 README、schema 與錯誤訊息的用詞一致；`swift test --skip E2ETests` 與 `tests/che-telegram-mcp/*.sh` 全過 [after: 2.4]
+- [x] 3.1 tool schema 的 `output_path` 說明寫出三條規則、根目錄與既有檔案會被取代；README 環境變數表加 `CHE_TELEGRAM_ALL_EXPORT_ROOT`、Messages 表的 `dump_chat_to_markdown` 說明更新；CHANGELOG `[Unreleased]` 記錄行為變更（相對路徑與非 `.md` 路徑現在被拒絕）與新變數，並寫明三個預設是維護者不在時選的。驗證：人工核對 README、schema 與錯誤訊息的用詞一致；`swift test --skip E2ETests` 與 `tests/che-telegram-mcp/*.sh` 全過 [after: 2.4]
