@@ -212,6 +212,19 @@ def _case_4():
     rc, raw, d, err = run(["--archive", A, "--text", "budget", "--text", "missing"])
     check(rc == 0 and d is not None and d["matched"] == 0, "AND: one term missing")
 
+def _case_82():
+    case("#82 bodies: poll options, sticker emoji, location")
+    A = archive()
+    day(A, 777, "2026-10-26", blk(31, "13:00", "Alex", "[poll] Where shall we meet?", "- Taipei", "- Tainan"),
+        blk(32, "13:01", "Bea", "[sticker](media/32/) 👍"), blk(33, "13:02", "Bea", "[location] 25.0478,121.5319"))
+    rc, raw, d, err = run(["--archive", A, "--text", "tainan"])
+    check(rc == 0 and cites(d) == ["telegram:777/31"], f"poll option searchable: {cites(d)}")
+    if d and d["results"]:
+        check(d["results"][0]["snippet"] == "[poll] Where shall we meet? ⏎ - Taipei ⏎ - Tainan", f"poll snippet: {d['results'][0]['snippet']!r}")
+    rc, raw, d, err = run(["--archive", A, "--cite", "telegram:777/31", "--cite", "telegram:777/32", "--cite", "telegram:777/33"])
+    texts = [b["text"] for b in (d or {}).get("blocks", [])]
+    check(texts == ["[poll] Where shall we meet?\n- Taipei\n- Tainan", "[sticker](media/32/) 👍", "[location] 25.0478,121.5319"], f"bodies: {texts}")
+
 def _case_5():
     case("escaped lines read back unescaped and start no block")
     A = archive()
@@ -517,7 +530,7 @@ def _case_28():
     check(listing(os.path.dirname(A)) == before, "archive listing unchanged")
     check(listing(work) == before_cwd == [], "working directory still empty")
 
-CASES = [_case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
+CASES = [_case_82, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
 for fn in CASES:
     try:
         fn()
