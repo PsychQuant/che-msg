@@ -82,10 +82,16 @@ run() {  # $@ = script arguments; stdin passes through. Runs the script by its
     HOME="$SCRATCH/home" PATH="$STUB:$PATH" "$TARGET" "$@" > "$SCRATCH/out.log" 2>&1
 }
 PTY_RUN="$(cd "$SCRIPT_DIR/../lib" && pwd)/pty_run.py"
-run_pty() {  # $1 = what the user types (empty, or lines ending in a newline), then
-             # script arguments. stdin, stdout and stderr are a pseudo-terminal.
+pty() {  # $1 = what the user types (empty, or lines ending in a newline), then a
+         # command and its arguments, run with a pseudo-terminal as stdin, stdout
+         # and stderr. out.log is removed first, so a case never reads the
+         # previous case's log.
+    rm -f "$SCRATCH/out.log"
+    HOME="$SCRATCH/home" PATH="$STUB:$PATH" PYTHONDONTWRITEBYTECODE=1 python3 "$PTY_RUN" "$SCRATCH/out.log" "$@"
+}
+run_pty() {  # $1 = what the user types, then script arguments
     local typed="$1"; shift
-    HOME="$SCRATCH/home" PATH="$STUB:$PATH" python3 "$PTY_RUN" "$SCRATCH/out.log" "$typed" "$TARGET" "$@"
+    pty "$typed" "$TARGET" "$@"
 }
 ok()   { echo "  ✓ $1"; PASSED=$((PASSED + 1)); }
 bad()  { echo "  ✗ $1"; sed 's/^/      /' "$SCRATCH/out.log"; FAILED=$((FAILED + 1)); }
