@@ -12,7 +12,9 @@ import Foundation
 /// be moved back while a new session is in use.
 public enum TDLibSessionReset {
     public enum ResetError: Error, Equatable {
-        /// TDLib did not close; nothing was changed.
+        /// TDLib did not report `authorizationStateClosed` within the timeout;
+        /// the directory was not moved and TDLib is still held. The close
+        /// request was sent, so TDLib can still close later (#64).
         case couldNotClose
         /// TDLib is closed but the directory could not be renamed; it is unchanged.
         case renameFailed(String)

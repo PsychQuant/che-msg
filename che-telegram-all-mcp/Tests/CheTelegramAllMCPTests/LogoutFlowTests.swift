@@ -50,14 +50,18 @@ final class LogoutFlowTests: XCTestCase {
         XCTAssertTrue(note.contains("do not move"), note)
     }
 
-    func testCloseFailureKeepsTDLibAndChangesNothing() async {
+    /// The close request has already gone to TDLib, which can still close
+    /// later, so the message says what stayed as it was rather than that
+    /// nothing changed (#64).
+    func testCloseFailureKeepsTDLibHeldAndTheDirectoryInPlace() async {
         let client = FakeClient(); client.closeSucceeds = false
         let calls = Calls()
         let result = await run(client, calls)
         XCTAssertEqual(result.isError, true)
         XCTAssertEqual(calls.discard, 0)
         XCTAssertEqual(calls.resetSync, 0)
-        XCTAssertTrue(text(result).contains("nothing was changed"), text(result))
+        XCTAssertEqual(text(result),
+                       "Error: TDLib did not close within 30 s; the directory was not moved and TDLib is still held; try again.")
         XCTAssertTrue(FileManager.default.fileExists(atPath: database.path))
     }
 

@@ -5,8 +5,10 @@ import TelegramAllLib
 /// The `logout` tool (PsychQuant/che-msg#63): a local reset that sends no
 /// log-out request to Telegram. On success TDLib is released (`discard`) and the sync
 /// state starts again (`resetSync`). On failure neither happens: when TDLib
-/// would not close nothing changed, and when the directory could not be
-/// renamed TDLib stays held so that no client reopens the old directory.
+/// did not close in time the directory was not moved and TDLib is still held
+/// (the close request was sent, so TDLib can still close later; #64), and when
+/// the directory could not be renamed TDLib stays held so that no client
+/// reopens the old directory.
 internal func performLocalReset(client: TDLibClosable, directory: URL, now: Date,
                                 discard: () async -> Void, resetSync: () -> Void) async -> CallTool.Result {
     func failure(_ message: String) -> CallTool.Result {
@@ -16,7 +18,8 @@ internal func performLocalReset(client: TDLibClosable, directory: URL, now: Date
     do {
         renamed = try await TDLibSessionReset.reset(client: client, directory: directory, now: now)
     } catch TDLibSessionReset.ResetError.couldNotClose {
-        return failure("TDLib did not close within \(Int(TDLibSessionReset.timeout)) s; nothing was changed. Try again.")
+        return failure("TDLib did not close within \(Int(TDLibSessionReset.timeout)) s; "
+                     + "the directory was not moved and TDLib is still held; try again.")
     } catch TDLibSessionReset.ResetError.renameFailed(let reason) {
         return failure("TDLib is closed, but its database directory could not be renamed (\(reason)); it is unchanged. "
                      + "Move \(directory.path) aside by hand, then reconnect telegram-all with /mcp.")
