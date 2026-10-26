@@ -4,9 +4,10 @@
 #
 # The HOME holds a fake CheTelegramAllMCP at $HOME/bin with the version
 # sidecar the wrapper expects, so the wrapper starts it without downloading.
-# A fake `security` answers the two Keychain lookups, and a fake `curl` records
-# any call and fails, so a test can never reach the network. Nothing outside
-# the private HOME is read or written.
+# A fake `security` answers the two Keychain lookups, and a fake `curl`
+# (tests/lib/fake_curl.sh) records every call and, unless the test gives it
+# something to serve, fails, so a test can never reach the network. Nothing
+# outside the private HOME is read or written.
 
 HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # WRAPPER_UNDER_TEST runs the tests against another copy, e.g. an earlier version.
@@ -22,18 +23,7 @@ DESIRED_VERSION=$(sed -n 's/^DESIRED_VERSION="\(.*\)"$/\1/p' "$WRAPPER")
 make_home() {
     local home=$1 credentials=${2:-yes} version=${3:-$DESIRED_VERSION}
     mkdir -p "$home/bin" "$home/fakebin"
-    {
-        echo '#!/bin/bash'
-        if [ "$version" != silent ]; then
-            echo "if [ \"\$1\" = --version ]; then echo 'che-telegram-all-mcp $version'; exit 0; fi"
-        fi
-    } > "$home/bin/CheTelegramAllMCP"
-    cat >> "$home/bin/CheTelegramAllMCP" <<'EOF'
-echo $$ >> "$HOME/started.pids"
-if IFS= read -r -t 2 line; then printf '%s\n' "$line" > "$HOME/stdin.txt"; fi
-exec /bin/sleep 300
-EOF
-    chmod +x "$home/bin/CheTelegramAllMCP"
+    write_fake_all_binary "$home/bin/CheTelegramAllMCP" "$version"
     if [ "$version" = silent ]; then echo "$DESIRED_VERSION"; else echo "$version"; fi > "$home/bin/.CheTelegramAllMCP.version"
     if [ "$credentials" = yes ]; then
         cat > "$home/fakebin/security" <<'EOF'
@@ -47,8 +37,77 @@ EOF
     else
         printf '#!/bin/bash\nexit 44\n' > "$home/fakebin/security"
     fi
-    printf '#!/bin/bash\necho "$*" >> "$HOME/curl.calls"\nexit 1\n' > "$home/fakebin/curl"
-    chmod +x "$home/fakebin/security" "$home/fakebin/curl"
+    install_fake_curl "$home"
+    chmod +x "$home/fakebin/security"
+}
+
+# write_fake_all_binary <path> <version | "silent">: the fake CheTelegramAllMCP
+# make_home installs, also used as the release asset the fake curl serves.
+write_fake_all_binary() {
+    local path=$1 version=$2
+    {
+        echo '#!/bin/bash'
+        if [ "$version" != silent ]; then
+            echo "if [ \"\$1\" = --version ]; then echo 'che-telegram-all-mcp $version'; exit 0; fi"
+        fi
+    } > "$path"
+    cat >> "$path" <<'EOF'
+echo $$ >> "$HOME/started.pids"
+if IFS= read -r -t 2 line; then printf '%s\n' "$line" > "$HOME/stdin.txt"; fi
+exec /bin/sleep 300
+EOF
+    chmod +x "$path"
+}
+
+# install_fake_curl <home>: the scriptable fake curl in <home>/fakebin.
+install_fake_curl() {
+    mkdir -p "$1/fakebin"
+    cp "$HARNESS_ROOT/tests/lib/fake_curl.sh" "$1/fakebin/curl"
+    chmod +x "$1/fakebin/curl"
+}
+
+# serve_asset <home> <file>: the fake curl serves <file> for a release download.
+serve_asset() {
+    mkdir -p "$1/fake-curl"
+    cp "$2" "$1/fake-curl/asset"
+}
+
+# serve_release_api <home> <binary name> <file> [version]: the fake curl answers
+# the release API with a release that lists <binary name>, with the sha256 of
+# <file> as its digest, after another asset with a different digest. The layout
+# is GitHub's: pretty-printed, each asset's digest before its download URL.
+serve_release_api() {
+    local home=$1 name=$2 file=$3 version=${4:-$DESIRED_VERSION} digest
+    digest=$(shasum -a 256 "$file" | awk '{print $1}')
+    mkdir -p "$home/fake-curl"
+    cat > "$home/fake-curl/api" <<EOF
+{
+  "url": "https://api.github.com/repos/PsychQuant/che-msg/releases/1",
+  "tag_name": "v$version",
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/PsychQuant/che-msg/releases/assets/1",
+      "name": "$name.mcpb",
+      "uploader": {
+        "login": "someone"
+      },
+      "size": 10,
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "browser_download_url": "https://github.com/PsychQuant/che-msg/releases/download/v$version/$name.mcpb"
+    },
+    {
+      "url": "https://api.github.com/repos/PsychQuant/che-msg/releases/assets/2",
+      "name": "$name",
+      "uploader": {
+        "login": "someone"
+      },
+      "size": $(wc -c < "$file" | tr -d ' '),
+      "digest": "sha256:$digest",
+      "browser_download_url": "https://github.com/PsychQuant/che-msg/releases/download/v$version/$name"
+    }
+  ]
+}
+EOF
 }
 
 # start_wrapper <home> <stdin-file> <stdout-file>: starts the wrapper in the
