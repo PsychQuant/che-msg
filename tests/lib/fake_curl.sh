@@ -16,6 +16,8 @@
 #                    (connection reset); a line "full", or no line, serves the
 #                    rest
 #   <route>.delay    whole seconds to wait before serving
+#   <route>.exit     an exit status to fail with, writing nothing (for
+#                    example 7, could not connect, or 60, a bad certificate)
 #
 # With -C - and an existing -o file it serves the body from that file's size
 # on, appended. At or past the end it writes nothing and exits 0, as curl does
@@ -65,6 +67,10 @@ write() {
     elif [ "$resume" = yes ]; then "$@" >> "$out"
     else "$@" > "$out"; fi
 }
+
+if [ -f "$conf/$route.exit" ]; then
+    exit "$(cat "$conf/$route.exit")"
+fi
 
 if [ -f "$conf/$route.status" ]; then
     [ "$fail" = yes ] && exit 22

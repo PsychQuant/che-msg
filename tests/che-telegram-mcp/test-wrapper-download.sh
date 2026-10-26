@@ -26,8 +26,11 @@
 #      the installed file is identical to the asset.
 #   5. Retries: a transfer cut off once is retried, resumed, and installed in
 #      the same start; an HTTP error is not retried, so it is reported at
-#      once; curl gives up only on a stalled transfer (--speed-limit,
-#      --speed-time), not after a fixed total time (--max-time).
+#      once; a connection that cannot be made (curl exit 7) is retried, a
+#      failure that is not the network's (exit 60, a bad certificate, and
+#      exit 1) is not; curl gives up only on a stalled transfer
+#      (--speed-limit, --speed-time), not after a fixed total time
+#      (--max-time).
 #   6. Every attempt failing while a usable binary is installed: that binary
 #      is kept and started, and its version record is unchanged.
 #   7. Every attempt failing with nothing installed: the start fails, and the
@@ -263,6 +266,13 @@ for which in all bot; do
     if [ "$(grep -c 'api.github.com' "$H/curl.calls")" = 1 ]; then pass "the release API is asked once"; else fail "the release API was asked $(grep -c 'api.github.com' "$H/curl.calls") times"; fi
     for f in "$H/curl.calls"; do
         if grep -q -- '--retry-all-errors' "$f"; then fail "a call retries every error, HTTP errors included: $(grep -- '--retry-all-errors' "$f" | head -1)"; else pass "no call retries HTTP errors (--retry-all-errors)"; fi
+    done
+    for pair in 7:4 60:1 1:1; do
+        code=${pair%%:*}; want=${pair#*:}
+        H="$SCRATCH/$which-exit-$code"; empty_home "$H" "$which"; serve "$H" "$which"
+        echo "$code" > "$H/fake-curl/asset.exit"
+        run "$H" "$which"
+        if [ "$(asset_calls "$H")" = "$want" ]; then pass "curl exit $code: $want transfer(s)"; else fail "curl exit $code: $(asset_calls "$H") transfer(s), expected $want"; fi
     done
 
     # -------------------------------------- 6. failing, usable binary kept

@@ -32,8 +32,9 @@
 #   transfer cut off
 #   here or in an earlier start continues where it stopped. A partial file of
 #   another version is removed, never joined to this one.
-# - It retries a transfer that stops, up to three more times, each resuming
-#   where the last one stopped, and gives up only on a stall (--speed-limit /
+# - It retries a transfer the network stopped, up to three more times, each
+#   resuming where the last one stopped, and gives up only on a stall
+#   (--speed-limit /
 #   --speed-time). A cap on the whole transfer, as --max-time was, cannot be
 #   met on a slow link: the 238 MB telegram-all binary takes about 17 minutes
 #   at 234 KB/s. An HTTP error is not retried (curl's --retry-all-errors would
@@ -171,6 +172,7 @@ download_failure() {
         20) echo "the transfer was interrupted; the next start resumes it" ;;
         21) echo "the server answered with an HTTP error, so the release or its asset may not exist" ;;
         23) echo "GitHub could not be reached to look up its sha256; the next start tries again" ;;
+        24) echo "the download failed for a reason other than the network (see its log)" ;;
         30) echo "no sha256 is known to check it against: this plugin pins none for this version, and GitHub reported no digest for the asset" ;;
         31) echo "the downloaded file does not match its sha256, so it was removed" ;;
         40) echo "the downloaded file could not be put in place in ~/bin" ;;
@@ -273,6 +275,8 @@ _dl_api_digest() {
 #   20  the transfer failed; the partial file is kept for the next attempt
 #   21  the server answered with an HTTP error; the partial file is removed
 #   23  the release API could not be reached; nothing was downloaded
+#   24  curl failed for a reason other than the network; the partial file
+#       is kept
 #   30  no sha256 to check the download against; nothing was downloaded
 #   31  the download does not match its sha256; it was removed
 #   40  the downloaded file could not be put in place
@@ -342,15 +346,19 @@ download_fetch() {
         # curl and the pause run in the background with wait, so that a TERM
         # stops them at once instead of after they finish. curl's own --retry
         # covers what it calls transient (timeouts, HTTP 408, 429, 5xx); the
-        # loop covers a connection that is reset or drops, which --retry
-        # alone does not.
+        # loop covers the network failing: the host not resolved (6) or not
+        # reached (7), a transfer cut short (18), stalled (28), a TLS
+        # handshake that failed (35), an empty reply (52), a connection reset
+        # while sending or receiving (55, 56), an HTTP/2 stream or framing
+        # error (92, 16). Anything else (an HTTP error, a bad certificate, a
+        # file that cannot be written) is not retried.
         for attempt in 1 2 3 4; do
             curl -fsSL --retry 2 --connect-timeout 30 \
                 --speed-limit 4096 --speed-time 60 -C - -o "$part" "$url" &
             DL_CURL=$!
             wait "$DL_CURL"; rc=$?
             DL_CURL=""
-            case "$rc" in 0|22|33) break ;; esac
+            case "$rc" in 6|7|16|18|28|35|52|55|56|92) ;; *) break ;; esac
             [ "$attempt" = 4 ] && break
             echo "$name: the transfer stopped (curl exit status $rc); resuming it (retry $attempt of 3)" >&2
             sleep 2 & DL_CURL=$!; wait "$DL_CURL"; DL_CURL=""
@@ -366,9 +374,12 @@ download_fetch() {
                 rm -f "$part"
                 echo "$name: the download of v$version could not be resumed (curl exit status 33); the next start downloads it again" >&2
                 return 20 ;;
-            *)
+            6|7|16|18|28|35|52|55|56|92)
                 echo "$name: the download of v$version was interrupted (curl exit status $rc); the next start resumes it" >&2
                 return 20 ;;
+            *)
+                echo "$name: the download of v$version failed (curl exit status $rc); nothing was installed" >&2
+                return 24 ;;
         esac
     fi
 

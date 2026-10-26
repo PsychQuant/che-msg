@@ -116,7 +116,7 @@ If none are found on first invocation, the wrapper **lazy-downloads** the binary
 
 The download ([#56](https://github.com/PsychQuant/che-msg/issues/56)) is shared by both wrappers (`lib/download.sh`):
 
-- It retries a transfer that stops (a connection reset, a dropped link) up to three more times, each resuming where the last one stopped, and gives up only when the transfer stalls (below 4 KB/s for 60 seconds), not after a fixed time. An HTTP error is not retried, so a release without the asset is reported at once.
+- It retries a transfer that stops (a connection reset, a dropped link) up to three more times, each resuming where the last one stopped, and gives up only when the transfer stalls (below 4 KB/s for 60 seconds), not after a fixed time. An HTTP error is not retried, so a release without the asset is reported at once, and neither is a failure that is not the network's (a bad certificate, a file that cannot be written).
 - It keeps its files in a private directory, `~/bin/.che-telegram-mcp-download` (mode 700, the user's; if it is a symbolic link or not a directory, nothing is downloaded and the message says so). A lock, a log, a partial file or the finished download that is a symbolic link is never followed: a link is removed before use, and the finished file must be a regular file when it is checked and when it is moved into place.
 - It writes to a partial file named after the version, `<Binary>.<version>.part` in that directory. A transfer cut off is resumed from there by the next start (`curl -C -`). A partial file of another version is removed, never joined to this one.
 - An HTTP error (for example a release without that asset) installs nothing and writes no version record (`curl -f`).
