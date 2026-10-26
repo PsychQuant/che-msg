@@ -14,15 +14,25 @@
 # the versions in the Slack plugin README's prose, and the history in a
 # CHANGELOG stay as they are.
 #
+# Each wrapper also pins the sha256 of its binary (PsychQuant/che-msg#50):
+# SHA256_PIN_VERSION and SHA256_PIN, both empty, or X and 64 lowercase hex
+# digits. They can only be set after the release build, from
+# .build/dist/vX/<Binary>.sha256, so they are empty while the build runs; a pin
+# that is set must equal that file when it exists. --require-sha256 is the
+# check after the build: both pins set, and equal to the build's.
+#
 # Usage:
 #   scripts/release/check-versions.sh [--expect X.Y.Z] [--expect-plugin X.Y.Z]
 #                                     [--root DIR] [--no-tag-check] [--no-remote]
+#                                     [--require-sha256]
 #
 #   --expect X.Y.Z   the binary version to require (default: CLIBootstrap.swift)
 #   --expect-plugin X.Y.Z  the plugin version to require (default: plugin.json)
 #   --root DIR       the repository to check (default: this script's repository)
 #   --no-tag-check   check consistency only, not that tag vX.Y.Z is still unused
 #   --no-remote      look for the tag locally only, not on origin
+#   --require-sha256 both wrappers' sha256 pins are set and equal
+#                    .build/dist/vX/<Binary>.sha256
 #
 # Exit: 0 every place agrees; 1 something does not (every problem is listed);
 #       2 usage error or the binary version cannot be read.
@@ -35,6 +45,7 @@ EXPECT=""
 EXPECT_PLUGIN=""
 TAG_CHECK=1
 REMOTE=1
+REQUIRE_SHA256=0
 while [ $# -gt 0 ]; do
     case "$1" in
         # An empty value is refused rather than read as "use the default": a
@@ -47,6 +58,7 @@ while [ $# -gt 0 ]; do
             ROOT=$2; shift 2 ;;
         --no-tag-check) TAG_CHECK=0; shift ;;
         --no-remote) REMOTE=0; shift ;;
+        --require-sha256) REQUIRE_SHA256=1; shift ;;
         -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
         *) echo "check-versions: unknown option: $1" >&2; exit 2 ;;
     esac
@@ -130,6 +142,37 @@ done
 for w in che-telegram-all-mcp che-telegram-bot-mcp; do
     f=plugins/che-telegram-mcp/bin/$w-wrapper.sh
     expect "$f" "DESIRED_VERSION" "$X" "$(found "$f" 's/^DESIRED_VERSION="([^"]*)"$/\1/p')"
+done
+# The sha256 pins (#50). An empty pin is a value here, so the assignments are
+# counted instead of read with found.
+for pair in che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTelegramBotMCP; do
+    f=plugins/che-telegram-mcp/bin/${pair%%:*}-wrapper.sh; b=${pair#*:}
+    built=".build/dist/v$X/$b.sha256"
+    [ -f "$f" ] || { bad "$f: not found"; continue; }
+    nv=$(grep -c '^SHA256_PIN_VERSION=' "$f"); np=$(grep -c '^SHA256_PIN=' "$f")
+    [ "$nv" = 1 ] || bad "$f: SHA256_PIN_VERSION must be assigned once (found $nv)"
+    [ "$np" = 1 ] || bad "$f: SHA256_PIN must be assigned once (found $np)"
+    [ "$nv" = 1 ] && [ "$np" = 1 ] || continue
+    pv=$(sed -nE 's/^SHA256_PIN_VERSION="([^"]*)"$/\1/p' "$f")
+    pin=$(sed -nE 's/^SHA256_PIN="([^"]*)"$/\1/p' "$f")
+    if [ -n "$pin" ] && ! [[ "$pin" =~ ^[0-9a-f]{64}$ ]]; then
+        bad "$f: SHA256_PIN is not 64 lowercase hex digits"
+    elif { [ -n "$pv" ] && [ -z "$pin" ]; } || { [ -z "$pv" ] && [ -n "$pin" ]; }; then
+        bad "$f: only one of SHA256_PIN_VERSION and SHA256_PIN is set"
+    elif [ -n "$pin" ] && [ "$pv" != "$X" ]; then
+        bad "$f: SHA256_PIN is for v$pv, expected $X (clear both pins when DESIRED_VERSION changes)"
+    elif [ -z "$pin" ] && [ "$REQUIRE_SHA256" = 1 ]; then
+        bad "$f: SHA256_PIN is not set; set it from $built (RELEASING.md)"
+    elif [ -z "$pin" ]; then
+        ok "$f" "SHA256_PIN not set yet (it is set from $built after the release build)"
+    elif [ -f "$built" ]; then
+        if [ "$(tr -d '[:space:]' < "$built")" = "$pin" ]; then ok "$f" "SHA256_PIN matches $built"
+        else bad "$f: SHA256_PIN does not match $built"; fi
+    elif [ "$REQUIRE_SHA256" = 1 ]; then
+        bad "$f: $built not found, so SHA256_PIN cannot be checked against the build"
+    else
+        ok "$f" "SHA256_PIN set for v$X ($built is not here to compare with)"
+    fi
 done
 expect CLAUDE.md "pin note" "$X" "$(found CLAUDE.md 's/.*目前 ([0-9][0-9.]*).*/\1/p')"
 for b in CheTelegramAllMCP CheTelegramBotMCP; do

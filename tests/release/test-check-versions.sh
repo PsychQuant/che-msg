@@ -34,6 +34,14 @@
 #      marketplace entry agreeing (a mismatch names both, and needs no change
 #      to the che-telegram-mcp plugin version), and one that is not x.y.z is
 #      reported.
+#  11. The wrappers' sha256 pins (#50): empty pins pass and say they are not
+#      set yet; a pin for vX that matches .build/dist/vX/<Binary>.sha256
+#      passes; one that does not match, one for another version, one that is
+#      not 64 lowercase hex digits, a pin without its version or a version
+#      without its pin, and a second assignment are each reported, and
+#      nothing else is. --require-sha256
+#      refuses empty pins and a pin with no .build/dist/vX file to compare,
+#      and passes matching pins.
 #
 # Usage:
 #   bash tests/release/test-check-versions.sh
@@ -317,6 +325,76 @@ D=$(fresh_copy no-tmpdir)
 git clone -q --bare "$D" "$SCRATCH/no-tmpdir-origin.git" && git -C "$D" remote add origin "$SCRATCH/no-tmpdir-origin.git" || exit 1
 OUT=$(TMPDIR="$SCRATCH/no-such-dir" bash "$CHECK" --root "$D" 2>&1); RC=$?
 if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -q "cannot create a temporary file"; then pass "the tag check fails instead of being skipped"; else fail "exit $RC:"$'\n'"$(printf '%s\n' "$OUT" | tail -2)"; fi
+
+# ----------------------------------------------------------- sha256 pins (#50)
+ALLW=plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh
+BOTW=plugins/che-telegram-mcp/bin/che-telegram-bot-mcp-wrapper.sh
+HEX_A=$(printf '%064d' 0 | tr 0 a)
+HEX_B=$(printf '%064d' 0 | tr 0 b)
+# set_pin <dir> <wrapper> <pin version> <pin>
+set_pin() {
+    edit "$1" "$2" "one('SHA256_PIN_VERSION=\"\"', 'SHA256_PIN_VERSION=\"$3\"')"
+    edit "$1" "$2" "one('SHA256_PIN=\"\"', 'SHA256_PIN=\"$4\"')"
+}
+# dist <dir> <binary> <sha256>: the release build's .sha256 for that binary.
+dist() { mkdir -p "$1/.build/dist/v$X"; printf '%s\n' "$3" > "$1/.build/dist/v$X/$2.sha256"; }
+# expect_one <want>: exit 1, the report names <want>, and nothing else.
+expect_one() {
+    if [ "$RC" -eq 1 ]; then pass "exit 1"; else fail "exit $RC"; fi
+    if printf '%s\n' "$OUT" | grep -qF -- "$1"; then pass "reports: $1"; else fail "does not report '$1':"$'\n'"$OUT"; fi
+    n=$(crosses)
+    if [ "$n" -eq 1 ]; then pass "reports nothing else"; else fail "reports $n problems:"$'\n'"$(printf '%s\n' "$OUT" | grep '^✗')"; fi
+}
+
+test_case "sha256 pins not set yet"
+run "$BASE" --no-remote
+if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC:"$'\n'"$OUT"; fi
+if printf '%s\n' "$OUT" | grep -q 'che-telegram-all-mcp-wrapper.sh: SHA256_PIN not set yet'; then pass "says the pin is not set yet"; else fail "no not-set-yet line:"$'\n'"$OUT"; fi
+
+test_case "sha256 pins for v$X matching .build/dist/v$X"
+D=$(fresh_copy pin-match); set_pin "$D" "$ALLW" "$X" "$HEX_A"; set_pin "$D" "$BOTW" "$X" "$HEX_B"
+dist "$D" CheTelegramAllMCP "$HEX_A"; dist "$D" CheTelegramBotMCP "$HEX_B"
+run "$D" --no-remote
+if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC:"$'\n'"$OUT"; fi
+if printf '%s\n' "$OUT" | grep -qF "SHA256_PIN matches .build/dist/v$X/CheTelegramBotMCP.sha256"; then pass "says the pin matches the build"; else fail "no match line:"$'\n'"$OUT"; fi
+run "$D" --no-remote --require-sha256
+if [ "$RC" -eq 0 ]; then pass "--require-sha256: exit 0"; else fail "--require-sha256: exit $RC:"$'\n'"$OUT"; fi
+
+test_case "a sha256 pin that does not match .build/dist/v$X"
+D=$(fresh_copy pin-mismatch); set_pin "$D" "$ALLW" "$X" "$HEX_A"; dist "$D" CheTelegramAllMCP "$HEX_B"
+run "$D" --no-remote --expect "$X" --expect-plugin "$P"
+expect_one "che-telegram-all-mcp-wrapper.sh: SHA256_PIN does not match .build/dist/v$X/CheTelegramAllMCP.sha256"
+
+test_case "a sha256 pin for another version"
+D=$(fresh_copy pin-other); set_pin "$D" "$BOTW" "$B" "$HEX_A"
+run "$D" --no-remote --expect "$X" --expect-plugin "$P"
+expect_one "che-telegram-bot-mcp-wrapper.sh: SHA256_PIN is for v$B, expected $X"
+
+test_case "a sha256 pin that is not 64 lowercase hex digits"
+D=$(fresh_copy pin-short); set_pin "$D" "$ALLW" "$X" "${HEX_A:1}"
+run "$D" --no-remote --expect "$X" --expect-plugin "$P"
+expect_one "che-telegram-all-mcp-wrapper.sh: SHA256_PIN is not 64 lowercase hex digits"
+
+test_case "a sha256 pin without its version, and a version without its pin"
+D=$(fresh_copy pin-half); edit "$D" "$BOTW" "one('SHA256_PIN=\"\"', 'SHA256_PIN=\"$HEX_A\"')"
+run "$D" --no-remote --expect "$X" --expect-plugin "$P"
+expect_one "che-telegram-bot-mcp-wrapper.sh: only one of SHA256_PIN_VERSION and SHA256_PIN is set"
+D=$(fresh_copy pin-half-version); edit "$D" "$ALLW" "one('SHA256_PIN_VERSION=\"\"', 'SHA256_PIN_VERSION=\"$X\"')"
+run "$D" --no-remote --expect "$X" --expect-plugin "$P"
+expect_one "che-telegram-all-mcp-wrapper.sh: only one of SHA256_PIN_VERSION and SHA256_PIN is set"
+
+test_case "a second assignment of SHA256_PIN"
+D=$(fresh_copy pin-twice); edit "$D" "$ALLW" "s + 'SHA256_PIN=\"$HEX_A\"\\n'"
+run "$D" --no-remote --expect "$X" --expect-plugin "$P"
+expect_one "che-telegram-all-mcp-wrapper.sh: SHA256_PIN must be assigned once"
+
+test_case "--require-sha256"
+run "$BASE" --no-remote --require-sha256
+if [ "$RC" -eq 1 ] && [ "$(crosses)" -eq 2 ]; then pass "empty pins: exit 1, both wrappers reported"; else fail "empty pins: exit $RC:"$'\n'"$OUT"; fi
+if printf '%s\n' "$OUT" | grep -qF "che-telegram-bot-mcp-wrapper.sh: SHA256_PIN is not set"; then pass "says the pin is not set"; else fail "no not-set report:"$'\n'"$OUT"; fi
+D=$(fresh_copy pin-nodist); set_pin "$D" "$ALLW" "$X" "$HEX_A"; set_pin "$D" "$BOTW" "$X" "$HEX_B"
+run "$D" --no-remote --require-sha256
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF ".build/dist/v$X/CheTelegramAllMCP.sha256 not found"; then pass "no build to compare with: refused"; else fail "no build: exit $RC:"$'\n'"$OUT"; fi
 
 # ---------------------------------------------------------------------- tags
 test_case "tag v$X exists locally"

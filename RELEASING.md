@@ -9,7 +9,8 @@ How a binary release of `che-telegram-all-mcp`, `che-telegram-bot-mcp` and `che-
 - **A release builds the dependency versions in each package's `Package.resolved`.** All three files are tracked ([#114](https://github.com/PsychQuant/che-msg/issues/114) added `che-slack-mcp`'s), and every `swift build` in the release runs with `--force-resolved-versions`, so a tag records exactly what its binaries were built from; a package whose `Package.resolved` is untracked or missing stops the build. To update dependencies, do it as its own change: `swift package update` in the package, run its tests, and commit the new `Package.resolved` ([#92](https://github.com/PsychQuant/che-msg/issues/92)). If `Package.resolved` shows as modified and you did not mean to update anything, restore it with `git checkout -- <package>/Package.resolved`.
 - **Only the files in `.build/dist/vX/` are released.** They are signed and notarized, and the directory appears only when all ten are done. `.build/dist/vX-sign-only/` and `.build/dist/vX-unsigned/` are for checking a build locally; from a tree with uncommitted changes, their binaries come from the working tree but their bundles hold the committed `manifest.json` and `PRIVACY.md`.
 - **Until [#48](https://github.com/PsychQuant/che-msg/issues/48) ships, the plugin README keeps its note** that the `/che-telegram-mcp:auth` skill still asks for the phone number and the 2FA password, and that `auth_run` without arguments is the way to log in with both stored. Remove the note in the plugin release that ships #48 ([#97](https://github.com/PsychQuant/che-msg/issues/97)).
-- **The release exists before the version bump reaches `main`.** The `che-msg` marketplace serves `main`. A wrapper pinned to a version that has no release yet installs whatever `releases/latest` is and records the pinned version in its sidecar, so on that machine it never fetches the real release afterwards ([#50](https://github.com/PsychQuant/che-msg/issues/50) tracks the decision whether to remove that fallback).
+- **The release exists before the version bump reaches `main`.** The `che-msg` marketplace serves `main`. A wrapper pinned to a version that has no release yet downloads nothing: it keeps an installed binary, and a first install fails ([#50](https://github.com/PsychQuant/che-msg/issues/50) removed the fallback to `releases/latest`, which installed another release and recorded the pinned version for it).
+- **The version bump reaches `main` with the build's sha256 pins.** Each wrapper installs a download only when its sha256 equals `SHA256_PIN`, the value of `.build/dist/vX/<Binary>.sha256` for the version in `SHA256_PIN_VERSION` ([#50](https://github.com/PsychQuant/che-msg/issues/50)). The pins can only be set after the build (step 8). Without them the wrappers check the download against the digest GitHub reports for the asset, which catches a damaged file but not a replaced asset.
 - Raw Mach-O binaries cannot be stapled. Gatekeeper checks the notarization online the first time a binary runs.
 
 ## One-time setup
@@ -26,7 +27,7 @@ How a binary release of `che-telegram-all-mcp`, `che-telegram-bot-mcp` and `che-
 1. **Bump the version on a branch.** For a binary version `X` and a che-telegram-mcp plugin version `P`, change exactly the places `scripts/release/check-versions.sh` checks:
    - `che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/CLIBootstrap.swift` (`version`) and `che-telegram-bot-mcp/Sources/CheTelegramBotMCPCore/Server.swift` (`version:`)
    - both `mcpb/manifest.json` files
-   - `DESIRED_VERSION` in both wrappers under `plugins/che-telegram-mcp/bin/`
+   - `DESIRED_VERSION` in both wrappers under `plugins/che-telegram-mcp/bin/`, and in the same wrappers `SHA256_PIN_VERSION=""` and `SHA256_PIN=""`: the old values belong to the previous version, and the plugin's layout test fails while a pin names another version than `DESIRED_VERSION`. Step 8 sets them.
    - the pin note in `CLAUDE.md` (「目前 X」)
    - `plugins/che-telegram-mcp/README.md`: the manual-install commands and the Version section
    - the all-mcp and bot CHANGELOGs: `[Unreleased]` becomes `## [X] - <date>`
@@ -60,14 +61,24 @@ How a binary release of `che-telegram-all-mcp`, `che-telegram-bot-mcp` and `che-
    3. Record in #97 (this check's own record, apart from the release issue step 5 mentions): that the login code was the only value typed; whether the answer to `auth_run(code:)` was already the state after the stored password, or asked for the password (its 15-second wait starts only if TDLib's state update arrives before the response to the code); and, if TDLib went to a state the client does not track (for example email setup), that `auth_run` waited the full 15 seconds. Take the time from when you send the request to when the answer appears, or from the session transcript's timestamps.
 
    Remove this step once 0.9.0 is released.
-8. **Create the release** at the commit `make release-signed` printed, with all ten files of `.build/dist/vX/` as assets:
+8. **Pin the sha256s, then create the release.** Set both wrappers' pins from the build ([#50](https://github.com/PsychQuant/che-msg/issues/50)), check them, and commit:
+   ```bash
+   X=<version>
+   for pair in che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTelegramBotMCP; do
+       perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"$X\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"$(cat .build/dist/v$X/${pair#*:}.sha256)\"/" \
+           "plugins/che-telegram-mcp/bin/${pair%%:*}-wrapper.sh"
+   done
+   make check-sha256
+   git commit -m "chore: pin the sha256 of the v$X binaries" plugins/che-telegram-mcp/bin/ && git push
+   ```
+   `make check-sha256` passes only when both pins are set for `X` and equal `.build/dist/vX/<Binary>.sha256`. This commit comes after the one the build was made from; the release still targets the build's commit, and step 9's merge brings the pins to `main`. Then create the release at the commit `make release-signed` printed, with all ten files of `.build/dist/vX/` as assets:
    ```bash
    gh release create vX .build/dist/vX/* --target <commit> --title vX --notes-file <notes.md>
    ```
-   Check that every asset's `digest` in `gh release view vX --json assets` matches its `.sha256` file, `CheSlackMCP` included: the Slack wrapper downloads only the asset `CheSlackMCP` of its pinned release and never falls back to `releases/latest`, so a release without it leaves new Slack users with no server.
+   Check that every asset's `digest` in `gh release view vX --json assets` matches its `.sha256` file (and so the pins set above), `CheSlackMCP` included: the Slack wrapper downloads only the asset `CheSlackMCP` of its pinned release and never falls back to `releases/latest`, so a release without it leaves new Slack users with no server.
 9. **Merge the branch into `main` with a merge commit** (not squash or rebase), so the tagged commit is on `main`. The marketplace now offers the new plugin version, and its wrappers download `vX`.
 10. **Close every Claude Code session, then update locally.** A session keeps the wrapper of the plugin version it started with; one still running an older plugin can put the older binary back over the new one ([#83](https://github.com/PsychQuant/che-msg/issues/83)). With all sessions closed: `claude plugin marketplace update che-msg`, `claude plugin update che-telegram-mcp@che-msg`, `claude plugin update che-slack-mcp@che-msg`. To install by hand instead, download each binary from the release, compare it with the release's digest, `rm -f ~/bin/<Binary>` before moving the new file into place (a fresh inode: macOS caches code signatures per inode), and write `X` to `~/bin/.<Binary>.version`. Then start sessions again.
 
 ## Tests
 
-`make test-release` runs the release-tooling tests in `tests/release/`. None of them builds, signs, notarizes or touches the Keychain: they use fake tools and scratch directories.
+`make test-release` runs the release-tooling tests in `tests/release/`; `tests/release/test-check-versions.sh` covers the sha256 pin checks, and `tests/che-telegram-mcp/test-wrapper-checksum.sh` what the wrappers do with a pin. None of them builds, signs, notarizes or touches the Keychain: they use fake tools and scratch directories.
