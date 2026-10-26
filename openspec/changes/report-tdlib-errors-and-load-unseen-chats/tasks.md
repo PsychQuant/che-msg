@@ -1,7 +1,7 @@
 ## 1. 每個 TDLib 請求都轉換錯誤（原因 1）
 
-- [ ] 1.1 先寫失敗的測試（Requirement: Every TDLib request reports TDLib's code and message；Requirement: Authentication scope of structured error contract：一般請求的 406 丟出、message 留空，四個認證請求仍走 `mapTDLibError`）：`ArchiveTDLibErrorTests` 改呼叫 `tdlibCall`；新檔 `TDLibRequestTests` 讀 `Sources/TelegramAllLib` 所有 Swift 檔，每一行含 `openClient.` 的程式碼必須是 `tdlibCall { try await openClient.` 或四個認證請求之一，且四個認證請求各出現一次。驗證：`swift build --build-tests` 因 `tdlibCall` 不存在而失敗
-- [ ] 1.2 依設計「轉換放在 `TelegramAllLib` 的請求邊界，每個請求各自包一次」與「406 在一般請求照樣丟出，message 留空」，把 `archiveTDLibCall` 改名 `tdlibCall` 移到 `TDLibRequests.swift`，`TDLibClient.swift` 的 28 個請求與封存檔案的請求都包進去。驗證：1.1 的測試通過，`TDLibClosedClientTests` 通過 [after: 1.1]
+- [x] 1.1 先寫失敗的測試（Requirement: Every TDLib request reports TDLib's code and message；Requirement: Authentication scope of structured error contract：一般請求的 406 丟出、message 留空，四個認證請求仍走 `mapTDLibError`）：`ArchiveTDLibErrorTests` 改呼叫 `tdlibCall`；新檔 `TDLibRequestTests` 讀 `Sources/TelegramAllLib` 所有 Swift 檔，每一行含 `openClient.` 的程式碼必須是 `tdlibCall { try await openClient.` 或四個認證請求之一，且四個認證請求各出現一次。驗證：`swift build --build-tests` 因 `tdlibCall` 不存在而失敗
+- [x] 1.2 依設計「轉換放在 `TelegramAllLib` 的請求邊界，每個請求各自包一次」與「406 在一般請求照樣丟出，message 留空」，把 `archiveTDLibCall` 改名 `tdlibCall` 移到 `TDLibRequests.swift`，`TDLibClient.swift` 的 28 個請求與封存檔案的請求都包進去。驗證：1.1 的測試通過，`TDLibClosedClientTests` 通過 [after: 1.1]
 
 ## 2. 用 id 載入沒見過的聊天（原因 2）
 

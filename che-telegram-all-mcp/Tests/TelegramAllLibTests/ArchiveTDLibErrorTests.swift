@@ -8,7 +8,7 @@ import TDLibKit
 final class ArchiveTDLibErrorTests: XCTestCase {
     func testFloodWaitFromTDLibKitIsRecognised() async {
         do {
-            _ = try await archiveTDLibCall { () async throws -> Int in throw TDLibKit.Error(code: 429, message: "Too Many Requests: retry after 30") }
+            _ = try await tdlibCall { () async throws -> Int in throw TDLibKit.Error(code: 429, message: "Too Many Requests: retry after 30") }
             XCTFail("expected an error")
         } catch {
             XCTAssertEqual(ChatArchiver.floodWaitSeconds(error), 30)
@@ -23,7 +23,7 @@ final class ArchiveTDLibErrorTests: XCTestCase {
     func testOtherTDLibKitErrorsKeepTheirMessageExcept406() async {
         for (code, message, expected) in [(400, "Chat not found", "Chat not found"), (406, "internal", "")] {
             do {
-                _ = try await archiveTDLibCall { () async throws -> Int in throw TDLibKit.Error(code: code, message: message) }
+                _ = try await tdlibCall { () async throws -> Int in throw TDLibKit.Error(code: code, message: message) }
                 XCTFail("expected an error")
             } catch TelegramAllLib.TDLibClient.TDError.tdlibError(code: let gotCode, message: let gotMessage) {
                 XCTAssertEqual(gotCode, code)
@@ -36,7 +36,7 @@ final class ArchiveTDLibErrorTests: XCTestCase {
 
     func testOtherErrorsPassThrough() async {
         do {
-            _ = try await archiveTDLibCall { () async throws -> Int in throw CocoaError(.fileNoSuchFile) }
+            _ = try await tdlibCall { () async throws -> Int in throw CocoaError(.fileNoSuchFile) }
             XCTFail("expected an error")
         } catch let error as CocoaError {
             XCTAssertEqual(error.code, .fileNoSuchFile)

@@ -522,10 +522,10 @@ public final class TDLibClient {
 
     public func getChats(limit: Int = 50) async throws -> String {
         try requireOpen(authorized: true)
-        let result = try await openClient.getChats(chatList: nil, limit: limit)
+        let result = try await tdlibCall { try await openClient.getChats(chatList: nil, limit: limit) }
         var chats: [[String: Any]] = []
         for chatId in result.chatIds {
-            let chat = try await openClient.getChat(chatId: chatId)
+            let chat = try await tdlibCall { try await openClient.getChat(chatId: chatId) }
             chats.append(chatToDict(chat))
         }
         return toJSON(chats)
@@ -533,7 +533,7 @@ public final class TDLibClient {
 
     public func getChat(chatId: Int64) async throws -> String {
         try requireOpen(authorized: true)
-        let chat = try await openClient.getChat(chatId: chatId)
+        let chat = try await tdlibCall { try await openClient.getChat(chatId: chatId) }
         return toJSON(chatToDict(chat))
     }
 
@@ -550,26 +550,26 @@ public final class TDLibClient {
         // Backward-compatible single-page path: when no bulk/filter params are given,
         // behave exactly as the prior implementation (one TDLib call, raw batch, no filtering).
         if maxMessages == nil && sinceDate == nil && untilDate == nil {
-            let result = try await openClient.getChatHistory(
+            let result = try await tdlibCall { try await openClient.getChatHistory(
                 chatId: chatId,
                 fromMessageId: fromMessageId,
                 limit: limit,
                 offset: 0,
                 onlyLocal: false
-            )
+            ) }
             let messages = result.messages?.map { messageToDict($0) } ?? []
             return toJSON(messages)
         }
 
         // Single-page + date-filter path: one TDLib call, client-side date filter applied.
         if maxMessages == nil {
-            let result = try await openClient.getChatHistory(
+            let result = try await tdlibCall { try await openClient.getChatHistory(
                 chatId: chatId,
                 fromMessageId: fromMessageId,
                 limit: limit,
                 offset: 0,
                 onlyLocal: false
-            )
+            ) }
             let rawBatch = result.messages?.map { messageToDict($0) } ?? []
             let filtered = filterMessagesByDate(rawBatch, since: sinceDate, until: untilDate)
             return toJSON(filtered)
@@ -593,13 +593,13 @@ public final class TDLibClient {
         var nextFromId: Int64 = fromMessageId
 
         while accumulated.count < cap {
-            let result = try await openClient.getChatHistory(
+            let result = try await tdlibCall { try await openClient.getChatHistory(
                 chatId: chatId,
                 fromMessageId: nextFromId,
                 limit: pageSize,
                 offset: 0,
                 onlyLocal: false
-            )
+            ) }
             let batch = result.messages?.map { messageToDict($0) } ?? []
 
             let step = accumulatePaginationBatch(
@@ -620,10 +620,10 @@ public final class TDLibClient {
 
     public func searchChats(query: String, limit: Int = 20) async throws -> String {
         try requireOpen(authorized: true)
-        let result = try await openClient.searchChats(limit: limit, query: query)
+        let result = try await tdlibCall { try await openClient.searchChats(limit: limit, query: query) }
         var chats: [[String: Any]] = []
         for chatId in result.chatIds {
-            let chat = try await openClient.getChat(chatId: chatId)
+            let chat = try await tdlibCall { try await openClient.getChat(chatId: chatId) }
             chats.append(chatToDict(chat))
         }
         return toJSON(chats)
@@ -646,14 +646,14 @@ public final class TDLibClient {
                 InputMessageReplyToMessage(checklistTaskId: 0, messageId: replyId, quote: nil)
             )
         }
-        let result = try await openClient.sendMessage(
+        let result = try await tdlibCall { try await openClient.sendMessage(
             chatId: chatId,
             inputMessageContent: content,
             options: nil,
             replyMarkup: nil,
             replyTo: replyTo,
             topicId: nil
-        )
+        ) }
         return toJSON(messageToDict(result))
     }
 
@@ -666,24 +666,24 @@ public final class TDLibClient {
                 text: FormattedText(entities: [], text: text)
             )
         )
-        let result = try await openClient.editMessageText(
+        let result = try await tdlibCall { try await openClient.editMessageText(
             chatId: chatId,
             inputMessageContent: content,
             messageId: messageId,
             replyMarkup: nil
-        )
+        ) }
         return toJSON(messageToDict(result))
     }
 
     public func deleteMessages(chatId: Int64, messageIds: [Int64], revoke: Bool = true) async throws -> String {
         try requireOpen(authorized: true)
-        _ = try await openClient.deleteMessages(chatId: chatId, messageIds: messageIds, revoke: revoke)
+        _ = try await tdlibCall { try await openClient.deleteMessages(chatId: chatId, messageIds: messageIds, revoke: revoke) }
         return "{\"ok\": true}"
     }
 
     public func forwardMessages(chatId: Int64, fromChatId: Int64, messageIds: [Int64]) async throws -> String {
         try requireOpen(authorized: true)
-        let result = try await openClient.forwardMessages(
+        let result = try await tdlibCall { try await openClient.forwardMessages(
             chatId: chatId,
             fromChatId: fromChatId,
             messageIds: messageIds,
@@ -691,14 +691,14 @@ public final class TDLibClient {
             removeCaption: false,
             sendCopy: false,
             topicId: nil
-        )
+        ) }
         let messages = result.messages?.map { messageToDict($0) } ?? []
         return toJSON(messages)
     }
 
     public func searchMessages(chatId: Int64, query: String, limit: Int = 50) async throws -> String {
         try requireOpen(authorized: true)
-        let result = try await openClient.searchChatMessages(
+        let result = try await tdlibCall { try await openClient.searchChatMessages(
             chatId: chatId,
             filter: nil,
             fromMessageId: 0,
@@ -707,7 +707,7 @@ public final class TDLibClient {
             query: query,
             senderId: nil,
             topicId: nil
-        )
+        ) }
         let messages = result.messages.map { messageToDict($0) }
         return toJSON(messages)
     }
@@ -716,25 +716,25 @@ public final class TDLibClient {
 
     public func getMe() async throws -> String {
         try requireOpen(authorized: true)
-        let me = try await openClient.getMe()
+        let me = try await tdlibCall { try await openClient.getMe() }
         return toJSON(userToDict(me))
     }
 
     public func getUser(userId: Int64) async throws -> String {
         try requireOpen(authorized: true)
-        let user = try await openClient.getUser(userId: userId)
+        let user = try await tdlibCall { try await openClient.getUser(userId: userId) }
         return toJSON(userToDict(user))
     }
 
     public func getContacts(limit: Int = 200) async throws -> String {
         try requireOpen(authorized: true)
-        let result = try await openClient.getContacts()
+        let result = try await tdlibCall { try await openClient.getContacts() }
         var users: [[String: Any]] = []
         // #34: TDLib's getContacts has no server-side limit (unlike getChats /
         // searchChats), so it returns ALL contact ids. Bound the expensive
         // one-getUser-per-id fan-out client-side via `boundedContactIds`.
         for userId in boundedContactIds(result.userIds, limit: limit) {
-            let user = try await openClient.getUser(userId: userId)
+            let user = try await tdlibCall { try await openClient.getUser(userId: userId) }
             users.append(userToDict(user))
         }
         return toJSON(users)
@@ -744,19 +744,19 @@ public final class TDLibClient {
 
     public func getChatMembers(chatId: Int64, limit: Int = 200) async throws -> String {
         try requireOpen(authorized: true)
-        let chat = try await openClient.getChat(chatId: chatId)
+        let chat = try await tdlibCall { try await openClient.getChat(chatId: chatId) }
         switch chat.type {
         case .chatTypeSupergroup(let sg):
-            let result = try await openClient.getSupergroupMembers(
+            let result = try await tdlibCall { try await openClient.getSupergroupMembers(
                 filter: nil,
                 limit: limit,
                 offset: 0,
                 supergroupId: sg.supergroupId
-            )
+            ) }
             let members = result.members.map { memberToDict($0) }
             return toJSON(members)
         case .chatTypeBasicGroup(let bg):
-            let info = try await openClient.getBasicGroupFullInfo(basicGroupId: bg.basicGroupId)
+            let info = try await tdlibCall { try await openClient.getBasicGroupFullInfo(basicGroupId: bg.basicGroupId) }
             let members = info.members.map { memberToDict($0) }
             return toJSON(members)
         default:
@@ -766,30 +766,30 @@ public final class TDLibClient {
 
     public func pinMessage(chatId: Int64, messageId: Int64, disableNotification: Bool = false) async throws -> String {
         try requireOpen(authorized: true)
-        _ = try await openClient.pinChatMessage(
+        _ = try await tdlibCall { try await openClient.pinChatMessage(
             chatId: chatId,
             disableNotification: disableNotification,
             messageId: messageId,
             onlyForSelf: false
-        )
+        ) }
         return "{\"ok\": true}"
     }
 
     public func unpinMessage(chatId: Int64, messageId: Int64) async throws -> String {
         try requireOpen(authorized: true)
-        _ = try await openClient.unpinChatMessage(chatId: chatId, messageId: messageId)
+        _ = try await tdlibCall { try await openClient.unpinChatMessage(chatId: chatId, messageId: messageId) }
         return "{\"ok\": true}"
     }
 
     public func setChatTitle(chatId: Int64, title: String) async throws -> String {
         try requireOpen(authorized: true)
-        _ = try await openClient.setChatTitle(chatId: chatId, title: title)
+        _ = try await tdlibCall { try await openClient.setChatTitle(chatId: chatId, title: title) }
         return "{\"ok\": true}"
     }
 
     public func setChatDescription(chatId: Int64, description: String) async throws -> String {
         try requireOpen(authorized: true)
-        _ = try await openClient.setChatDescription(chatId: chatId, description: description)
+        _ = try await tdlibCall { try await openClient.setChatDescription(chatId: chatId, description: description) }
         return "{\"ok\": true}"
     }
 
@@ -797,18 +797,18 @@ public final class TDLibClient {
 
     public func createGroup(title: String, userIds: [Int64]) async throws -> String {
         try requireOpen(authorized: true)
-        let created = try await openClient.createNewBasicGroupChat(
+        let created = try await tdlibCall { try await openClient.createNewBasicGroupChat(
             messageAutoDeleteTime: 0,
             title: title,
             userIds: userIds
-        )
-        let chat = try await openClient.getChat(chatId: created.chatId)
+        ) }
+        let chat = try await tdlibCall { try await openClient.getChat(chatId: created.chatId) }
         return toJSON(chatToDict(chat))
     }
 
     public func addChatMember(chatId: Int64, userId: Int64) async throws -> String {
         try requireOpen(authorized: true)
-        _ = try await openClient.addChatMember(chatId: chatId, forwardLimit: 0, userId: userId)
+        _ = try await tdlibCall { try await openClient.addChatMember(chatId: chatId, forwardLimit: 0, userId: userId) }
         return "{\"ok\": true}"
     }
 
@@ -816,12 +816,12 @@ public final class TDLibClient {
 
     public func markAsRead(chatId: Int64, messageIds: [Int64]) async throws -> String {
         try requireOpen(authorized: true)
-        _ = try await openClient.viewMessages(
+        _ = try await tdlibCall { try await openClient.viewMessages(
             chatId: chatId,
             forceRead: true,
             messageIds: messageIds,
             source: nil
-        )
+        ) }
         return "{\"ok\": true}"
     }
 

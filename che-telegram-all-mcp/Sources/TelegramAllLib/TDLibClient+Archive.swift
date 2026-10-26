@@ -1,18 +1,6 @@
 import Foundation
 import TDLibKit
 
-/// Runs a TDLibKit call for the archive, turning TDLibKit's own errors into
-/// `TDError.tdlibError` so the archiver can read rate limits (`429 "Too Many Requests: retry after
-/// <n>"`) and the server reports
-/// TDLib's message. A 406 message must not be shown, so it is dropped.
-internal func archiveTDLibCall<T>(_ body: () async throws -> T) async throws -> T {
-    do {
-        return try await body()
-    } catch let error as TDLibKit.Error {
-        throw TDLibClient.TDError.tdlibError(code: error.code, message: error.code == 406 ? "" : error.message)
-    }
-}
-
 /// Paging below a cursor (PsychQuant/che-msg#69).
 internal enum ArchiveCursor {
     /// The messages of `page` older than `cursor`; all of them when `cursor` is 0 (newest).
@@ -55,10 +43,8 @@ extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
     public func page(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [[String: Any]] {
         try requireOpen(authorized: true)
         if fromMessageId == 0 { try await loadChatForArchive(chatId) }
-        let result = try await archiveTDLibCall {
-            try await openClient.getChatHistory(chatId: chatId, fromMessageId: fromMessageId, limit: limit,
-                                                offset: 0, onlyLocal: false)
-        }
+        let result = try await tdlibCall { try await openClient.getChatHistory(
+            chatId: chatId, fromMessageId: fromMessageId, limit: limit, offset: 0, onlyLocal: false) }
         // TDLib excludes the cursor at offset 0 (OrderedMessages::get_history); filtering keeps
         // the protocol's "strictly below" true even if that ever changes.
         return ArchiveCursor.strictlyBelow(result.messages?.map { messageToDict($0) } ?? [], cursor: fromMessageId)
@@ -68,9 +54,8 @@ extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
     /// returns its path in TDLib's cache.
     public func download(fileId: Int) async throws -> String {
         try requireOpen(authorized: true)
-        let file = try await archiveTDLibCall {
-            try await openClient.downloadFile(fileId: fileId, limit: 0, offset: 0, priority: 1, synchronous: true)
-        }
+        let file = try await tdlibCall { try await openClient.downloadFile(
+            fileId: fileId, limit: 0, offset: 0, priority: 1, synchronous: true) }
         guard file.local.isDownloadingCompleted, !file.local.path.isEmpty else {
             throw TDError.tdlibError(code: 0, message: "download of file \(fileId) did not complete")
         }
@@ -80,7 +65,7 @@ extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
     public func message(chatId: Int64, messageId: Int64) async throws -> [String: Any] {
         try requireOpen(authorized: true)
         try await loadChatForArchive(chatId)
-        return messageToDict(try await archiveTDLibCall { try await openClient.getMessage(chatId: chatId, messageId: messageId) })
+        return messageToDict(try await tdlibCall { try await openClient.getMessage(chatId: chatId, messageId: messageId) })
     }
 }
 
@@ -90,15 +75,15 @@ extension TDLibClient {
     /// unseen chat fails with "Chat not found"; such a chat is created from its id.
     func loadChatForArchive(_ chatId: Int64) async throws {
         do {
-            _ = try await archiveTDLibCall { try await openClient.getChat(chatId: chatId) }
+            _ = try await tdlibCall { try await openClient.getChat(chatId: chatId) }
         } catch TDError.tdlibError(code: 400, message: _) {
             switch ArchiveChatID(chatId) {
             case .user(let userId):
-                _ = try await archiveTDLibCall { try await openClient.createPrivateChat(force: false, userId: userId) }
+                _ = try await tdlibCall { try await openClient.createPrivateChat(force: false, userId: userId) }
             case .basicGroup(let groupId):
-                _ = try await archiveTDLibCall { try await openClient.createBasicGroupChat(basicGroupId: groupId, force: false) }
+                _ = try await tdlibCall { try await openClient.createBasicGroupChat(basicGroupId: groupId, force: false) }
             case .supergroup(let supergroupId):
-                _ = try await archiveTDLibCall { try await openClient.createSupergroupChat(force: false, supergroupId: supergroupId) }
+                _ = try await tdlibCall { try await openClient.createSupergroupChat(force: false, supergroupId: supergroupId) }
             case .other:
                 throw TDError.tdlibError(code: 400, message: "Chat not found")
             }
