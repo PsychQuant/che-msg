@@ -432,6 +432,7 @@ public final class CheTelegramAllMCPServer {
         guard tools.contains(where: { $0.name == name }) else {
             return errorResult("Unknown tool: \(name)")
         }
+        if let argumentError = preflightArgumentError(name: name, arguments: args) { return argumentError }
         let tdlib: TDLibClient
         do {
             tdlib = try await lifecycle.beginCall()
@@ -584,12 +585,7 @@ public final class CheTelegramAllMCPServer {
 
             // Message Operations
             case "get_chat_history":
-                let parsed: GetChatHistoryArgs
-                do {
-                    parsed = try parseGetChatHistoryArgs(args)
-                } catch {
-                    return errorResultFromParse(error)
-                }
+                let parsed = try parseGetChatHistoryArgs(args)
                 result = try await tdlib.getChatHistory(
                     chatId: parsed.chatId,
                     limit: parsed.limit,
@@ -686,12 +682,7 @@ public final class CheTelegramAllMCPServer {
 
             // History Export
             case "dump_chat_to_markdown":
-                let parsed: DumpChatToMarkdownArgs
-                do {
-                    parsed = try parseDumpChatToMarkdownArgs(args)
-                } catch {
-                    return errorResultFromParse(error)
-                }
+                let parsed = try parseDumpChatToMarkdownArgs(args)
                 let exporter = MarkdownExporter(client: tdlib)
                 result = try await exporter.dumpChatToMarkdown(
                     chatId: parsed.chatId,

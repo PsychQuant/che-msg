@@ -61,6 +61,25 @@ internal func errorResultFromParse(_ error: Error) -> CallTool.Result {
     )
 }
 
+/// The argument check of the tools whose parsing can run before TDLib opens
+/// (#27): `get_chat_history` and `dump_chat_to_markdown`. `handleToolCall` runs
+/// it before `beginCall()`, so a call with a bad argument neither opens TDLib
+/// nor waits for its login, and is answered with the argument error even
+/// when TDLib is held elsewhere or logged out. Nil when the arguments pass or
+/// the tool checks its arguments later.
+internal func preflightArgumentError(name: String, arguments args: [String: Value]) -> CallTool.Result? {
+    do {
+        switch name {
+        case "get_chat_history": _ = try parseGetChatHistoryArgs(args)
+        case "dump_chat_to_markdown": _ = try parseDumpChatToMarkdownArgs(args)
+        default: return nil
+        }
+        return nil
+    } catch {
+        return errorResultFromParse(error)
+    }
+}
+
 /// Parse and validate the args dictionary for `get_chat_history`.
 ///
 /// Rules encoded here (each has a corresponding test in `ServerHandlerLogicTests`):

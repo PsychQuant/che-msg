@@ -229,6 +229,44 @@ final class ToolRoutingTests: XCTestCase {
         XCTAssertTrue(reader.calls.isEmpty, "\(reader.calls)")
     }
 
+    // MARK: - Arguments checked before TDLib opens (#27, option B)
+
+    /// A bad argument is reported without opening TDLib: the check runs
+    /// before `beginCall()`, so it holds no lock and waits for no login.
+    func testBadArgumentsAreReportedBeforeTDLibOpens() {
+        let output = Value.string(cache.appendingPathComponent("chat.md").path)
+        let cases: [(tool: String, args: [String: Value], expected: String)] = [
+            ("get_chat_history", [:], "Error: chat_id is required"),
+            ("get_chat_history", ["chat_id": .int(777), "until_date": .string("17-04-2026")],
+             "Error: Date format invalid: expected YYYY-MM-DD, got \"17-04-2026\""),
+            ("dump_chat_to_markdown", ["chat_id": .int(777)], "Error: output_path is required"),
+            ("dump_chat_to_markdown", ["output_path": output], "Error: chat_id is required"),
+        ]
+        for c in cases {
+            let result = preflightArgumentError(name: c.tool, arguments: c.args)
+            XCTAssertEqual(result?.isError, true, c.expected)
+            XCTAssertEqual(result.map(texts), [c.expected])
+        }
+        XCTAssertNil(preflightArgumentError(name: "get_chat_history", arguments: arguments(for: "get_chat_history")))
+        XCTAssertNil(preflightArgumentError(name: "dump_chat_to_markdown", arguments: arguments(for: "dump_chat_to_markdown")))
+        // Other tools keep their checks where they are.
+        XCTAssertNil(preflightArgumentError(name: "search_messages", arguments: [:]))
+    }
+
+    /// handleToolCall runs that check before it opens TDLib. A test cannot
+    /// drive this through handleToolCall: with TDLib free, beginCall() opens
+    /// a real TDLib client.
+    func testHandleToolCallChecksArgumentsBeforeOpeningTDLib() throws {
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/CheTelegramAllMCPCore/Server.swift"), encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "func handleToolCall(name: String"))
+        let body = source[start.upperBound...]
+        let check = try XCTUnwrap(body.range(of: "preflightArgumentError(name: name, arguments: args)"))
+        let open = try XCTUnwrap(body.range(of: "lifecycle.beginCall()"))
+        XCTAssertLessThan(check.lowerBound, open.lowerBound)
+    }
+
     // MARK: - Source note
 
     private let utcPlus8 = TimeZone(secondsFromGMT: 8 * 3600)!
