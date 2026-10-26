@@ -114,7 +114,7 @@ echo "test-plugin-layout-mutations.sh (#138)"
 # --- baseline and fail-closed ---
 P=$(fresh); expect_pass "unmodified copy passes"
 P=$(fresh); echo '{ not json' > "$P/.mcp.json"
-expect_fail "broken .mcp.json fails closed" "parser crashed"
+expect_fail "broken .mcp.json fails closed, and says why (#54 verify: no longer a parser crash)" "\.mcp\.json cannot be read"
 P=$(fresh); rm "$P/README.md"
 expect_fail "missing README fails closed" "parser crashed"
 
@@ -523,8 +523,41 @@ P=$(fresh); perl -pi -e 's{^\| Skill \| Pre-approved \| Not pre-approved \|}{| S
 expect_fail "the table's header is rewritten, so the table cannot be found (#86)" "FAIL \(l\)"
 P=$(fresh); perl -pi -e 's{^\| `search` \| `auth_status`, `search_chats`, `search_messages`, `get_chat_history` \|}{| `search` | `get_chat_history`, `search_messages`, `auth_status`, `search_chats` |}' "$P/README.md"
 expect_pass "the same tools in another order in a row (#86)"
-P=$(fresh); perl -0pi -e 's{(allowed-tools:(\r?)\n(?:  - .*\n)*)}{$1  - mcp__plugin_che-telegram-mcp_telegram-all__send_message$2\n}' "$P/skills/send/SKILL.md"
-expect_fail "a skill pre-approves a tool its row lists as not pre-approved (#86)" "send_message"
+# Pre-approved in the frontmatter and in its row, but also listed as not pre-approved: only the
+# not-pre-approved comparison in (l) can catch it ((f) allows search_messages, the sets match).
+P=$(fresh); perl -0pi -e 's{(allowed-tools:(\r?)\n(?:  - .*\n)*)}{$1  - mcp__plugin_che-telegram-mcp_telegram-all__search_messages$2\n}' "$P/skills/send/SKILL.md"
+perl -pi -e 's{^\| `send` \| `auth_status`, `search_chats` \| \*\*`send_message`\*\*}{| `send` | `auth_status`, `search_chats`, `search_messages` | **`search_messages`**, **`send_message`**}' "$P/README.md"
+expect_fail "a skill pre-approves a tool its row lists as not pre-approved (#86)" "send: allowed-tools has \['search_messages'\], which the README lists as not pre-approved"
+
+# ---------- #54 / #86 verify follow-ups ----------
+P=$(fresh); printf '#!/bin/bash\n' > "$P/bin/evil-wrapper.sh"; chmod +x "$P/bin/evil-wrapper.sh"
+expect_fail "a third executable wrapper in bin/ (#54 verify)" "^    bin/ contains"
+P=$(fresh); printf '#!/bin/bash\n' > "$P/bin/.sneaky"; chmod +x "$P/bin/.sneaky"
+expect_fail "an executable dotfile in bin/ (#54 verify)" "^    bin/ contains"
+P=$(fresh); rm "$P/hooks/check-mcp.sh"; mkdir "$P/hooks/check-mcp.sh"
+expect_fail "hooks/check-mcp.sh is a directory (#54 verify)" "check-mcp\.sh is not an executable file"
+P=$(fresh); printf '[]\n' > "$P/.claude-plugin/plugin.json"
+expect_fail "plugin.json is a JSON array (#54 verify)" "plugin\.json is not a JSON object"
+P=$(fresh); printf '{\n' > "$P/.claude-plugin/plugin.json"
+expect_fail "plugin.json cannot be parsed (#54 verify)" "plugin\.json cannot be read"
+P=$(fresh); printf '[]\n' > "$P/hooks/hooks.json"
+expect_fail "hooks.json is a JSON array (#54 verify)" "hooks\.json is not a JSON object"
+P=$(fresh); jedit "$P/hooks/hooks.json" 'd["description"] = "x"'
+expect_fail "hooks.json with an extra top-level key (#54 verify)" "hooks\.json has top-level keys"
+P=$(fresh); jedit "$P/hooks/hooks.json" 'd["hooks"]["SessionStart"][0]["hooks"].append({"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/check-mcp.sh --again"})'
+expect_fail "hooks.json with a second SessionStart command (#54 verify)" "SessionStart runs"
+P=$(fresh); jedit "$P/hooks/hooks.json" 'd["hooks"]["SessionStart"][0]["hooks"][0]["type"] = "mcp_tool"'
+expect_fail "a SessionStart handler of another type with the same command (#54 verify)" "handlers .* are not all"
+P=$(fresh); jedit "$P/hooks/hooks.json" 'd["hooks"]["SessionStart"][0]["hooks"][0]["async"] = True'
+expect_fail "a SessionStart handler with an extra key (#54 verify)" "handlers .* are not all"
+P=$(fresh); jedit "$SCRATCH/tree/.claude-plugin/marketplace.json" 'd["plugins"].append({"name": "che-telegram-mcp-extra", "source": "./plugins/che-telegram-mcp", "hooks": {}})'
+expect_fail "a second marketplace entry loading this directory under another name (#54 verify)" "entries for che-telegram-mcp \(by name or source\)"
+P=$(fresh); rm "$SCRATCH/tree/.claude-plugin/marketplace.json"
+expect_fail "marketplace.json missing (#54 verify)" "marketplace\.json not found"
+P=$(fresh); perl -pi -e 's{^\| `chats` \| `auth_status`, `get_chats` \|}{| `chats` | `auth_status`, `get_chats`, get_me |}' "$P/README.md"
+expect_fail "a Pre-approved cell with a tool not in backticks (#86 verify)" "has text that is not a .tool."
+P=$(fresh); perl -pi -e 's{^(\| `chats` .*)$}{$1\n| `telegram-messaging` | — | — |}' "$P/README.md"
+expect_fail "a row for a skill that pre-approves nothing (#86 verify)" "row for telegram-messaging, which pre-approves no tools"
 
 echo
 echo "Results: $PASSED passed, $FAILED failed"

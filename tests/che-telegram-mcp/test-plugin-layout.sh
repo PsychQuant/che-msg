@@ -177,6 +177,7 @@ SKILLS = ["archive-telegram", "auth", "chats", "search", "send", "telegram-messa
 expected = {
     "": [".claude-plugin", ".mcp.json", "CHANGELOG.md", "README.md", "bin", "hooks", "skills"],
     ".claude-plugin": ["plugin.json"],
+    "bin": ["che-telegram-all-mcp-wrapper.sh", "che-telegram-bot-mcp-wrapper.sh"],
     "hooks": ["check-mcp.sh", "hooks.json"],
     "skills": SKILLS,
 }
@@ -186,6 +187,9 @@ for rel, want in expected.items():
     got = listing(os.path.join(root, rel))
     if got != want:
         bad("a", f"{rel or '.'}/ contains {got}, expected exactly {want}")
+hook_script = os.path.join(root, "hooks", "check-mcp.sh")
+if os.path.lexists(hook_script) and not (os.path.isfile(hook_script) and os.access(hook_script, os.X_OK)):
+    bad("a", "hooks/check-mcp.sh is not an executable file")
 # Compared without quotes: (c) decides how ${CLAUDE_PLUGIN_ROOT} must be quoted.
 HOOK_COMMAND = "${CLAUDE_PLUGIN_ROOT}/hooks/check-mcp.sh"
 def load_json(path):
@@ -196,27 +200,51 @@ def load_json(path):
     except (OSError, ValueError, RecursionError) as e:
         bad("a", f"{os.path.relpath(path, root)} cannot be read ({type(e).__name__}) — not checked")
         return None
-hooks_cfg = load_json(os.path.join(root, "hooks", "hooks.json"))
-if isinstance(hooks_cfg, dict):
+def json_object(path, cfg, tag="a"):
+    """cfg when it is a JSON object; otherwise report it (fail closed) and return None."""
+    if cfg is not None and not isinstance(cfg, dict):
+        bad(tag, f"{os.path.relpath(path, root)} is not a JSON object ({type(cfg).__name__}) — not checked")
+        return None
+    return cfg
+hooks_path = os.path.join(root, "hooks", "hooks.json")
+hooks_cfg = json_object(hooks_path, load_json(hooks_path)) if os.path.isfile(hooks_path) else None
+if hooks_cfg is not None:
     if set(hooks_cfg) != {"hooks"}:
         bad("a", f"hooks/hooks.json has top-level keys {sorted(hooks_cfg)}, expected only ['hooks']")
     events = hooks_cfg.get("hooks", {})
+    events = events if isinstance(events, dict) else {}
     if sorted(events) != ["SessionStart"]:
         bad("a", f"hooks/hooks.json declares events {sorted(events)}, expected only ['SessionStart']")
-    commands = [h.get("command") for m in events.get("SessionStart", []) for h in m.get("hooks", [])]
+    groups = events.get("SessionStart", [])
+    groups = groups if isinstance(groups, list) else []
+    handlers = []
+    for m in groups:
+        if not isinstance(m, dict) or set(m) != {"hooks"} or not isinstance(m.get("hooks"), list):
+            bad("a", f"hooks/hooks.json SessionStart entry {m!r} is not {{'hooks': [...]}}")
+            continue
+        handlers += m["hooks"]
+    shapes_ok = all(isinstance(h, dict) and set(h) == {"type", "command"} and h.get("type") == "command"
+                    for h in handlers)
+    if not shapes_ok:
+        bad("a", f"hooks/hooks.json SessionStart handlers {handlers} are not all {{'type': 'command', 'command': ...}}")
+    commands = [h.get("command") for h in handlers if isinstance(h, dict)]
     if [str(c).replace('"', "") for c in commands] != [HOOK_COMMAND]:
         bad("a", f"hooks/hooks.json SessionStart runs {commands}, expected only [{HOOK_COMMAND!r}]")
 market = os.path.join(root, "..", "..", ".claude-plugin", "marketplace.json")
 if not os.path.isfile(market):
     bad("a", "repo .claude-plugin/marketplace.json not found — cannot check the plugin's entry")
 else:
-    market_cfg = load_json(market)
-    entries = [e for e in market_cfg.get("plugins", []) if isinstance(e, dict) and e.get("name") == "che-telegram-mcp"] \
-        if isinstance(market_cfg, dict) else None
+    market_cfg = json_object(market, load_json(market))
+    plugins_list = market_cfg.get("plugins", []) if market_cfg is not None else None
+    # An entry is this plugin's by name or by source, so a second entry that loads
+    # this directory under another name is counted too.
+    entries = [e for e in plugins_list if isinstance(e, dict) and
+               (e.get("name") == "che-telegram-mcp" or str(e.get("source", "")).rstrip("/") == "./plugins/che-telegram-mcp")] \
+        if isinstance(plugins_list, list) else None
     if entries is None:
         pass
     elif len(entries) != 1:
-        bad("a", f"marketplace.json has {len(entries)} che-telegram-mcp entries, expected 1")
+        bad("a", f"marketplace.json has {len(entries)} entries for che-telegram-mcp (by name or source), expected 1")
     else:
         extra = set(entries[0]) - {"name", "version", "description", "author", "source", "category"}
         if extra:
@@ -224,16 +252,18 @@ else:
         if entries[0].get("source") != "./plugins/che-telegram-mcp":
             bad("a", f"marketplace entry source is {entries[0].get('source')!r}, not ./plugins/che-telegram-mcp (the directory this test checks)")
 manifest = os.path.join(root, ".claude-plugin", "plugin.json")
-manifest_cfg = load_json(manifest) if os.path.isfile(manifest) else None
-if isinstance(manifest_cfg, dict):
+manifest_cfg = json_object(manifest, load_json(manifest)) if os.path.isfile(manifest) else None
+if manifest_cfg is not None:
     extra = set(manifest_cfg) - {"name", "version", "description", "author",
                                  "homepage", "repository", "license", "keywords"}
     if extra:
         bad("a", f"plugin.json declares {sorted(extra)} (components or behaviour no check reviews)")
 
 # ---------- (b) / (b2) .mcp.json ----------
-cfg = json.load(open(os.path.join(root, ".mcp.json")))
+mcp_path = os.path.join(root, ".mcp.json")
+cfg = json_object(mcp_path, load_json(mcp_path), "b") or {}
 servers = cfg.get("mcpServers", cfg)
+servers = servers if isinstance(servers, dict) else {}
 if not servers:
     bad("b", ".mcp.json declares no servers")
 if sorted(servers) != ["telegram-all", "telegram-bot"]:
@@ -243,8 +273,8 @@ for name, spec in servers.items():
     if extra:
         bad("b", f".mcp.json: {name} declares {sorted(extra)} (only type, command and description are reviewed)")
 for name, spec in servers.items():
-    cmd = spec.get("command", "")
-    if not re.fullmatch(r"\$\{CLAUDE_PLUGIN_ROOT\}/bin/[A-Za-z0-9._-]+-wrapper\.sh", cmd):
+    cmd = spec.get("command", "") if isinstance(spec, dict) else ""
+    if not isinstance(cmd, str) or not re.fullmatch(r"\$\{CLAUDE_PLUGIN_ROOT\}/bin/[A-Za-z0-9._-]+-wrapper\.sh", cmd):
         bad("b", f"{name}: command is not ${{CLAUDE_PLUGIN_ROOT}}/bin/<name>-wrapper.sh: {cmd}")
         continue
     path = cmd.replace("${CLAUDE_PLUGIN_ROOT}", root)
@@ -272,11 +302,12 @@ def inside_double_quotes(s, i):
         k += 1
     return n % 2 == 1
 
-hooks = json.load(open(os.path.join(root, "hooks", "hooks.json")))
-for event, matchers in hooks.get("hooks", {}).items():
-    for m in matchers:
-        for h in m.get("hooks", []):
-            cmd = h.get("command", "")
+hook_events = (hooks_cfg or {}).get("hooks", {})
+for event, matchers in (hook_events.items() if isinstance(hook_events, dict) else []):
+    for m in (matchers if isinstance(matchers, list) else []):
+        for h in (m.get("hooks", []) if isinstance(m, dict) and isinstance(m.get("hooks"), list) else []):
+            cmd = h.get("command", "") if isinstance(h, dict) else ""
+            cmd = cmd if isinstance(cmd, str) else ""
             for mt in re.finditer(r"\$\{CLAUDE_PLUGIN_ROOT\}", cmd):
                 if not inside_double_quotes(cmd, mt.start()):
                     bad("c", f"{event}: unquoted ${{CLAUDE_PLUGIN_ROOT}} in: {cmd}")
@@ -484,6 +515,9 @@ else:
             pre = set() if pre_cell in ("—", "-") else set(re.findall(f"`({TOOL})`", pre_cell))
             if pre_cell not in ("—", "-") and not pre:
                 bad("l", f"README line {k + 1}: Pre-approved cell lists no `tool`: {pre_cell}")
+            elif pre_cell not in ("—", "-") and re.sub(r"[,\s]", "", re.sub(f"`{TOOL}`", "", pre_cell)):
+                bad("l", f"README line {k + 1}: Pre-approved cell has text that is not a `tool` (comma-separated, "
+                         f"in backticks): {pre_cell}")
             if m.group(1) in rows:
                 bad("l", f"README pre-approved table has two rows for {m.group(1)}")
             rows[m.group(1)] = (pre, set(re.findall(f"\\*\\*`({TOOL})`\\*\\*", not_cell)))
@@ -506,6 +540,8 @@ else:
             bad("l", f"README pre-approved table has a row for {skill}, which is not a skill")
         elif skill not in rows:
             bad("l", f"README pre-approved table has no row for {skill}, which pre-approves {sorted(have[skill])}")
+        elif skill not in have:
+            bad("l", f"README pre-approved table has a row for {skill}, which pre-approves no tools")
         else:
             pre, not_pre = rows[skill]
             mine = have.get(skill, set())
