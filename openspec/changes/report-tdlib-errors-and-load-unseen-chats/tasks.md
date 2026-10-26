@@ -15,3 +15,7 @@
 ## 4. 實測（需要維護者的帳號）
 
 - [ ] 4.1 在沒有載入目標聊天的全新 TDLib 資料庫上（例如剛登入後、尚未呼叫 `get_chats`），分別用一個群組（basic group 或 supergroup）與一個非 Saved Messages 的一對一聊天呼叫 `get_chat_history`：記錄 `createPrivateChat`／`createBasicGroupChat`／`createSupergroupChat` 是否成功；失敗時回應是否為帶 `hint` 的 `tdlib_error`，以及照提示先呼叫 `get_chats` 後是否讀得到。驗證：結果貼在 #71；若建立失敗而 `get_chats` 能救回，另開 issue 決定是否在 `loadChat` 加 `loadChats` [after: 2.2]
+
+## 5. 驗證後的修正
+
+- [x] 5.1 先寫失敗的測試：原始碼測試改為掃 `Sources/TelegramAllLib` 所有檔案、辨認任何 `…chatId: Int64`／`…ChatId: Int64` 參數、略過註解行，並要求 `knownChat` 單獨一行、不帶條件、在第一個請求之前；封存的 `page` 只在 `fromMessageId == 0` 時載入而失敗。再讓 `page` 每一頁都呼叫 `knownChat`（Requirement: A chat TDLib has not loaded is loaded by its id）。驗證：`swift test --filter TDLibRequestTests` 先失敗後通過 [after: 2.2]

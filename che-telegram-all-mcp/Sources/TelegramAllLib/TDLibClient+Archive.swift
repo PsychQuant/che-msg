@@ -12,10 +12,12 @@ internal enum ArchiveCursor {
 
 /// TDLib as the archive's history source and media downloader (PsychQuant/che-msg#69).
 extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
-    /// One page of `getChatHistory`, newest first, as message JSON objects.
+    /// One page of `getChatHistory`, newest first, as message JSON objects. The chat is made
+    /// known on every page, whatever the cursor (#71): `getChat` answers locally once TDLib
+    /// knows the chat, and a caller may start below a message rather than at the newest.
     public func page(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [[String: Any]] {
         try requireOpen(authorized: true)
-        if fromMessageId == 0 { try await knownChat(chatId) }
+        try await knownChat(chatId)
         let result = try await tdlibCall { try await openClient.getChatHistory(
             chatId: chatId, fromMessageId: fromMessageId, limit: limit, offset: 0, onlyLocal: false) }
         // TDLib excludes the cursor at offset 0 (OrderedMessages::get_history); filtering keeps

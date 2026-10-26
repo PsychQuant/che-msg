@@ -81,39 +81,67 @@ final class TDLibRequestTests: XCTestCase {
         "setChatDescription", "addChatMember", "markAsRead", "page", "message",
     ]
 
-    /// Each method in the TDLib client's files that takes a chat id and sends a request makes
-    /// every chat id parameter known (`knownChat`) on a line before its first request (#71).
-    /// The signature runs to the line that opens the body; the body ends at the next
-    /// declaration or comment at the method's indentation.
+    /// Each method in TelegramAllLib that takes a chat id (any `…chatId: Int64` / `…ChatId:
+    /// Int64` parameter) and sends a request makes every such chat known on a line of its own,
+    /// before its first request and not under a condition (#71; the archive's `page` once did it
+    /// on the first page only, so a resumed archive still failed). Comment lines do not count.
+    /// The signature runs to the line that opens the body, which ends at the closing brace at the
+    /// declaration's indentation; a method written on one line has no line of its own for the
+    /// call and fails.
     func testEveryMethodWithAChatIdLoadsTheChatFirst() throws {
-        let declaration = try NSRegularExpression(pattern: #"^    (?:public |private |internal )?func (\w+)\("#)
-        let member = try NSRegularExpression(
-            pattern: #"^    (?:public |private |internal |static |@\w+ )*(?:func|var|let|init|case|enum|struct|class|//)|^\}"#)
+        let declaration = try NSRegularExpression(
+            pattern: #"^(\s*)(?:(?:public|private|internal|fileprivate|static|override|final|@\w+)\s+)*func\s+(\w+)"#)
+        let chatIdParameter = try NSRegularExpression(pattern: #"\b(\w*[cC]hatId)\s*:\s*Int64\b"#)
+        // `knownChat(` as a call, not inside `unknownChat(`.
+        let anyKnownChat = try NSRegularExpression(pattern: #"(?<!\w)knownChat\("#)
+        func isComment(_ line: String) -> Bool { line.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+        func groups(_ regex: NSRegularExpression, _ text: String) -> [[String]] {
+            regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { match in
+                (1..<match.numberOfRanges).map { Range(match.range(at: $0), in: text).map { String(text[$0]) } ?? "" }
+            }
+        }
+        let files = FileManager.default.enumerator(at: Self.sources, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" } ?? []
         var checked: Set<String> = []
-        for file in ["TDLibClient.swift", "TDLibClient+Archive.swift"] {
-            let lines = try String(contentsOf: Self.sources.appendingPathComponent(file), encoding: .utf8)
+        for url in files {
+            let file = url.lastPathComponent
+            let lines = try String(contentsOf: url, encoding: .utf8)
                 .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-            for (index, line) in lines.enumerated() {
-                guard let match = declaration.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
-                      let name = Range(match.range(at: 1), in: line).map({ String(line[$0]) }),
-                      name != "knownChat",
-                      let opening = lines[index...].firstIndex(where: { $0.hasSuffix("{") }) else { continue }
-                let signature = lines[index...opening].joined(separator: " ")
-                let chatIds = ["chatId", "fromChatId"].filter { signature.contains("\($0): Int64") }
+            for (index, line) in lines.enumerated() where !isComment(line) {
+                guard let found = groups(declaration, line).first, found[1] != "knownChat",
+                      let opening = lines[index...].firstIndex(where: { $0.contains("{") }) else { continue }
+                let (indent, name) = (found[0], found[1])
+                let chatIds = Set(groups(chatIdParameter, lines[index...opening].joined(separator: " ")).map { $0[0] })
                 guard !chatIds.isEmpty else { continue }
-                var body: [String] = []
-                for next in lines[(opening + 1)...] {
-                    if member.firstMatch(in: next, range: NSRange(next.startIndex..., in: next)) != nil { break }
-                    body.append(next)
+                let openingLine = lines[opening]
+                var body: [String]
+                if openingLine.filter({ $0 == "{" }).count == openingLine.filter({ $0 == "}" }).count {
+                    body = [String(openingLine[openingLine.firstIndex(of: "{")!...])]
+                } else {
+                    body = []
+                    for next in lines[(opening + 1)...] {
+                        if next.trimmingCharacters(in: .whitespaces) == "}" && next.hasPrefix(indent + "}") { break }
+                        body.append(next)
+                    }
                 }
+                body = body.filter { !isComment($0) }
                 // A method that reads elsewhere (the local cache's `page`) sends no TDLib request.
-                guard body.contains(where: { $0.contains("openClient.") || $0.contains("knownChat(") }) else { continue }
+                guard body.contains(where: { line in
+                    line.contains("openClient.") || anyKnownChat.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil
+                }) else { continue }
                 let firstRequest = body.firstIndex(where: { $0.contains("openClient.") }) ?? body.count
                 checked.insert(name)
-                for chatId in chatIds {
-                    let loaded = body.firstIndex(where: { $0.contains("knownChat(\(chatId))") })
-                    XCTAssertNotNil(loaded, "\(file): \(name) never makes \(chatId) known")
-                    if let loaded { XCTAssertLessThan(loaded, firstRequest, "\(file): \(name) sends a request before knownChat(\(chatId))") }
+                for chatId in chatIds.sorted() {
+                    let call = try NSRegularExpression(
+                        pattern: #"^(?:(?:let|var)\s+\w+\s*=\s*|_\s*=\s*)?try await knownChat\(\s*"# + chatId + #"\s*\)$"#)
+                    let loaded = body.firstIndex { line in
+                        let text = line.trimmingCharacters(in: .whitespaces)
+                        return call.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+                    }
+                    XCTAssertNotNil(loaded, "\(file): \(name) does not make \(chatId) known on a line of its own")
+                    if let loaded {
+                        XCTAssertLessThan(loaded, firstRequest, "\(file): \(name) sends a request before knownChat(\(chatId))")
+                    }
                 }
             }
         }
