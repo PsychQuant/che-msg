@@ -43,4 +43,15 @@ final class TDLibClientContactsTests: XCTestCase {
         let ids: [Int64] = Array(1...500)
         XCTAssertEqual(boundedContactIds(ids, limit: 200).count, 200)
     }
+
+    /// `getContacts(limit:)` is public, so a library caller can pass any
+    /// value the MCP handler's `parseLimit` would refuse: a negative limit
+    /// must not trap in `prefix`, and the 10_000 cap holds there too.
+    func testBoundedContactIdsClampsOutOfRangeLimits() {
+        let ids: [Int64] = Array(1...10_005)
+        XCTAssertEqual(boundedContactIds(ids, limit: -1), [])
+        XCTAssertEqual(boundedContactIds(ids, limit: 0), [])
+        XCTAssertEqual(boundedContactIds(ids, limit: 100_000).count, 10_000)
+    }
 }
+

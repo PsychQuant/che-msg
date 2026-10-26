@@ -961,8 +961,9 @@ internal func mediaFileInfo(_ content: MessageContent) -> [String: Any]? {
 /// this caps the expensive one-`getUser`-per-id loop client-side. Pure +
 /// testable seam (the fan-out itself needs a live TDLib connection, so this is
 /// where #34's falsifiable coverage lives — see `TDLibClientContactsTests`).
-/// `limit` is pre-validated by `parseLimit` (`> 0`, `≤ 10_000`) at the handler,
-/// and the wrapper's own default (200) is also `> 0`, so `prefix` never traps.
+/// The MCP handler refuses a limit outside 1...10_000 (`parseLimit`), but
+/// `getContacts(limit:)` is public: the limit is clamped to 0...10_000 here,
+/// so a negative one returns nothing instead of trapping in `prefix`.
 internal func boundedContactIds(_ ids: [Int64], limit: Int) -> [Int64] {
-    Array(ids.prefix(limit))
+    Array(ids.prefix(min(max(limit, 0), 10_000)))
 }
