@@ -351,33 +351,38 @@ public final class TDLibClient {
             if plan != .nothing { lastAutoFireError = nil }
             return credentialLookups.stateChanged(lookingUp: lookingUp)
         }
-        switch plan {
-        case .nothing:
-            return
-        case .fire(let value):
-            Task { [weak self] in await self?.submitCredential(value, for: state) }
-        case .lookUp(let credential):
-            let source = credentials
-            Task { [weak self] in
-                let value = await source.lookup(credential).value
-                guard let self, self.credentialLookups.finish(generation, found: value != nil),
-                      let value else { return }
-                await self.submitCredential(value, for: state)
+        guard plan != .nothing else { return }
+        let source = credentials
+        let tracker = credentialLookups
+        Task { [weak self] in
+            do {
+                try await runCredentialPlan(
+                    plan, generation: generation, tracker: tracker,
+                    lookup: { await source.lookup($0) },
+                    submit: { [weak self] value in try await self?.submitCredential(value, for: state) })
+            } catch {
+                self?.recordAutoFireError(error)
             }
         }
     }
 
     /// Sends an auto-fired phone number or 2FA password through the coalesced
-    /// path. A failure is recorded for `auth_status`; the value is not kept.
-    private func submitCredential(_ value: String, for state: AuthState) async {
-        do {
-            switch state {
-            case .waitingForPhoneNumber: try await sendPhoneNumber(value)
-            case .waitingForPassword: try await sendPassword(value)
-            case .waitingForParameters, .waitingForCode, .ready, .closed: return
-            }
-        } catch {
-            recordAutoFireError(error)
+    /// path. The value is not kept; a failure is thrown to the caller.
+    private func submitCredential(_ value: String, for state: AuthState) async throws {
+        switch state {
+        case .waitingForPhoneNumber: try await sendPhoneNumber(value)
+        case .waitingForPassword: try await sendPassword(value)
+        case .waitingForParameters, .waitingForCode, .ready, .closed: return
+        }
+    }
+
+    /// Whether a phone number or 2FA password from the Keychain is being looked
+    /// up or submitted for the current state (`auth_run` waits for it rather
+    /// than asking the caller for the value).
+    public var isSubmittingKeychainCredential: Bool {
+        lock.withLock {
+            let status = credentialLookups.current
+            return status == .pending || status == .found
         }
     }
 
