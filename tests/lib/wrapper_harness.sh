@@ -150,6 +150,21 @@ wrapper_copy() {
     echo "$dir/bin/$(basename "$src")"
 }
 
+# pinned_wrapper_copy <wrapper> <dir> <pin version> <pin>: wrapper_copy with
+# SHA256_PIN_VERSION and SHA256_PIN set (both may be empty: no pin); prints
+# its path. The real wrappers pin the real release's sha256, which a fake
+# asset never matches, so a test that installs one runs such a copy.
+pinned_wrapper_copy() {
+    local copy
+    copy=$(wrapper_copy "$1" "$2")
+    perl -pi -e "s/^SHA256_PIN_VERSION=\".*\"\$/SHA256_PIN_VERSION=\"$3\"/; s/^SHA256_PIN=\".*\"\$/SHA256_PIN=\"$4\"/" "$copy"
+    grep -qx "SHA256_PIN_VERSION=\"$3\"" "$copy" && grep -qx "SHA256_PIN=\"$4\"" "$copy" || {
+        echo "pinned_wrapper_copy: $copy has no SHA256_PIN_VERSION / SHA256_PIN line to set" >&2
+        return 1
+    }
+    echo "$copy"
+}
+
 # start_wrapper <home> <stdin-file> <stdout-file>: starts the wrapper in the
 # background and prints its PID.
 start_wrapper() {

@@ -18,9 +18,9 @@
 # Acceptance (the #67 Diagnosis, open question 3): the wrapper answers
 # initialize, or hands over to the installed binary, within 5 seconds.
 #
-# Runs both real wrappers with /bin/bash against private HOMEs
-# (tests/lib/wrapper_harness.sh). The fake curl serves the release API and a
-# fake asset after a delay; nothing reaches the network. Each wrapper runs in
+# Runs copies of both wrappers, pinned to the fake assets' sha256, with
+# /bin/bash against private HOMEs (tests/lib/wrapper_harness.sh). The fake
+# curl serves the fake assets after a delay; nothing reaches the network. Each wrapper runs in
 # a process group of its own and is stopped by signalling the whole group, as
 # a client that ends a server's process group would; the download must not be
 # part of it.
@@ -87,6 +87,12 @@ ASSETS="$SCRATCH/assets"; mkdir -p "$ASSETS"
 write_fake_all_binary "$ASSETS/$ALL" "$DESIRED_VERSION"
 write_fake_bot_binary "$ASSETS/$BOT"
 echo '# the release asset' >> "$ASSETS/$ALL"; echo '# the release asset' >> "$ASSETS/$BOT"
+
+# The real wrappers pin the real release's sha256; these copies pin the fake
+# assets' (tests/lib/wrapper_harness.sh, pinned_wrapper_copy).
+sha() { shasum -a 256 "$1" | awk '{print $1}'; }
+WRAPPER=$(pinned_wrapper_copy "$WRAPPER" "$SCRATCH/all-plugin" "$DESIRED_VERSION" "$(sha "$ASSETS/$ALL")") || exit 1
+BOT_WRAPPER=$(pinned_wrapper_copy "$BOT_WRAPPER" "$SCRATCH/bot-plugin" "$BOT_DESIRED" "$(sha "$ASSETS/$BOT")") || exit 1
 
 asset_name() { if [ "$1" = all ]; then echo "$ALL"; else echo "$BOT"; fi; }
 wrapper_of() { if [ "$1" = all ]; then echo "$WRAPPER"; else echo "$BOT_WRAPPER"; fi; }

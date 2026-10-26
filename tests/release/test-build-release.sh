@@ -51,8 +51,8 @@
 #      before build-release.sh runs; with the variables set, sign-check signs
 #      without notarizing and release-signed notarizes; plain make prints the
 #      targets and runs nothing; make check-pins checks consistency only;
-#      make check-sha256 refuses the wrappers' empty sha256 pins after the
-#      build and passes once they are set from .build/dist/vX (#50).
+#      make check-sha256 refuses sha256 pins that are not the build's and
+#      passes once they are set from .build/dist/vX (#50).
 #  15. Every swift build uses --force-resolved-versions; a Package.resolved
 #      that is on disk but untracked, or tracked but missing from the working
 #      tree, is refused before any build (#92).
@@ -876,9 +876,10 @@ if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC: $(printf '%s' "$OUT
 n=$(calls "$R" "xcrun notarytool submit" | wc -l | tr -d ' ')
 if [ "$n" -eq 3 ] && [ -d "$R/.build/dist/v$X" ]; then pass "notarized all three and wrote .build/dist/v$X"; else fail "$n submissions; dist: $(ls "$R/.build/dist" 2>&1)"; fi
 run_make "$R" -- check-sha256
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'SHA256_PIN is not set'; then pass "check-sha256 refuses the empty pins"; else fail "check-sha256 before the pins: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+# The wrappers hold HEAD's pins, which are not this fake build's.
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qE 'SHA256_PIN (is not set|does not match)'; then pass "check-sha256 refuses pins that are not the build's"; else fail "check-sha256 before the pins: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
 for pair in che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTelegramBotMCP; do
-    perl -pi -e "s/^SHA256_PIN_VERSION=\"\"\$/SHA256_PIN_VERSION=\"$X\"/; s/^SHA256_PIN=\"\"\$/SHA256_PIN=\"$(cat "$R/.build/dist/v$X/${pair#*:}.sha256")\"/" \
+    perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"$X\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"$(cat "$R/.build/dist/v$X/${pair#*:}.sha256")\"/" \
         "$R/plugins/che-telegram-mcp/bin/${pair%%:*}-wrapper.sh"
 done
 run_make "$R" -- check-sha256

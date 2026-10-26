@@ -8,9 +8,10 @@
 # zero; and two wrappers started together wrote the same .tmp, the second
 # truncating what the first was still writing.
 #
-# Runs both real wrappers, with /bin/bash as Claude Code does, against private
-# HOMEs (tests/lib/wrapper_harness.sh). The fake curl serves the release API
-# and a fake release asset; nothing reaches the network.
+# Runs copies of both wrappers, with /bin/bash as Claude Code does, against
+# private HOMEs (tests/lib/wrapper_harness.sh); the copies pin the fake
+# release assets' sha256 instead of the real ones. The fake curl serves the
+# release API and the fake assets; nothing reaches the network.
 #
 # Tests:
 #   1. The fake curl itself: an HTTP error with and without -f, a cut-off
@@ -98,6 +99,12 @@ write_fake_bot_binary "$ASSETS/$BOT"
 for f in "$ASSETS/$ALL" "$ASSETS/$BOT"; do
     printf '# padding so that a transfer can be cut off part-way: %s\n' "$(printf 'x%.0s' $(seq 1 400))" >> "$f"
 done
+
+# The real wrappers pin the real release's sha256; these copies pin the fake
+# assets' (tests/lib/wrapper_harness.sh, pinned_wrapper_copy).
+sha() { shasum -a 256 "$1" | awk '{print $1}'; }
+WRAPPER=$(pinned_wrapper_copy "$WRAPPER" "$SCRATCH/all-plugin" "$DESIRED_VERSION" "$(sha "$ASSETS/$ALL")") || exit 1
+BOT_WRAPPER=$(pinned_wrapper_copy "$BOT_WRAPPER" "$SCRATCH/bot-plugin" "$BOT_DESIRED" "$(sha "$ASSETS/$BOT")") || exit 1
 
 # empty_home <dir> <all|bot>: a HOME with credentials, the fake curl, and no binary.
 empty_home() {
@@ -263,7 +270,7 @@ for which in all bot; do
     echo 404 > "$H/fake-curl/asset.status"
     run "$H" "$which"
     if [ "$(asset_calls "$H")" = 1 ]; then pass "an HTTP error is tried once"; else fail "an HTTP error was tried $(asset_calls "$H") times"; fi
-    if [ "$(grep -c 'api.github.com' "$H/curl.calls")" = 1 ]; then pass "the release API is asked once"; else fail "the release API was asked $(grep -c 'api.github.com' "$H/curl.calls") times"; fi
+    if [ "$(grep -c 'api.github.com' "$H/curl.calls")" = 0 ]; then pass "the release API is not asked (the version is pinned)"; else fail "the release API was asked $(grep -c 'api.github.com' "$H/curl.calls") times"; fi
     for f in "$H/curl.calls"; do
         if grep -q -- '--retry-all-errors' "$f"; then fail "a call retries every error, HTTP errors included: $(grep -- '--retry-all-errors' "$f" | head -1)"; else pass "no call retries HTTP errors (--retry-all-errors)"; fi
     done

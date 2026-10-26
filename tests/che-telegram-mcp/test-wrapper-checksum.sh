@@ -239,7 +239,8 @@ for which in all bot; do
 
     H="$SCRATCH/$which-missing-release"; empty_home "$H" "$which"
     serve_release_api "$H" "$NAME" "$ASSETS/$NAME"; echo 404 > "$H/fake-curl/api.status"
-    run "$H" "$REAL"
+    pinned "$which" "" "" "$SCRATCH/$which-missing-release-plugin"
+    run "$H" "$C"
     if [ "$RC" = 1 ]; then pass "no pin, no such release: the start fails"; else fail "no pin, no such release: exit $RC"; fi
     expect_nothing_installed "$H" "$NAME"
 done

@@ -141,8 +141,12 @@ P=$(fresh); perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"$DV\"/; s
 expect_pass "a pin for DESIRED_VERSION passes (#50)"
 P=$(fresh); perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"0.0.1\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"$HEX\"/" "$P/bin/che-telegram-bot-mcp-wrapper.sh"
 expect_fail "a pin left from another version (#50)" "pins a sha256 for v0\.0\.1, but DESIRED_VERSION is"
-P=$(fresh); perl -pi -e "s/^SHA256_PIN=.*/SHA256_PIN=\"$HEX\"/" "$P/bin/che-telegram-all-mcp-wrapper.sh"
+P=$(fresh); perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"$HEX\"/" "$P/bin/che-telegram-all-mcp-wrapper.sh"
 expect_fail "a pin without its version (#50)" "sets only one of SHA256_PIN_VERSION and SHA256_PIN"
+P=$(fresh); perl -pi -e "s/^SHA256_PIN=.*/SHA256_PIN=\"\"/" "$P/bin/che-telegram-bot-mcp-wrapper.sh"
+expect_fail "a version without its pin (#50)" "sets only one of SHA256_PIN_VERSION and SHA256_PIN"
+P=$(fresh); perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"\"/" "$P/bin/che-telegram-bot-mcp-wrapper.sh"
+expect_pass "no pin at all passes (#50)"
 P=$(fresh); perl -pi -e "s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION=\"$DV\"/; s/^SHA256_PIN=.*/SHA256_PIN=\"\U$HEX\E\"/" "$P/bin/che-telegram-all-mcp-wrapper.sh"
 expect_fail "an uppercase pin (#50)" "must assign SHA256_PIN exactly once, as a literal empty or 64"
 HEX63=${HEX:1}

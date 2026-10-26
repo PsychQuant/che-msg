@@ -28,11 +28,12 @@ DESIRED_VERSION="0.9.0"
 # taken from (PsychQuant/che-msg#50). A download is installed only if its
 # sha256 equals SHA256_PIN; the pin counts only while SHA256_PIN_VERSION equals
 # DESIRED_VERSION. A release sets both after its build (RELEASING.md); a version
-# bump clears them. Empty for 0.8.0, which was released before pins existed:
-# the download is then checked against the sha256 digest GitHub's release API
-# reports, which catches a damaged file but not a replaced asset.
-SHA256_PIN_VERSION=""
-SHA256_PIN=""
+# bump clears them. 0.8.0 was released before pins existed; its pin is the
+# digest GitHub lists for the asset, which equals the sha256 of the 0.8.0
+# binary in use. With no pin that counts, the download is checked against
+# GitHub's digest only, which catches a damaged file but not a replaced asset.
+SHA256_PIN_VERSION="0.8.0"
+SHA256_PIN="d27480f9ebfc06119df091199555f8ee247363a477e54f70af4bb9786c8edadd"
 # The pinned release only, never releases/latest: a pin could not match it.
 DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME"
 RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIRED_VERSION"
