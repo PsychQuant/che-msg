@@ -5,16 +5,17 @@
 # Each wrapper pins SHA256_PIN, the sha256 of its v$DESIRED_VERSION release
 # asset, next to DESIRED_VERSION, with SHA256_PIN_VERSION naming the version
 # the pin was taken from; the pin counts only while that equals
-# DESIRED_VERSION. With no pin that counts (0.8.0 was released before pins
-# existed), the download is checked against the sha256 digest GitHub's release
-# API reports for the asset. A file that does not match is removed, and the
-# installed binary and its version record stay as they were. The wrappers
-# download v$DESIRED_VERSION from its own release URL and never fall back to
+# DESIRED_VERSION. With no pin that counts, nothing is downloaded: the digest
+# GitHub reports next to an asset would match a replaced asset too, so it is
+# never used instead. A file that does not match is removed, and the installed
+# binary and its version record stay as they were. The wrappers download
+# v$DESIRED_VERSION from its own release URL and never fall back to
 # releases/latest, whose file a pin could never match.
 #
 # Runs both real wrappers, and copies of them with a pin set, with /bin/bash
 # against private HOMEs (tests/lib/wrapper_harness.sh); the fake curl serves
-# the release API and a fake asset, and nothing reaches the network.
+# a fake asset, and the release API with that asset's digest, which must never
+# be asked. Nothing reaches the network.
 #
 # Tests, for each wrapper:
 #   1. The wrapper assigns SHA256_PIN_VERSION and SHA256_PIN, and downloads
@@ -26,15 +27,14 @@
 #      the mismatch.
 #   4. The same with a usable binary installed: it is kept, unchanged, with
 #      its version record, and started.
-#   5. A pin for another version is not used: the download is checked against
-#      GitHub's digest instead, and the download log says so.
-#   6. No pin: GitHub's digest matching installs; not matching installs
-#      nothing; no digest (null) installs nothing and says no sha256 is known;
-#      the API unreachable installs nothing.
-#   7. The pinned version's asset missing (HTTP 404): nothing installed, and
-#      releases/latest is never asked; the same with no pin and no such
-#      release.
-#   8. No case above called releases/latest.
+#   5. A pin for another version, no pin at all, and a pin that is not 64
+#      lowercase hex digits: nothing is downloaded or installed, even when
+#      GitHub's digest matches a replaced asset, and the reason says the
+#      plugin has no usable sha256 for the version (or that its pin is
+#      malformed).
+#   6. The pinned version's asset missing (HTTP 404): nothing installed, and
+#      releases/latest is never asked.
+#   7. No case above asked the release API or releases/latest.
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-checksum.sh
@@ -186,47 +186,29 @@ for which in all bot; do
     if [ "$(cat "$H/bin/.$NAME.version")" = "$KEPT" ]; then pass "its version record still says $KEPT"; else fail "record now $(cat "$H/bin/.$NAME.version")"; fi
     if [ -z "$(partials "$H")" ]; then pass "no partial file left"; else fail "left: $(partials "$H")"; fi
 
-    # ------------------------------------------- 5. pin of another version
-    test_case "$which: a pin taken from another version is not used"
-    H="$SCRATCH/$which-stale"; empty_home "$H" "$which"; serve_asset "$H" "$ASSETS/$NAME"
-    serve_release_api "$H" "$NAME" "$ASSETS/$NAME"
-    pinned "$which" "$OLDER" "$BAD" "$SCRATCH/$which-stale-plugin"
-    run "$H" "$C"
-    expect_installed "$H" "$NAME" "$PIN"
-    LOG=$(log_of "$H" "$NAME")
-    if grep -q "is for v$OLDER" "$LOG" 2>/dev/null; then pass "the download log says the pin is for v$OLDER"; else fail "the download log does not say the pin is for v$OLDER: $(head -3 "$LOG" 2>/dev/null | tr '\n' ' ')"; fi
+    # ---------------------------------- 5. no pin for this version: refused
+    i=0
+    for pin_case in "$OLDER:$GOOD:a pin for another version" "::no pin" "$PIN:${GOOD:1}:a malformed pin"; do
+        i=$((i + 1))
+        PV=${pin_case%%:*}; rest=${pin_case#*:}; P2=${rest%%:*}; what=${rest#*:}
+        test_case "$which: $what: nothing is downloaded"
+        # GitHub's digest matches the asset served, which stands for a
+        # replaced asset: the API must not be asked, and nothing installed.
+        H="$SCRATCH/$which-nopin-$i"; empty_home "$H" "$which"; serve_asset "$H" "$ASSETS/$NAME.other"
+        serve_release_api "$H" "$NAME" "$ASSETS/$NAME.other"
+        pinned "$which" "$PV" "$P2" "$SCRATCH/$which-nopin-$i-plugin"
+        run "$H" "$C" 51
+        if [ "$RC" = 1 ]; then pass "the start fails (exit 1)"; else fail "exit $RC"; fi
+        expect_nothing_installed "$H" "$NAME"
+        if [ ! -s "$H/curl.calls" ]; then pass "nothing was asked of the network"; else fail "calls: $(tr '\n' ' ' < "$H/curl.calls")"; fi
+        if [ "$what" = "a malformed pin" ]; then
+            expect_reason "$H" "$which" "is malformed" "says the pin is malformed"
+        else
+            expect_reason "$H" "$which" "has no sha256 for v$PIN" "says the plugin has no sha256 for v$PIN"
+        fi
+    done
 
-    # ------------------------------------------------------ 6. no pin
-    test_case "$which: with no pin, GitHub's digest decides"
-    H="$SCRATCH/$which-digest-good"; empty_home "$H" "$which"; serve_asset "$H" "$ASSETS/$NAME"
-    serve_release_api "$H" "$NAME" "$ASSETS/$NAME"
-    pinned "$which" "" "" "$SCRATCH/$which-digest-good-plugin"
-    run "$H" "$C"
-    expect_installed "$H" "$NAME" "$PIN"
-
-    H="$SCRATCH/$which-digest-bad"; empty_home "$H" "$which"; serve_asset "$H" "$ASSETS/$NAME.other"
-    serve_release_api "$H" "$NAME" "$ASSETS/$NAME"
-    run "$H" "$C"
-    if [ "$RC" = 1 ]; then pass "a mismatch: the start fails"; else fail "a mismatch: exit $RC"; fi
-    expect_nothing_installed "$H" "$NAME"
-    expect_reason "$H" "$which" "does not match its sha256" "names the mismatch"
-
-    H="$SCRATCH/$which-digest-null"; empty_home "$H" "$which"; serve_asset "$H" "$ASSETS/$NAME"
-    serve_release_api "$H" "$NAME" "$ASSETS/$NAME"
-    perl -0pi -e 's/"digest": "sha256:[0-9a-f]{64}",(\s*"browser_download_url": "[^"]*\/'"$NAME"'")/"digest": null,$1/' "$H/fake-curl/api"
-    grep -q '"digest": null' "$H/fake-curl/api" || fail "the test could not set the digest to null"
-    run "$H" "$C"
-    if [ "$RC" = 1 ]; then pass "no digest: the start fails"; else fail "no digest: exit $RC"; fi
-    expect_nothing_installed "$H" "$NAME"
-    expect_reason "$H" "$which" "no sha256 is known" "says no sha256 is known"
-    if ! grep -q '/releases/download/' "$H/curl.calls" 2>/dev/null; then pass "nothing was downloaded without a sha256 to check"; else fail "the asset was downloaded with nothing to check it against"; fi
-
-    H="$SCRATCH/$which-digest-offline"; empty_home "$H" "$which"; serve_asset "$H" "$ASSETS/$NAME"
-    run "$H" "$C"
-    if [ "$RC" = 1 ]; then pass "the API unreachable: the start fails"; else fail "the API unreachable: exit $RC"; fi
-    expect_nothing_installed "$H" "$NAME"
-
-    # ----------------------------------------------------- 7. missing asset
+    # ----------------------------------------------------- 6. missing asset
     test_case "$which: a missing pinned asset does not fall back to releases/latest"
     H="$SCRATCH/$which-missing"; empty_home "$H" "$which"; serve_asset "$H" "$ASSETS/$NAME"
     echo 404 > "$H/fake-curl/asset.status"
@@ -236,18 +218,12 @@ for which in all bot; do
     expect_nothing_installed "$H" "$NAME"
     expect_reason "$H" "$which" "HTTP error" "names the HTTP error"
 
-    H="$SCRATCH/$which-missing-release"; empty_home "$H" "$which"
-    serve_release_api "$H" "$NAME" "$ASSETS/$NAME"; echo 404 > "$H/fake-curl/api.status"
-    pinned "$which" "" "" "$SCRATCH/$which-missing-release-plugin"
-    run "$H" "$C"
-    if [ "$RC" = 1 ]; then pass "no pin, no such release: the start fails"; else fail "no pin, no such release: exit $RC"; fi
-    expect_nothing_installed "$H" "$NAME"
 done
 
-# ------------------------------------------------------- 8. never latest
-test_case "no case asked for releases/latest"
-hits=$(grep -l 'releases/latest' "$SCRATCH"/*/curl.calls 2>/dev/null || true)
-if [ -z "$hits" ]; then pass "releases/latest was never requested"; else fail "requested in: $hits"; fi
+# ------------------------------------------------- 7. never the API, never latest
+test_case "no case asked the release API or releases/latest"
+hits=$(grep -l -e 'releases/latest' -e 'api.github.com' "$SCRATCH"/*/curl.calls 2>/dev/null || true)
+if [ -z "$hits" ]; then pass "neither was requested"; else fail "requested in: $hits"; fi
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."

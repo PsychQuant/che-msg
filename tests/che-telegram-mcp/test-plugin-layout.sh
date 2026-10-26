@@ -33,10 +33,11 @@
 #        devtools reads the LAST assignment, so a later or conditional override
 #        makes the pin unreadable.
 #   (b3) every wrapper assigns SHA256_PIN_VERSION and SHA256_PIN exactly once
-#        each, as literals: both empty, or SHA256_PIN_VERSION equal to its
-#        DESIRED_VERSION and SHA256_PIN 64 lowercase hex digits
-#        (PsychQuant/che-msg#50). A pin left from the previous version would
-#        fail every install of the new one; a version bump has to clear it.
+#        each, as literals: SHA256_PIN_VERSION equal to its DESIRED_VERSION
+#        and SHA256_PIN 64 lowercase hex digits (PsychQuant/che-msg#50). A
+#        wrapper without a pin for its DESIRED_VERSION, empty or left from
+#        another version, downloads nothing; RELEASING.md sets the pin and the
+#        version together.
 #   (c)  every ${CLAUDE_PLUGIN_ROOT} in a hook command sits inside double quotes
 #   (d)  allowed-tools lists only this plugin's MCP tools (no Bash, Write, …),
 #        with the real prefix, each documented in the README under ITS server
@@ -328,7 +329,9 @@ for name, spec in servers.items():
     if len(pins) == 2 and len(literal) == 1:
         desired = re.match(r'^\s*DESIRED_VERSION="([^"]*)"', literal[0]).group(1)
         pv, pin = pins["SHA256_PIN_VERSION"], pins["SHA256_PIN"]
-        if bool(pv) != bool(pin):
+        if not pv and not pin:
+            bad("b3", f"{name}: {base} has no sha256 pin for its DESIRED_VERSION {desired}, so it would download nothing")
+        elif bool(pv) != bool(pin):
             bad("b3", f"{name}: {base} sets only one of SHA256_PIN_VERSION and SHA256_PIN")
         elif pv and pv != desired:
             bad("b3", f"{name}: {base} pins a sha256 for v{pv}, but DESIRED_VERSION is {desired} "
@@ -622,7 +625,7 @@ report a  "only reviewed components: bin/ wrappers, hooks/, lib/, skills/, metad
 report a2 "every file a wrapper sources from lib/ exists"
 report b  ".mcp.json commands are \${CLAUDE_PLUGIN_ROOT}/bin/*-wrapper.sh and executable"
 report b2 "every wrapper assigns DESIRED_VERSION exactly once, as a literal"
-report b3 "every wrapper pins a sha256 for its DESIRED_VERSION, or none"
+report b3 "every wrapper pins a sha256 for its DESIRED_VERSION"
 report c  "hook commands quote \${CLAUDE_PLUGIN_ROOT}"
 report fm "every skill has frontmatter Claude Code reads the same way"
 report d  "allowed-tools list only this plugin's documented MCP tools"

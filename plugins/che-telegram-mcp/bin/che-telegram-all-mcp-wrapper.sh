@@ -29,13 +29,12 @@ DESIRED_VERSION="0.9.0"
 # DESIRED_VERSION. A release sets both after its build (RELEASING.md); a version
 # bump clears them. 0.8.0 was released before pins existed; its pin is the
 # digest GitHub lists for the asset, which equals the sha256 of the 0.8.0
-# binary in use. With no pin that counts, the download is checked against
-# GitHub's digest only, which catches a damaged file but not a replaced asset.
+# binary in use. With no pin that counts, nothing is downloaded: the digest
+# GitHub lists next to an asset would match a replaced asset too.
 SHA256_PIN_VERSION="0.8.0"
 SHA256_PIN="90e8a365c1447e3f8b7d2967d08ea064b99149ab3513771bf1dcf22bc1198b6c"
 # The pinned release only, never releases/latest: a pin could not match it.
 DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME"
-RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIRED_VERSION"
 
 # --- Startup errors (#31, PsychQuant/che-msg#58, #59) ---
 # The wrapper stops before starting the server only for missing Keychain
@@ -159,20 +158,25 @@ BINARY_VERSION=""
 PROBED=""
 if $NEED_DOWNLOAD; then
     echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO in the background (log: ~/bin/.che-telegram-mcp-download/$BINARY_NAME.log)" >&2
+    DOWNLOAD_STARTED=true
     download_start "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$INSTALL_DIR" \
-        "$SHA256_PIN_VERSION" "$SHA256_PIN" "$RELEASE_API_URL"
+        "$SHA256_PIN_VERSION" "$SHA256_PIN" || DOWNLOAD_STARTED=false
     if [[ -n "$BINARY" ]]; then
         BINARY_VERSION=$(probe_version "$BINARY"); PROBED=$BINARY
     fi
     if [[ -n "$BINARY_VERSION" ]] && version_at_least "$BINARY_VERSION" "$MIN_BINARY_VERSION"; then
-        echo "$BINARY_NAME: running the installed v$BINARY_VERSION meanwhile; the first start after the download uses v$DESIRED_VERSION" >&2
+        if $DOWNLOAD_STARTED; then
+            echo "$BINARY_NAME: running the installed v$BINARY_VERSION meanwhile; the first start after the download uses v$DESIRED_VERSION" >&2
+        else
+            echo "$BINARY_NAME: v$DESIRED_VERSION is not downloaded: $(download_failure "$DOWNLOAD_START_STATUS" "$DESIRED_VERSION"). Running the installed v$BINARY_VERSION." >&2
+        fi
     else
         download_wait "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR" "$FIRST_INSTALL_WAIT"
         case "$DOWNLOAD_STATE" in
             installed)
                 BINARY="$INSTALLED_BINARY"; PROBED="" ;;
             failed)
-                DOWNLOAD_PROBLEM=$(download_failure "$DOWNLOAD_STATUS") ;;
+                DOWNLOAD_PROBLEM=$(download_failure "$DOWNLOAD_STATUS" "$DESIRED_VERSION") ;;
             running)
                 DOWNLOAD_RUNNING=true
                 DOWNLOAD_PROBLEM="it is downloading in the background ($DOWNLOAD_SIZE$(download_progress "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR"))" ;;

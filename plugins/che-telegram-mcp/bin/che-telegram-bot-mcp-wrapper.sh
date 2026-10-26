@@ -30,13 +30,12 @@ DESIRED_VERSION="0.9.0"
 # DESIRED_VERSION. A release sets both after its build (RELEASING.md); a version
 # bump clears them. 0.8.0 was released before pins existed; its pin is the
 # digest GitHub lists for the asset, which equals the sha256 of the 0.8.0
-# binary in use. With no pin that counts, the download is checked against
-# GitHub's digest only, which catches a damaged file but not a replaced asset.
+# binary in use. With no pin that counts, nothing is downloaded: the digest
+# GitHub lists next to an asset would match a replaced asset too.
 SHA256_PIN_VERSION="0.8.0"
 SHA256_PIN="d27480f9ebfc06119df091199555f8ee247363a477e54f70af4bb9786c8edadd"
 # The pinned release only, never releases/latest: a pin could not match it.
 DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME"
-RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIRED_VERSION"
 
 # When a first install cannot start the server yet, or the plugin's lib/
 # files cannot be read, the wrapper writes the reason to stderr and answers
@@ -103,10 +102,15 @@ DOWNLOAD_SIZE="about 18 MB"   # told to the user on a first install
 FIRST_INSTALL_WAIT=$(install_wait_seconds 3)   # CHE_TELEGRAM_MCP_INSTALL_WAIT overrides
 if $NEED_DOWNLOAD; then
     echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO in the background (log: ~/bin/.che-telegram-mcp-download/$BINARY_NAME.log)" >&2
+    DOWNLOAD_STARTED=true
     download_start "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$INSTALL_DIR" \
-        "$SHA256_PIN_VERSION" "$SHA256_PIN" "$RELEASE_API_URL"
+        "$SHA256_PIN_VERSION" "$SHA256_PIN" || DOWNLOAD_STARTED=false
     if [[ -n "$BINARY" ]]; then
-        echo "$BINARY_NAME: running the installed binary meanwhile; the first start after the download uses v$DESIRED_VERSION" >&2
+        if $DOWNLOAD_STARTED; then
+            echo "$BINARY_NAME: running the installed binary meanwhile; the first start after the download uses v$DESIRED_VERSION" >&2
+        else
+            echo "$BINARY_NAME: v$DESIRED_VERSION is not downloaded: $(download_failure "$DOWNLOAD_START_STATUS" "$DESIRED_VERSION"). Running the installed binary." >&2
+        fi
     else
         download_wait "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR" "$FIRST_INSTALL_WAIT"
         case "$DOWNLOAD_STATE" in
@@ -117,7 +121,7 @@ if $NEED_DOWNLOAD; then
                 echo "$BINARY_NAME: v$DESIRED_VERSION is not installed yet: $PROBLEM." >&2
                 fail_startup "CheTelegramBotMCP v$DESIRED_VERSION is not installed yet: $PROBLEM. Reconnect with /mcp in a minute, once it has finished; the download goes on after this message and resumes if it is interrupted." ;;
             *)
-                PROBLEM=$(download_failure "$DOWNLOAD_STATUS")
+                PROBLEM=$(download_failure "$DOWNLOAD_STATUS" "$DESIRED_VERSION")
                 echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $PROBLEM." >&2
                 download_manual_hint "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$SHA256_PIN_VERSION" "$SHA256_PIN"
                 fail_startup "CheTelegramBotMCP v$DESIRED_VERSION could not be installed: $PROBLEM. Reconnect with /mcp to try again, or install it by hand as the che-telegram-mcp README describes." ;;
