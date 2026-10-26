@@ -63,7 +63,8 @@ RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIR
 fail_startup() {
     local message="$1"
     REQUEST_ID=null
-    # Answers a first request other than initialize itself and exits
+    # A first message that is not an initialize request is answered (or, a
+    # notification, left unanswered) there, and the wrapper exits
     # (lib/startup-error.sh, PsychQuant/che-msg#59).
     declare -F read_first_request >/dev/null && read_first_request
     printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"%s","data":{"docsUrl":"https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/README.md#when-telegram-all-does-not-start"}}}\n' \

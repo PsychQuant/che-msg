@@ -31,13 +31,28 @@
 #   For telegram-bot, with server/discover as the first request:
 #   8. Nothing installed and the download failing: -32601 as in 1.
 #   9. Nothing installed and the download still running: -32601 as in 1.
+#   For telegram-all, missing credentials, with other first lines:
+#  10. An initialize notification (no id): nothing on stdout, exit 1, the
+#      cause on stderr.
+#  11. A batch (a JSON array): one -32600 error with id null, no -32000.
+#  12. A client that never writes (stdin open, nothing sent): the wrapper
+#      answers -32000 with id null and exits 1 within a bounded time instead
+#      of waiting for stdin to close.
+#  13. telegram-bot with a binary it runs and a token: the binary receives the
+#      request as its first line; the wrapper writes nothing.
 #   lib/startup-error.sh's read_first_request, sourced on its own:
-#  10. With jq: an initialize request sets REQUEST_ID and writes nothing; a
-#      request for another method is answered with -32601 and exit 1; a
-#      method that is not a string, a line that is not JSON and empty stdin
-#      leave the startup error to the caller (REQUEST_ID null or the id).
-#  11. Without jq on PATH: the same for an initialize request and a request
-#      for another method, with a numeric and a string id.
+#  14. With jq, one case per kind of first line: an initialize request (id a
+#      number, a string or null) sets REQUEST_ID; an initialize notification
+#      and a notification for another method (even with an id inside params)
+#      get no answer and exit 1; a request for another method gets -32601 for
+#      its id (null, a float, a negative number, an empty string and a string
+#      with an escaped quote included); a batch, empty or not, gets -32600 with
+#      id null; a method that is missing, not a string or empty leaves the
+#      startup error with the object's id; an id of another type, two JSON
+#      values on the line, a JSON value that is not an object, a line that is
+#      not JSON and empty stdin leave it with id null.
+#  15. Without jq on PATH: every line leaves the startup error with id null,
+#      a request for another method and a batch included.
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-first-request.sh
@@ -172,6 +187,65 @@ run "$H" "$BOT_WRAPPER" "$(probe '"bot-7"')" 1
 check_method_not_found "$H" '"bot-7"' "not installed yet"
 
 # ----------------------------------------------------------------------
+test_case "telegram-all, missing credentials: an initialize notification gets no answer"
+H="$SCRATCH/all-init-notification"; make_home "$H" no
+run "$H" "$WRAPPER" '{"jsonrpc":"2.0","method":"initialize","params":{}}'
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
+if [ ! -s "$H/out" ]; then pass "nothing on stdout"; else fail "stdout: $(head -c 300 "$H/out")"; fi
+if grep -q "credentials not found in Keychain" "$H/err"; then pass "the cause is on stderr"; else fail "stderr: $(tail -3 "$H/err" | tr '\n' ' ')"; fi
+
+# ----------------------------------------------------------------------
+test_case "telegram-all, missing credentials: a batch gets one -32600 error with id null"
+H="$SCRATCH/all-batch"; make_home "$H" no
+run "$H" "$WRAPPER" "[$(probe 1),{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\"}]"
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
+if [ "$(wc -l < "$H/out" | tr -d ' ')" -eq 1 ] && head -1 "$H/out" | jq -e '.jsonrpc == "2.0" and .id == null and .error.code == -32600' >/dev/null 2>&1; then
+    pass "the only answer is -32600 with id null"
+else
+    fail "stdout is not one -32600 error: $(head -c 300 "$H/out")"
+fi
+if ! grep -q -- '-32000' "$H/out"; then pass "no startup error (-32000)"; else fail "the startup error was written"; fi
+
+# ----------------------------------------------------------------------
+test_case "telegram-all, missing credentials: a client that never writes gets an answer in bounded time"
+H="$SCRATCH/all-silent-client"; make_home "$H" no
+mkfifo "$H/fifo"
+/bin/sleep 60 > "$H/fifo" &
+HOLDER=$!; STARTED+=("$HOLDER")
+t0=$(perl -MTime::HiRes=time -e 'printf "%.1f", time')
+HOME="$H" PATH="$H/fakebin:$PATH" /bin/bash "$WRAPPER" < "$H/fifo" > "$H/out" 2> "$H/err" &
+W=$!; STARTED+=("$W")
+BOUND=20   # seconds; the read waits 2 s, the rest is slack for a loaded machine
+if wait_until "$BOUND" bash -c "! kill -0 $W 2>/dev/null"; then
+    wait "$W"; RC=$?
+    T=$(perl -MTime::HiRes=time -e 'printf "%.1f", time - $ARGV[0]' "$t0")
+    pass "the wrapper ended after ${T}s while stdin was still open (bound ${BOUND}s)"
+    if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
+    if [ "$(wc -l < "$H/out" | tr -d ' ')" -eq 1 ] && head -1 "$H/out" | jq -e '.id == null and .error.code == -32000' >/dev/null 2>&1; then
+        pass "the answer is the startup error with id null"
+    else
+        fail "stdout: $(head -c 300 "$H/out")"
+    fi
+else
+    fail "the wrapper was still running after ${BOUND}s with stdin open"
+fi
+kill -KILL "$HOLDER" "$W" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+
+# ----------------------------------------------------------------------
+test_case "telegram-bot, a binary it runs: the request reaches the server untouched"
+H="$SCRATCH/bot-starts"; make_bot_home "$H" "$BOT_DESIRED"
+cat > "$H/bin/CheTelegramBotMCP" <<'EOF'
+#!/bin/bash
+echo $$ >> "$HOME/started.pids"
+if IFS= read -r -t 2 line; then printf '%s\n' "$line" > "$HOME/stdin.txt"; fi
+EOF
+chmod +x "$H/bin/CheTelegramBotMCP"
+run "$H" "$BOT_WRAPPER" "$(probe 5)"
+if [ -s "$H/started.pids" ]; then pass "binary started"; else fail "binary did not start: $(tail -3 "$H/err" | tr '\n' ' ')"; fi
+if [ "$(cat "$H/stdin.txt" 2>/dev/null)" = "$(probe 5)" ]; then pass "the binary's first line is the request"; else fail "the binary read: $(head -c 200 "$H/stdin.txt" 2>/dev/null)"; fi
+if [ ! -s "$H/out" ]; then pass "the wrapper wrote nothing to stdout"; else fail "the wrapper wrote: $(head -c 200 "$H/out")"; fi
+
+# ----------------------------------------------------------------------
 # reader <PATH> <first line>: runs read_first_request from the lib on its own
 # with that line (none if empty) on stdin and that PATH; prints
 # "<exit status>|<stdout>", where stdout ends with <id=REQUEST_ID> unless the
@@ -190,30 +264,48 @@ expect_reader() {   # <label> <path> <first line> <expected>
     if [ "$got" = "$4" ]; then pass "$1"; else fail "$1: got '$got', expected '$4'"; fi
 }
 M601='{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"Method not found"}}'
+M600='{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}'
+INIT7='{"jsonrpc":"2.0","id":7,"method":"initialize","params":{}}'
 
 test_case "read_first_request with jq"
-expect_reader "initialize, numeric id: REQUEST_ID set, nothing written" "$PATH" \
-    '{"jsonrpc":"2.0","id":7,"method":"initialize","params":{}}' '0|<id=7>'
+expect_reader "initialize, numeric id: REQUEST_ID set, nothing written" "$PATH" "$INIT7" '0|<id=7>'
 expect_reader "initialize, string id" "$PATH" \
     '{"jsonrpc":"2.0","id":"abc","method":"initialize"}' '0|<id="abc">'
-expect_reader "server/discover is answered with -32601 and exit 1" "$PATH" \
-    "$(probe 8)" "1|$(printf "$M601" 8)"
-expect_reader "a method that is not a string is left to the startup error" "$PATH" \
+expect_reader "initialize, id null" "$PATH" \
+    '{"jsonrpc":"2.0","id":null,"method":"initialize"}' '0|<id=null>'
+expect_reader "an initialize notification: no answer, exit 1" "$PATH" \
+    '{"jsonrpc":"2.0","method":"initialize","params":{}}' '1|'
+expect_reader "server/discover: -32601 and exit 1" "$PATH" "$(probe 8)" "1|$(printf "$M601" 8)"
+expect_reader "server/discover, id null: -32601 with id null" "$PATH" "$(probe null)" "1|$(printf "$M601" null)"
+expect_reader "server/discover, id 1.5" "$PATH" "$(probe 1.5)" "1|$(printf "$M601" 1.5)"
+expect_reader "server/discover, id -7" "$PATH" "$(probe -7)" "1|$(printf "$M601" -7)"
+expect_reader "server/discover, id empty string" "$PATH" "$(probe '""')" "1|$(printf "$M601" '""')"
+expect_reader "server/discover, id with an escaped quote" "$PATH" "$(probe '"a\"b"')" "1|$(printf "$M601" '"a\"b"')"
+got=$(reader "$PATH" "$(probe '"a\"b"')"); got=${got#1|}
+if printf '%s' "$got" | jq -e '.id == "a\"b"' >/dev/null 2>&1; then pass "that answer is valid JSON with the same id"; else fail "not valid JSON with id a\"b: $got"; fi
+expect_reader "a notification with an id inside params: no answer" "$PATH" \
+    '{"jsonrpc":"2.0","method":"notifications/progress","params":{"id":5}}' '1|'
+expect_reader "a batch: -32600 with id null" "$PATH" "[$(probe 1)]" "1|$M600"
+expect_reader "an empty batch: -32600 with id null" "$PATH" '[]' "1|$M600"
+expect_reader "a method that is not a string: the startup error with its id" "$PATH" \
     '{"jsonrpc":"2.0","id":9,"method":5}' '0|<id=9>'
+expect_reader "an empty method: the startup error with its id" "$PATH" \
+    '{"jsonrpc":"2.0","id":10,"method":""}' '0|<id=10>'
+expect_reader "no method: the startup error with its id" "$PATH" '{"jsonrpc":"2.0","id":11}' '0|<id=11>'
+expect_reader "no method and no id: id null" "$PATH" '{"jsonrpc":"2.0"}' '0|<id=null>'
+expect_reader "an id that is an object: id null" "$PATH" \
+    '{"jsonrpc":"2.0","id":{"a":1},"method":"server/discover"}' '0|<id=null>'
+expect_reader "two JSON values on the line: id null" "$PATH" "$INIT7 $(probe 2)" '0|<id=null>'
+expect_reader "a JSON number: id null" "$PATH" '5' '0|<id=null>'
 expect_reader "a line that is not JSON: id null" "$PATH" 'not json' '0|<id=null>'
 expect_reader "empty stdin: id null" "$PATH" '' '0|<id=null>'
 
 test_case "read_first_request without jq"
 NOJQ="$SCRATCH/no-jq-path"; mkdir -p "$NOJQ"
 if env PATH="$NOJQ" /bin/bash -c 'command -v jq' >/dev/null 2>&1; then fail "jq is still on the test PATH"; else pass "jq is not on the test PATH"; fi
-expect_reader "initialize, numeric id" "$NOJQ" \
-    '{"jsonrpc":"2.0","id":7,"method":"initialize","params":{}}' '0|<id=7>'
-expect_reader "initialize, string id" "$NOJQ" \
-    '{"jsonrpc":"2.0","id":"abc","method":"initialize"}' '0|<id="abc">'
-expect_reader "server/discover, numeric id: -32601 and exit 1" "$NOJQ" \
-    "$(probe 10)" "1|$(printf "$M601" 10)"
-expect_reader "server/discover, string id: -32601 and exit 1" "$NOJQ" \
-    "$(probe '"p"')" "1|$(printf "$M601" '"p"')"
+expect_reader "initialize: id null" "$NOJQ" "$INIT7" '0|<id=null>'
+expect_reader "server/discover: the startup error with id null, not -32601" "$NOJQ" "$(probe 10)" '0|<id=null>'
+expect_reader "a batch: id null" "$NOJQ" "[$(probe 1)]" '0|<id=null>'
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."
