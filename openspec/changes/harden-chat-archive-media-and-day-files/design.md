@@ -59,7 +59,7 @@ Diagnosis 的 Strategy 寫「用既有錯誤、延長文字」。實作改成在
 `retryMedia` 改成 `do/catch` 保留錯誤，交給 `ChatArchiver.messageIsGone(_:)`：
 
 - `TDError.tdlibError(code: 404, _)` → gone。TDLib 1.8.60-cb863c16 的 `td_api.tl`（TDLibKit `Generated/Models/GetMessage.swift`）寫「Returns a 404 error if the message doesn't exist」。這是 TDLib 對 `getMessage` 公開的契約，Diagnosis 沒有查到這一層。
-- `TDError.tdlibError(code: 400, "Message not found")`（完全相等）→ gone。這是 Diagnosis 在 `MessagesManager.cpp` 的 `getMessage` 系列找到的字串，保留以免 TDLib 在某條路徑用它回答。
+- `TDError.tdlibError(code: 400, "Message not found")`（完全相等）→ gone。這是 Diagnosis 在 `MessagesManager.cpp` 找到的字串。verify round 1 查證：在 pin 的 TDLib，`getMessage` 對不存在的訊息回 404 `Not Found`，這個 400 來自其他請求；保留它只是為了 TDLib 改用這個回答時仍能分類，文件不寫成 `getMessage` 會回 400。
 - 其他一律不是 gone：`Chat not found`（同樣是 400）、限流、`notAuthenticated`、測試替身的任意錯誤。
 
 分類只用在重試的「取得訊息」這一步；`media.message` 先 `loadChatForArchive` 再 `getMessage`，前者的錯誤是 400，不會被當成 gone。分類錯的方向只會是「該刪的沒刪」（id 留在待重試，和現在一樣），不會把還在的訊息踢掉。
