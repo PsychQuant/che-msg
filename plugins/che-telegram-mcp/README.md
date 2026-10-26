@@ -116,7 +116,7 @@ If none are found on first invocation, the wrapper **lazy-downloads** the binary
 
 The download ([#56](https://github.com/PsychQuant/che-msg/issues/56)) is shared by both wrappers (`lib/download.sh`):
 
-- It retries (`curl --retry 3 --retry-all-errors`) and gives up only when the transfer stalls (below 4 KB/s for 60 seconds), not after a fixed time.
+- It retries a transfer that stops (a connection reset, a dropped link) up to three more times, each resuming where the last one stopped, and gives up only when the transfer stalls (below 4 KB/s for 60 seconds), not after a fixed time. An HTTP error is not retried, so a release without the asset is reported at once.
 - It writes to a partial file named after the version, `~/bin/.<Binary>.<version>.part`. A transfer cut off is resumed from there by the next start (`curl -C -`). A partial file of another version is removed, never joined to this one.
 - An HTTP error (for example a release without that asset) installs nothing and writes no version record (`curl -f`).
 - One process downloads at a time: a lock, `~/bin/.<Binary>.download.lock`, names the process that is downloading. A wrapper that finds the lock held by a running download does not start a second one.

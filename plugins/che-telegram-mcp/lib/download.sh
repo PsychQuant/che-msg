@@ -21,10 +21,13 @@
 #   ~/bin/.<Binary>.<version>.part, with `curl -C -`, so a transfer cut off
 #   here or in an earlier start continues where it stopped. A partial file of
 #   another version is removed, never joined to this one.
-# - It retries (--retry 3 --retry-all-errors) and gives up only on a stall
-#   (--speed-limit / --speed-time). A cap on the whole transfer, as
-#   --max-time was, cannot be met on a slow link: the 238 MB telegram-all
-#   binary takes about 17 minutes at 234 KB/s.
+# - It retries a transfer that stops, up to three more times, each resuming
+#   where the last one stopped, and gives up only on a stall (--speed-limit /
+#   --speed-time). A cap on the whole transfer, as --max-time was, cannot be
+#   met on a slow link: the 238 MB telegram-all binary takes about 17 minutes
+#   at 234 KB/s. An HTTP error is not retried (curl's --retry-all-errors would
+#   retry a 404 too, for seconds that a first install does not wait), so a
+#   release without the asset is reported at once.
 # - It has one writer. A lock, a symlink ~/bin/.<Binary>.download.lock whose
 #   target is the downloading process's PID, lets one process at a time write
 #   the partial file. Two wrappers started together both wrote
@@ -195,7 +198,7 @@ _dl_sha256() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'; }
 # pretty-printed one; an asset's digest comes before its download URL.
 _dl_api_digest() {
     local json
-    json=$(curl -fsSL --retry 2 --retry-all-errors --connect-timeout 30 --max-time 60 "$1") || return $?
+    json=$(curl -fsSL --retry 2 --connect-timeout 30 --max-time 60 "$1") || return $?
     printf '%s\n' "$json" | tr ',' '\n' | awk -v name="$2" '
         /"digest"[[:space:]]*:/ {
             d = $0
@@ -224,7 +227,7 @@ _dl_api_digest() {
 download_fetch() {
     local name=$1 version=$2 url=$3 dir=$4 pin_version=${5:-} pin=${6:-} api_url=${7:-}
     local binary="$dir/$name" record="$dir/.$name.version"
-    local part="$dir/.$name.$version.part" f rc expected checked_against
+    local part="$dir/.$name.$version.part" f rc expected checked_against attempt
 
     mkdir -p "$dir" || return 40
     DL_LOCK="$dir/.$name.download.lock"
@@ -233,15 +236,15 @@ download_fetch() {
         DL_LOCK=""
         return 10
     fi
-    # The log collects every session's downloads; keep it short.
-    f="$dir/.$name.download.log"
-    [[ -f "$f" ]] && [[ "$(wc -c < "$f" 2>/dev/null)" -gt 262144 ]] && : > "$f"
-    echo "$(date '+%Y-%m-%d %H:%M:%S %z') $name: downloading v$version (process $$)" >&2
     # The lock goes when this process does, also when it is stopped; curl is
     # stopped with it, so no transfer outlives the lock it was started under.
     DL_CURL=""
     trap '[ -n "$DL_CURL" ] && kill "$DL_CURL" 2>/dev/null; [ -n "$DL_LOCK" ] && _dl_release_lock "$DL_LOCK"' EXIT
     trap 'exit 143' TERM INT
+    # The log collects every session's downloads; keep it short.
+    f="$dir/.$name.download.log"
+    [[ -f "$f" ]] && [[ "$(wc -c < "$f" 2>/dev/null)" -gt 262144 ]] && : > "$f"
+    echo "$(date '+%Y-%m-%d %H:%M:%S %z') $name: downloading v$version (process $$)" >&2
 
     # The wrapper decided to download before this process took the lock;
     # another process may have installed this version since.
@@ -286,13 +289,22 @@ download_fetch() {
         # before its move (#67).
         echo "$name: the partial file of v$version is complete and matches; installing it without downloading again" >&2
     else
-        # In the background with wait, so that a TERM stops the transfer at
-        # once instead of after curl finishes.
-        curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 30 \
-            --speed-limit 4096 --speed-time 60 -C - -o "$part" "$url" &
-        DL_CURL=$!
-        wait "$DL_CURL"; rc=$?
-        DL_CURL=""
+        # curl and the pause run in the background with wait, so that a TERM
+        # stops them at once instead of after they finish. curl's own --retry
+        # covers what it calls transient (timeouts, HTTP 408, 429, 5xx); the
+        # loop covers a connection that is reset or drops, which --retry
+        # alone does not.
+        for attempt in 1 2 3 4; do
+            curl -fsSL --retry 2 --connect-timeout 30 \
+                --speed-limit 4096 --speed-time 60 -C - -o "$part" "$url" &
+            DL_CURL=$!
+            wait "$DL_CURL"; rc=$?
+            DL_CURL=""
+            case "$rc" in 0|22|33) break ;; esac
+            [ "$attempt" = 4 ] && break
+            echo "$name: the transfer stopped (curl exit status $rc); resuming it (retry $attempt of 3)" >&2
+            sleep 2 & DL_CURL=$!; wait "$DL_CURL"; DL_CURL=""
+        done
         case "$rc" in
             0) ;;
             22)

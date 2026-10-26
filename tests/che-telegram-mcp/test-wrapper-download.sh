@@ -18,14 +18,16 @@
 #   For each wrapper:
 #   2. An HTTP error for the asset: nothing is installed, no version record
 #      is written, no partial file is left, and the start fails saying so.
-#   3. A transfer cut off: it fails, keeping a partial file named after the
-#      version; the next start resumes it (-C -), installs a file identical
-#      to the asset, records the version and starts it.
+#   3. A transfer cut off on every attempt: the start fails, keeping a
+#      partial file named after the version; the next start resumes it
+#      (-C -), installs a file identical to the asset, records the version
+#      and starts it.
 #   4. A partial file of another version is never resumed: it is removed and
 #      the installed file is identical to the asset.
-#   5. curl is asked to retry (--retry, --retry-all-errors) and to give up
-#      only on a stalled transfer (--speed-limit, --speed-time), not after a
-#      fixed total time (--max-time).
+#   5. Retries: a transfer cut off once is retried, resumed, and installed in
+#      the same start; an HTTP error is not retried, so it is reported at
+#      once; curl gives up only on a stalled transfer (--speed-limit,
+#      --speed-time), not after a fixed total time (--max-time).
 #   6. Every attempt failing while a usable binary is installed: that binary
 #      is kept and started, and its version record is unchanged.
 #   7. Every attempt failing with nothing installed: the start fails, and the
@@ -199,7 +201,7 @@ for which in all bot; do
     # --------------------------------------------------------- 3. resume
     test_case "$which: a transfer cut off is resumed by the next start"
     H="$SCRATCH/$which-resume"; empty_home "$H" "$which"; serve "$H" "$which"
-    HALF=$((SIZE / 2)); printf '%s\nfull\n' "$HALF" > "$H/fake-curl/asset.cuts"
+    HALF=$((SIZE / 2)); printf '%s\n%s\n%s\n%s\nfull\n' "$HALF" "$HALF" "$HALF" "$HALF" > "$H/fake-curl/asset.cuts"
     run "$H" "$which"
     if [ "$RC" = 1 ]; then pass "the first start fails (exit 1)"; else fail "first start: $RC"; fi
     PART="$H/bin/.$NAME.$PIN.part"
@@ -210,9 +212,10 @@ for which in all bot; do
     fi
     expect_not_installed "$H" "$NAME"
     run "$H" "$which"
-    case "$(nth_asset_call "$H" 2)" in
-        *"-C -"*) pass "the second download resumes (-C -)" ;;
-        *) fail "the second download does not resume: $(nth_asset_call "$H" 2)" ;;
+    N=$(asset_calls "$H")
+    case "$(nth_asset_call "$H" "$N")" in
+        *"-C -"*) pass "the second start's download resumes (-C -)" ;;
+        *) fail "the second start's download does not resume: $(nth_asset_call "$H" "$N")" ;;
     esac
     expect_installed "$H" "$NAME" "$PIN"
     if [ -z "$(partials "$H")" ]; then pass "no partial file left"; else fail "left: $(partials "$H")"; fi
@@ -226,14 +229,29 @@ for which in all bot; do
     expect_installed "$H" "$NAME" "$PIN"
     if [ ! -e "$H/bin/.$NAME.$OLDER.part" ]; then pass "the other version's partial file is removed"; else fail "the other version's partial file is still there"; fi
 
-    # ------------------------------------------------------------- 5. flags
-    test_case "$which: curl retries, resumes and gives up only on a stall"
+    # ------------------------------------------------------------- 5. retries
+    test_case "$which: a cut-off transfer is retried in the same start, an HTTP error is not"
     CALL=$(nth_asset_call "$H" 1)
-    for flag in -f --retry --retry-all-errors --speed-limit --speed-time; do
+    for flag in -f --speed-limit --speed-time; do
         if uses "$CALL" "$flag"; then pass "uses $flag"; else fail "does not use $flag: $CALL"; fi
     done
     case " $CALL " in *" -C - "*) pass "uses -C -" ;; *) fail "does not use -C -: $CALL" ;; esac
     if uses "$CALL" --max-time; then fail "caps the whole transfer with --max-time: $CALL"; else pass "no --max-time cap"; fi
+    H="$SCRATCH/$which-retry"; empty_home "$H" "$which"; serve "$H" "$which"
+    printf '%s\nfull\n' "$((SIZE / 3))" > "$H/fake-curl/asset.cuts"
+    run "$H" "$which"
+    if [ "$RC" = started ]; then pass "one start installs and starts it"; else fail "not started ($RC): $(reason "$H" "$which" | head -3 | tr '\n' ' ')"; fi
+    expect_installed "$H" "$NAME" "$PIN"
+    if [ "$(asset_calls "$H")" = 2 ]; then pass "two transfers, the second one resumed"; else fail "$(asset_calls "$H") transfers"; fi
+    case "$(nth_asset_call "$H" 2)" in *"-C -"*) pass "the retry resumes (-C -)" ;; *) fail "the retry does not resume: $(nth_asset_call "$H" 2)" ;; esac
+    H="$SCRATCH/$which-http-once"; empty_home "$H" "$which"; serve "$H" "$which"
+    echo 404 > "$H/fake-curl/asset.status"
+    run "$H" "$which"
+    if [ "$(asset_calls "$H")" = 1 ]; then pass "an HTTP error is tried once"; else fail "an HTTP error was tried $(asset_calls "$H") times"; fi
+    if [ "$(grep -c 'api.github.com' "$H/curl.calls")" = 1 ]; then pass "the release API is asked once"; else fail "the release API was asked $(grep -c 'api.github.com' "$H/curl.calls") times"; fi
+    for f in "$H/curl.calls"; do
+        if grep -q -- '--retry-all-errors' "$f"; then fail "a call retries every error, HTTP errors included: $(grep -- '--retry-all-errors' "$f" | head -1)"; else pass "no call retries HTTP errors (--retry-all-errors)"; fi
+    done
 
     # -------------------------------------- 6. failing, usable binary kept
     test_case "$which: every attempt failing keeps a usable installed binary"
