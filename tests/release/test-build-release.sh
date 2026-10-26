@@ -126,6 +126,10 @@ PINNED=(
 #   variant: wrong-version  the telegram-all build reports 0.0.1
 #            hang-version   the telegram-all build never answers --version
 #            same-arch      every build is arm64, whatever --arch says
+#            signed-wrong-version  signing turns the telegram-all binary into
+#                           one that reports 0.0.1, as a binary that runs
+#                           unsigned but not under the hardened runtime would
+#                           answer wrongly once signed
 # FAKE_MODE, when set, is passed to the fake signing tools.
 make_repo() {
     local base="$SCRATCH/$1" repo="$SCRATCH/$1/repo" f all_prog=CheTelegramAllMCP same_arch=0
@@ -133,6 +137,7 @@ make_repo() {
         wrong-version) all_prog=WrongVersion ;;
         hang-version) all_prog=Hang ;;
         same-arch) same_arch=1 ;;
+        signed-wrong-version) ;;
     esac
     mkdir -p "$repo/scripts/release" "$base/swiftbin"
     for f in "${PINNED[@]}"; do
@@ -147,6 +152,19 @@ make_repo() {
     git clone -q --bare "$repo" "$base/origin.git" && git -C "$repo" remote add origin "$base/origin.git" || exit 1
     : > "$base/calls"
     make_fake_signing_tools "$base/fakebin" "$base/calls" "${FAKE_MODE:-}"
+    if [ "${2:-}" = signed-wrong-version ]; then
+        mv "$base/fakebin/codesign" "$base/fakebin/codesign-fake"
+        cat > "$base/fakebin/codesign" <<EOF
+#!/bin/bash
+for last; do :; done
+case " \$* " in
+    *" --force "*) if [ "\${last##*/}" = CheTelegramAllMCP ]; then
+        lipo -create "$PROGS/WrongVersion-arm64" "$PROGS/WrongVersion-x86_64" -output "\$last"; fi ;;
+esac
+exec "$base/fakebin/codesign-fake" "\$@"
+EOF
+        chmod +x "$base/fakebin/codesign"
+    fi
     cat > "$base/fakebin/swift" <<EOF
 #!/bin/bash
 echo "swift \$*" >> "$base/calls"
@@ -224,11 +242,15 @@ build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 --
 expect_no_build "$R"
 
 test_case "versions disagree"
-for mode in full sign-only; do
+for mode in full sign-only unsigned; do
     R=$(make_repo "mismatch-$mode")
     sed -i '' "s/\"version\": \"$X\"/\"version\": \"0.0.9\"/" "$R/che-telegram-bot-mcp/mcpb/manifest.json"
     git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam "bump one manifest"
-    if [ "$mode" = full ]; then build "$R" "${SIGN_ENV[@]}" --; else build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; fi
+    case "$mode" in
+        full)      build "$R" "${SIGN_ENV[@]}" -- ;;
+        sign-only) build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only ;;
+        unsigned)  build "$R" -- ;;
+    esac
     expect_no_build "$R"
     if printf '%s' "$OUT" | grep -q 'che-telegram-bot-mcp/mcpb/manifest.json: version is 0.0.9'; then pass "$mode: names the manifest"; else fail "$mode: no manifest message: $OUT"; fi
 done
@@ -295,6 +317,24 @@ R=$(make_repo hang hang-version)
 start=$(date +%s); build "$R" "${SIGN_ENV[@]}" --; took=$(( $(date +%s) - start ))
 if [ "$RC" -ne 0 ] && [ "$took" -lt 60 ]; then pass "refused after ${took}s"; else fail "exit $RC after ${took}s"; fi
 if calls "$R" "codesign --force" >/dev/null; then fail "something was signed first"; else pass "refused before signing"; fi
+
+test_case "a telegram-all binary that reports another version, sign-only and unsigned (#94)"
+for mode in sign-only unsigned; do
+    R=$(make_repo "wrong-$mode" wrong-version)
+    if [ "$mode" = sign-only ]; then build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; else build "$R" --; fi
+    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q '0.0.1'; then pass "$mode: refused, showing the reported version"; else fail "$mode: exit $RC: $(printf '%s' "$OUT" | tail -2)"; fi
+    if calls "$R" "codesign --force" >/dev/null; then fail "$mode: something was signed first"; else pass "$mode: refused before signing"; fi
+    if [ -e "$R/.build/dist/v$X-$mode" ]; then fail "$mode: left a dist directory"; else pass "$mode: nothing in dist"; fi
+done
+
+test_case "a telegram-all binary that reports another version once signed (#94)"
+for mode in full sign-only; do
+    R=$(make_repo "signed-wrong-$mode" signed-wrong-version)
+    if [ "$mode" = full ]; then build "$R" "${SIGN_ENV[@]}" --; DIST="$R/.build/dist/v$X"; else build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; DIST="$R/.build/dist/v$X-sign-only"; fi
+    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'signed CheTelegramAllMCP reports "che-telegram-all-mcp 0.0.1"'; then pass "$mode: refused, naming the signed binary"; else fail "$mode: exit $RC: $(printf '%s' "$OUT" | tail -2)"; fi
+    if calls "$R" "codesign --force" >/dev/null; then pass "$mode: the check ran after signing"; else fail "$mode: nothing was signed"; fi
+    if [ -e "$DIST" ]; then fail "$mode: left ${DIST#"$R/"}"; else pass "$mode: nothing in dist"; fi
+done
 
 test_case "a per-arch build with the wrong architecture"
 R=$(make_repo same-arch same-arch)

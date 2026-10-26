@@ -182,6 +182,18 @@ build_arch() {
 # write_sha256 <file>: <file>.sha256 holds the hash only, as che-mcps' releases do.
 write_sha256() { shasum -a 256 "$1" | awk '{print $1}' > "$1.sha256"; }
 
+# check_version <binary> <name>: the binary reports version X. telegram-all
+# answers --version without starting a server or opening TDLib; stdin is
+# closed and perl's alarm bounds the run in case it does not. The bot binary
+# has no such flag.
+check_version() {
+    local reported
+    reported=$(perl -e 'my $t = shift; alarm $t; exec @ARGV or die "exec failed: $!"' \
+        -- "$VERSION_CHECK_TIMEOUT" "$1" --version </dev/null 2>&1 || true)
+    [[ "$reported" == "che-telegram-all-mcp $X" ]] || {
+        echo "Error: $2 reports \"$reported\" within ${VERSION_CHECK_TIMEOUT}s, expected \"che-telegram-all-mcp $X\"" >&2; exit 1; }
+}
+
 echo ""
 echo "[3/4] Building, signing and packing..."
 for entry in "${PACKAGES[@]}"; do
@@ -202,20 +214,20 @@ for entry in "${PACKAGES[@]}"; do
     [[ "$archs" == "arm64 x86_64 " ]] || { echo "Error: $bin has architectures '$archs'" >&2; exit 1; }
 
     # Checked before signing, so a wrong build is not sent to Apple first.
-    # telegram-all answers --version without starting a server or opening
-    # TDLib; stdin is closed and perl's alarm bounds the run in case it does
-    # not. The bot binary has no such flag.
     if [[ "$bin" == CheTelegramAllMCP ]]; then
-        reported=$(perl -e 'my $t = shift; alarm $t; exec @ARGV or die "exec failed: $!"' \
-            -- "$VERSION_CHECK_TIMEOUT" "$UNIVERSAL" --version </dev/null 2>&1 || true)
-        [[ "$reported" == "che-telegram-all-mcp $X" ]] || {
-            echo "Error: $bin reports \"$reported\" within ${VERSION_CHECK_TIMEOUT}s, expected \"che-telegram-all-mcp $X\"" >&2; exit 1; }
+        check_version "$UNIVERSAL" "$bin"
     fi
 
     case "$MODE" in
         full)      "$SCRIPT_DIR/sign-and-notarize.sh" "$UNIVERSAL" ;;
         sign-only) "$SCRIPT_DIR/sign-and-notarize.sh" --sign-only "$UNIVERSAL" ;;
     esac
+    # And once more signed: the hardened runtime can stop a binary that ran
+    # unsigned (a library it may not load, an entitlement it lacks), so every
+    # signed build launches the file that ships at least once.
+    if [[ "$bin" == CheTelegramAllMCP && "$MODE" != unsigned ]]; then
+        check_version "$UNIVERSAL" "the signed $bin"
+    fi
 
     # Pack the mcpb files of commit $COMMIT plus the binary, so nothing left
     # over in <pkg>/mcpb, no uncommitted edit and nothing committed since the
