@@ -32,7 +32,9 @@ plugin 的 wrapper 只把 `TELEGRAM_API_ID`、`TELEGRAM_API_HASH` 從 Keychain �
 
 ### 以 `security` 子程序讀 Keychain，而非 Security.framework
 
-正式版以絕對路徑執行 `/usr/bin/security find-generic-password -a che-telegram-all-mcp -s <service> -w`。理由：這跟 README 的存法與 wrapper 讀 API 憑證走同一條信任路徑；用 `security add-generic-password` 建的項目，ACL 預設就信任 `/usr/bin/security`，所以不跳授權視窗，也不受 binary 簽章身分影響。2026-10-26 在暫存 Keychain 實測：帶 `-w` 讀到值 exit 0、項目不存在 exit 44、不跳視窗。
+正式版以絕對路徑執行 `/usr/bin/security find-generic-password -a che-telegram-all-mcp -s <service> -g`。理由：這跟 README 的存法與 wrapper 讀 API 憑證走同一條信任路徑；用 `security add-generic-password` 建的項目，ACL 預設就信任 `/usr/bin/security`，所以不跳授權視窗，也不受 binary 簽章身分影響。2026-10-26 在暫存 Keychain 實測：讀到值 exit 0、項目不存在 exit 44、不跳視窗。
+
+用 `-g` 而不是 `-w`（verify 第 1 輪改的）：`-w` 遇到值裡有任何非 ASCII 或控制字元，就把整個值印成小寫 hex，而一個本來就由 hex 字元組成的 ASCII 值印出來一模一樣，所以無法還原。存 `密碼` 這種 2FA 密碼時，送出去的是它的 hex，每次都錯。`-g` 把屬性印到 stdout、把值印到 stderr 的一行 `password:`，可列印的值寫成 `password: "<值>"`，其他寫成 `password: 0x<HEX>  "<跳脫>"`，兩種形式分得開。改用 Security.framework 也能解決這個問題，但規格的 Requirement 寫明了 `/usr/bin/security` 與 `-g`，換的時候要一起改。
 
 替代方案 Security.framework（`SecItemCopyMatching`）：較「正規」，但對 binary 而言是「另一個應用程式第一次讀這個項目」，預期會跳授權視窗，而且 ad-hoc 簽章下每次升級 cdhash 都變、可能每次都要重新授權。這個預期沒有實測（會在畫面上留下授權視窗，而實測時維護者不在）。**這是待維護者確認的假設**（#49 comment 6411790341）；憑證來源放在介面後面，換成 Security.framework 只動正式版那一個型別。
 
@@ -91,9 +93,11 @@ auto-fire 送出失敗會設 `hasAutoFireError`，照舊算定案。
 
 子程序細節：
 - stdin 接 null device，避免 `security` 讀到 MCP 的 JSON-RPC 輸入。
-- stdout 在背景持續讀到 EOF，避免子程序因 pipe 滿而卡住。
-- stderr 丟棄，`security` 的錯誤訊息不轉印。
-- 值只去掉結尾的一個換行。
+- stdout（項目屬性）丟棄。
+- stderr 在背景持續讀，最多 64 KiB，避免子程序因 pipe 滿而卡住；超過上限的輸出不採用。
+- 只讀 stderr 第一個以 `password:` 開頭的行：引號形式取外層引號之間的文字，hex 形式解成 UTF-8；解不出來、沒有這一行，都當作沒有值並在 stderr 寫一行原因（不含值）。
+- 逾時先記錄結果再 `terminate()`，所以逾時不會被回報成 signal 的 exit status；子程序根本沒啟動時不等輸出。
+- 診斷訊息經 `diagnostics` 參數送出（預設寫 stderr），測試可以收集它們、檢查裡面沒有值。
 
 10 秒是 Diagnosis 的建議值，屬於估計，沒有量測。它只需要大於正常讀取的時間：2026-10-26 的暫存 Keychain 實測中讀取立即回來（沒有計時），所以 10 秒應有足夠餘裕；要確認可在第一次真實登入時量 `security` 的耗時；它也只決定 Keychain 鎖住時要等多久才放棄，不影響正確性。
 
@@ -168,7 +172,9 @@ internal func decideAuthRunAction(state:phone:code:password:envApiId:envApiHash:
 - [錯誤的 2FA 密碼存在 Keychain] → 每次 `auth_run` 都會再送一次，可能碰到 Telegram 的頻率限制；與環境變數路徑今天的行為相同，在 README 寫明「密碼錯了先更新 Keychain 項目」。
 - [Swift `String` 無法清零] → 「不留副本」指不保留參照，不是擦除記憶體；值只存在送出它的 `Task` 的區域變數。
 - [沒有存 Keychain 的人] → 仍要在對話裡輸入 2FA 密碼；這個修法縮小風險，沒有消除它（#48 承接引導）。
-- [`TDLibClient` 的接線沒有單元測試] → 邏輯全放在可測的純函式與追蹤器裡，接線只有呼叫；E2E 測試需要真的 Telegram 帳號，不在這個 change 的驗證範圍。
+- [`TDLibClient` 的接線沒有單元測試] → verify 第 1 輪之後，背景那一段抽成 `runCredentialPlan(plan, generation:, tracker:, lookup:, submit:)` 並有 `CredentialPlanRunnerTests`；`TDLibClient` 只傳入 Keychain 來源與送出函式。E2E 測試的 setUp 要求已經登入的帳號，所以**沒有任何測試、也沒有人手動跑過從 Keychain 讀到值、送給 TDLib 的完整登入流程**；第一次發版前要用測試帳號手動登入一次（見 #40 的發版檢查）。
+- [`auth_run` 在查詢期間狀態改變] → 查詢不持鎖，回來後重讀狀態，只有狀態仍在等同一個憑證才用這個值（`authRunKeychainValues`）。查詢回來到 TDLib 收到之間仍有一個很短的窗口，與環境變數路徑相同。
+- [`auth_run` 剛把驗證碼送出、背景正從 Keychain 讀 2FA 密碼] → `auth_run` 等最多 15 秒讓它送完再回答，免得回一個「請提供 password」的提示。
 - [Security.framework 的假設被推翻] → 只換 `SecurityCLICredentialSource` 一個型別。
 
 ## Migration Plan

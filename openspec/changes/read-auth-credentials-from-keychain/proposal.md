@@ -15,14 +15,14 @@ plugin README 的 Track A 叫使用者把電話號碼（`TELEGRAM_PHONE`）與 2
 
 依維護者 2026-10-24 選定的修法 2：**binary 只在 TDLib 等電話或等 2FA 密碼時讀 Keychain，用完即丟**；wrapper 維持不 export 這兩個值。
 
-- `TelegramAllLib` 新增一個可注入的 Keychain 憑證來源。正式版以絕對路徑執行 `/usr/bin/security find-generic-password -a che-telegram-all-mcp -s <TELEGRAM_PHONE|TELEGRAM_2FA_PASSWORD> -w`，有逾時、不快取、不寫 log、錯誤訊息不帶值。
+- `TelegramAllLib` 新增一個可注入的 Keychain 憑證來源。正式版以絕對路徑執行 `/usr/bin/security find-generic-password -a che-telegram-all-mcp -s <TELEGRAM_PHONE|TELEGRAM_2FA_PASSWORD> -g`（讀 stderr 的 `password:` 行；`-w` 會把非 ASCII 的值印成 hex），有逾時、不快取、不寫 log、錯誤訊息不帶值。
 - TDLib 進入 `waitingForPhoneNumber` 或 `waitingForPassword`、而環境變數沒有值時，在既有的 auto-fire `Task` 裡讀 Keychain 並送出；TDLib 的 callback 執行緒不做任何子程序呼叫。
 - 用一個不含密碼的查詢狀態（查詢中／找到／沒有）讓 `authorizationIsSettled` 在查詢期間不判為定案，避免 #58 修掉的競態重現。
 - `auth_run` 取值的優先順序改為「呼叫端引數 > 環境變數 > Keychain」；等驗證碼時任何路徑都不讀 Keychain。
 - spec `telegram-auth-coordination` 以 delta 修改 auto-fire 的來源表、更正「wrapper-injected variable」一句，並新增「Keychain 查詢有時限、不留副本」的 Requirement。
 - 文件：plugin README Track A、`che-telegram-all-mcp/README.md`、`--help` 的電話與 2FA 兩行、兩份 CHANGELOG 的 `[Unreleased]`。
 
-**待確認的假設**（不是維護者的決定，見 #49 comment 6411790341）：讀取用 `security` 子程序而不是 Security.framework。2026-10-26 在暫存 Keychain 實測：帶 `-w` 讀取 exit 0、項目不存在 exit 44、不跳授權視窗；從 ad-hoc 簽章 binary 用 Security.framework 讀的實測沒有跑（預期會跳視窗）。憑證來源放在介面後面，改用 Security.framework 只需要換正式版那一個型別。
+**待確認的假設**（不是維護者的決定，見 #49 comment 6411790341）：讀取用 `security` 子程序而不是 Security.framework。2026-10-26 在暫存 Keychain 實測：讀取 exit 0、項目不存在 exit 44、不跳授權視窗；從 ad-hoc 簽章 binary 用 Security.framework 讀的實測沒有跑（預期會跳視窗）。憑證來源放在介面後面，改用 Security.framework 只需要換正式版那一個型別。
 
 ## Non-Goals (optional)
 
