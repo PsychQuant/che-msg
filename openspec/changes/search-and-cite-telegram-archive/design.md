@@ -64,16 +64,20 @@ Diagnosis 建議在「Day file format」加一句「錨點與跳脫規則是讀�
 
 ### 目錄以 descriptor 開啟，日檔相對於它讀
 
-第一版先 `lstat` 檢查聊天目錄不是 symlink，之後卻用絕對路徑開日檔；`O_NOFOLLOW` 只管最後一個路徑元件，所以聊天目錄在檢查之後被換成 symlink 時會被跟隨（verify 的 HIGH）。現在歸檔目錄與每個聊天目錄都以 `O_DIRECTORY | O_NOFOLLOW` 開一次，日檔以 `dir_fd=` 相對於聊天目錄的 descriptor 開啟，不再經過會重新解析的路徑。git 檢查仍以路徑進行（git 只認路徑），所以檢查之後再確認每個聊天目錄的路徑仍然指向同一個 inode（`lstat` 的 device 與 inode 等於 descriptor 的 `fstat`）；不再相同的聊天列為 `changed-during-search`、不讀，歸檔目錄本身變了就整個拒絕。macOS 對 `O_DIRECTORY | O_NOFOLLOW` 開 symlink 回 `ENOTDIR`，兩種 errno 都當作被換掉。git 回「not a git repository」以外的錯誤（找不到 git、dubious ownership）時拒絕，與 `/archive-telegram` 相同。
+第一版先 `lstat` 檢查聊天目錄不是 symlink，之後卻用絕對路徑開日檔；`O_NOFOLLOW` 只管最後一個路徑元件，所以聊天目錄在檢查之後被換成 symlink 時會被跟隨（verify 的 HIGH）。現在歸檔目錄與每個聊天目錄都以 `O_DIRECTORY | O_NOFOLLOW` 開一次，日檔以 `dir_fd=` 相對於聊天目錄的 descriptor 開啟，不再經過會重新解析的路徑。git 檢查仍以路徑進行（git 只認路徑），所以檢查之後再確認每個聊天目錄的路徑仍然指向同一個 inode（`lstat` 的 device 與 inode 等於 descriptor 的 `fstat`）；不再相同的聊天列為 `changed-during-search`、不讀，歸檔目錄本身變了就整個拒絕。macOS 對 `O_DIRECTORY | O_NOFOLLOW` 開 symlink 回 `ENOTDIR`，兩種 errno 都當作被換掉。
+
+第二輪 verify 發現：所有聊天目錄的 descriptor 從探索一直開到搜尋結束，再加上 `listdir` 用的一個；在 macOS 非 shell 啟動的預設上限 256 之下，約 250 個聊天以上就全部變成 `unreadable`。現在分兩段：探索時每個聊天目錄開啟、記下 device 與 inode 及日檔清單、立刻關閉；git 檢查之後逐一相對於歸檔目錄的 descriptor 重新開啟，descriptor 的 `fstat` 與路徑的 `lstat` 都必須等於記下的 inode 才讀，讀完就關。同時開著的只有歸檔目錄、一個聊天目錄與一個日檔，與聊天數無關（80 個聊天在 `ulimit -n 64` 下全部讀到，401 個在 256 下也是）。在重新檢查之後的窗口裡，日檔仍以 `dir_fd=` 相對於剛檢查過的 descriptor 開啟；white-box 測試在這個窗口把聊天目錄、歸檔目錄與日檔換掉，釘住這些防線。git 回「not a git repository」以外的錯誤（找不到 git、dubious ownership）時拒絕，與 `/archive-telegram` 相同。
 
 ### 輸出是一個 JSON 物件，危險字元寫成跳脫
 
-JSON 讓 skill 不必解析自由文字，第三方文字也不會被誤認為輸出的結構。`json.dumps(ensure_ascii=False)` 不跳脫 C1 控制字元、U+2028／U+2029 與雙向格式字元，所以輸出後再把這些字元換成 `\uXXXX`：資訊不丟，但不會原樣送到終端機（例如 U+202E 讓檔名或內文倒過來顯示）。verify 之後再加上使用者看不見、模型卻讀得到的字元：U+00AD、U+200B 到 U+200F、U+2060 到 U+2064、U+FEFF、U+FFF9 到 U+FFFB，以及 tag 字元 U+E0000 到 U+E007F（BMP 之外，寫成 surrogate pair）。這些字元只會出現在 JSON 字串裡，替換不影響結構。U+200D 被跳脫後，emoji 的 ZWJ 組合在輸出裡會拆開顯示，這是刻意的取捨。腳本原始碼本身只含 ASCII，這些字元一律以 `\u` 跳脫或 `chr()` 寫出。
+JSON 讓 skill 不必解析自由文字，第三方文字也不會被誤認為輸出的結構。`json.dumps(ensure_ascii=False)` 不跳脫 C1 控制字元、U+2028／U+2029 與雙向格式字元，所以輸出後再把這些字元換成 `\uXXXX`：資訊不丟，但不會原樣送到終端機（例如 U+202E 讓檔名或內文倒過來顯示）。verify 之後再加上使用者看不見、模型卻讀得到的字元：U+00AD、U+200B 到 U+200F、U+2060 到 U+2064、U+FEFF、U+FFF9 到 U+FFFB，以及 tag 字元 U+E0000 到 U+E007F（BMP 之外，寫成 surrogate pair）。這些字元只會出現在 JSON 字串裡，替換不影響結構。第二輪再加上 variation selector U+FE00 到 U+FE0E 與 U+E0100 到 U+E01EF（可以用來藏資料，每個 selector 帶一個位元組），以及顯示為空白的 U+034F、U+115F、U+1160、U+180E、U+3164、U+FFA0、U+FFFC。U+FE0F 不跳脫：它選擇前一個符號的 emoji 外觀（例如 U+2764 U+FE0F），在訊息裡很常見；它只有一個值，一串 U+FE0F 能帶的只有長度。U+200D 被跳脫後，emoji 的 ZWJ 組合在輸出裡會拆開顯示，這是刻意的取捨。腳本原始碼本身只含 ASCII，這些字元一律以 `\u` 跳脫或 `chr()` 寫出。
 
 ### 結果與上限
 
 - 結果由新到舊（日期、時間、message id）。截斷時使用者通常想看最近的，並看到總數以縮小日期範圍。不同聊天的 `utc_offset` 不同時，跨聊天的排序是近似的。
 - `max_results` 預設 20、最多 100；`snippet_chars` 預設 80、介於 20 到 200；超出範圍是 usage error，不默默夾回。
+- 每個上限都包含省略號：摘錄的 `snippet_chars`、寄件人的 64 字元、註記的 48 字元（第二輪 verify：第一版把 `…` 加在上限之外，多出一到兩個字元）。
+- 搜尋時只保留 `max_results` 筆最新的結果（heap），摘錄只替會進入 heap 的結果計算；區塊逐一產生。第二輪 verify 量到 60 萬筆符合時用掉 869 MB，現在同樣規模約 106 MiB，峰值取決於最大的日檔而不是符合的筆數。
 - `snippet_chars` 量的是顯示出來的摘錄：換行先寫成 ` ⏎ `，再取寬度（verify 發現第一版先取寬度再換，多行訊息的摘錄可以長到寬度的三倍）。只渲染命中處前後各一個寬度的原文，長訊息不會整則複製。
 - 數字一律經過同一個函式轉換：去掉前導零後超過 19 位就不是 Int64，不呼叫 `int()`。Python 3.11 起 `int()` 拒絕超過 4300 位的字串，第一版遇到這種錨點或 `chat_id` 整個搜尋回 `internal`。
 - 記憶體：第一版在命中時為每個字元建 list 來對應 case folding 前後的位置，30 MiB 的訊息用掉 3.1 GB。現在先比較整段 casefold 的長度，相同就直接用位置；不同時以 64K 字元為一塊累加 casefold 長度，只在命中的那一塊逐字計算。實測 30 MiB 單則訊息的峰值約 380 MiB、0.5 秒：約為日檔大小的 12 倍（讀入的 bytes、解碼後的文字、分行、內文、casefold 各一份），日檔上限 32 MiB，所以最多約 400 MiB，記在這裡不改成串流。
@@ -87,9 +91,9 @@ JSON 讓 skill 不必解析自由文字，第三方文字也不會被誤認為�
 ## Implementation Contract
 
 - **行為**：`python3 -I search_archive.py --archive <絕對路徑> [--text T]... [--sender S] [--since D] [--until D] [--chat ID]... [--max-results N] [--snippet-chars N]` 搜尋；`--cite telegram:<chat_id>/<message_id>`（可重複，最多 10）解析引用。輸出一個 JSON 物件到 stdout：搜尋是 `{"archive", "searched_files", "matched", "shown", "truncated", "results": [...], "skipped": [...], "skipped_count", "missing_chats": [...]}`；引用是 `{"archive", "blocks": [...], "not_found": [...], "skipped": [...], "skipped_count"}`。每筆 result 有 `citation`、`chat_id`、`message_id`、`date`、`time`、`utc_offset`、`sender`、`snippet`、`file`、`annotations`、`annotations_truncated`；每個 block 把 `snippet` 換成 `text` 與 `text_truncated`。
-- **錯誤**：`{"error": {"type", "message", ...}}` 也寫到 stdout。`usage`（exit 2）、`not_ignored`（exit 3，附 `files` 與 `count`）、`git_failed`（exit 3）、`archive_missing`（exit 4：不是絕對路徑、不存在、不是目錄、列不出內容）、`internal`（exit 1：腳本本身的例外，只回例外類型，不回 traceback，免得夾帶檔案內容）。
+- **錯誤**：`{"error": {"type", "message", ...}}` 也寫到 stdout。`usage`（exit 2）、`not_ignored`（exit 3，附 `files` 與 `count`）、`git_failed`（exit 3）、`archive_missing`（exit 4：不是絕對路徑、不存在、不是目錄、列不出內容；權限不足的目錄說 cannot be listed，不說不是目錄）、`internal`（exit 1：腳本本身的例外，只回例外類型，不回 traceback，免得夾帶檔案內容）。
 - **介面**：skill `plugins/che-telegram-mcp/skills/archive-telegram-search/SKILL.md`（`disable-model-invocation: true`，沒有 `allowed-tools`），以 `python3 -I '${CLAUDE_SKILL_DIR}/scripts/search_archive.py'` 呼叫腳本，路徑與參數依 `/archive-telegram` 的單引號規則包住。
-- **邊界**：不讀 `media/`、索引、非日檔名稱的檔案；歸檔與聊天目錄以 `O_DIRECTORY | O_NOFOLLOW` 開啟，symlink 的聊天目錄列為 `symlinked-chat-directory`，git 檢查後路徑不再指向同一目錄的列為 `changed-during-search`；日檔以 `dir_fd=` 與 `O_RDONLY | O_NONBLOCK | O_NOFOLLOW` 開啟，只讀一般檔案，大於 32 MiB 的列為 `too-large`；`skipped` 最多列 20 個並給總數；git 只拿到 `PATH`、`HOME`、`XDG_CONFIG_HOME`、`LC_ALL=C`。
+- **邊界**：不讀 `media/`、索引、非日檔名稱的檔案；歸檔與聊天目錄以 `O_DIRECTORY | O_NOFOLLOW` 開啟，symlink 的聊天目錄列為 `symlinked-chat-directory`，`--chat` 指名的是一般檔案時列為 `not-a-directory`，git 檢查後路徑不再指向同一目錄的列為 `changed-during-search`；一次只開一個聊天目錄；日檔以 `dir_fd=` 與 `O_RDONLY | O_NONBLOCK | O_NOFOLLOW` 開啟，只讀一般檔案，大於 32 MiB 的列為 `too-large`；`skipped` 最多列 20 個並給總數；git 只拿到 `PATH`、`HOME`、`XDG_CONFIG_HOME`、`LC_ALL=C`。
 - **驗收**：`tests/che-telegram-mcp/test-archive-search.sh` 以合成日檔驗證 spec 的所有 scenario（含 #72 標記行、標頭前後的 HTML 註解行、`<!--` 加組合字元的內文行、多行內文、跳脫行、不相符的檔案、CR、FIFO、symlink、搜尋中被換掉的聊天目錄、git 檢查各情況與五種環境變數、global excludes、唯讀、上限、摘錄寬度、上千位數字、20 MiB 訊息的記憶體、隱形字元），在 `python3` 與 `/usr/bin/python3`（存在時）各跑一次；`test-plugin-layout.sh` 的 (h) 含新 skill，mutation 測試證明 (h)、(d) 會抓到新 skill 的違規；`claude plugin validate plugins/che-telegram-mcp` 通過。
 - **範圍內**：新 skill 與腳本、新 capability、`telegram-messaging` 一行、layout 測試 (h) 與 mutation 案例、plugin README 與 CHANGELOG。
 - **範圍外**：寫入端與 `telegram-chat-archive` spec、#72 的標記與升級、server 工具、CLI 子命令、多個歸檔目錄、plugin 版號、引用離開歸檔後的同意與匿名化。

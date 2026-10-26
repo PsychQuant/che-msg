@@ -17,3 +17,9 @@
 - [x] 4.1 先寫失敗的測試（Requirement: Archive reader contract；Requirement: Search filters and bounded output；Requirement: Read-only search with the git-ignore guard）：`<!--` 加 U+0301／U+200D／U+FE0F 的內文行、標頭之後的註解行、沒有標頭的區塊；搜尋中聊天目錄被換成 symlink（包住 guard 的 white-box 測試）；`GIT_CEILING_DIRECTORIES`、`GIT_CONFIG_COUNT`、`GIT_CONFIG_PARAMETERS`、`GIT_CONFIG_GLOBAL`、`GIT_CONFIG_SYSTEM` 各自不能放行；global excludes 照 git 的讀法生效；註記上限；含換行標記的摘錄寬度；5000 位數字；20 MiB 訊息的記憶體；隱形字元的跳脫。驗證：舊腳本 308 個檢查有 61 個失敗
 - [x] 4.2 依設計「註記只在錨點與標頭之間」「目錄以 descriptor 開啟，日檔相對於它讀」「git 檢查做在腳本裡，檢查實際要讀的檔案」「輸出是一個 JSON 物件，危險字元寫成跳脫」「結果與上限」修正腳本，原始碼只含 ASCII。驗證：308 個檢查在 `python3` 與 `/usr/bin/python3` 都通過 [after: 4.1]
 - [x] 4.3 與寫入端一致的案例：U+2028 與 NEL 不結束一行、非 ASCII 數字不是標頭時間、以 scalar 跳脫的 `\<!--` 加組合字元讀回時去掉反斜線。驗證：318 個檢查在兩個 interpreter 都通過 [after: 4.2]
+
+## 5. verify 第二輪的修正
+
+- [x] 5.1 先寫失敗的測試（Requirement: Archive reader contract；Requirement: Search filters and bounded output）：`ulimit -n 64` 下 80 個聊天；12 萬筆符合的記憶體；省略號在上限之內；新增的隱形字元；mode 000 的歸檔與指名一般檔案的 `--chat`；white-box 測試在重新檢查之後換掉聊天目錄、在 git 檢查之後換掉歸檔目錄、換成另一個真目錄、在開啟前換成一般檔案、把日檔換成 link 或 FIFO；32 MiB 上限、10 個 200 字元的詞、20 筆 skipped、5 個被拒的檔案、整行錨點、一般的反斜線、前導零的 `chat_id`、重複的引用、超過 64K 的 case-fold 對應、經 link 給的歸檔路徑。驗證：舊腳本 398 個檢查有 54 個失敗
+- [x] 5.2 依設計「目錄以 descriptor 開啟，日檔相對於它讀」「結果與上限」「輸出是一個 JSON 物件，危險字元寫成跳脫」修正腳本：逐一開關聊天目錄、heap、上限含省略號、跳脫字元。驗證：398 個檢查在 `python3` 與 `/usr/bin/python3` 都通過，審查列出的存活 mutant 都被殺掉 [after: 5.1]
+
