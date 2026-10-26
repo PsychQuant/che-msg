@@ -14,8 +14,8 @@
 
 ## 4. 重試時訊息已不存在（#75 item 1）
 
-- [ ] 4.1 先寫失敗的測試（Requirement: Media retry by message id 的分類表與 Scenario: Retried message no longer exists）：`messageIsGone` 對 404、400 `Message not found` 為真，對 400 `Chat not found`、429 限流、`notAuthenticated`、其他錯誤為假；重試 `[7100, 7300]`、7100 回 404、7300 下載失敗時 `media_gone_ids` 為 `[7100]`、`media_failed_ids` 為 `[7300]`、`media_retried_ids` 為 `[]`，manifest JSON 有 `media_gone_ids`；沒有給 `retry_media_message_ids` 時 manifest 沒有這個欄位（Requirement: Content-free manifest）；本機快取路徑照舊把 id 放回 `media_failed_ids`。驗證：`swift test --filter ArchiveMediaTests` 先失敗
-- [ ] 4.2 依設計「重試的分類」實作：`retryMedia` 以 `do/catch` 保留錯誤，`messageIsGone` 為真時列入 `mediaGoneIds`；`archive` 最後從 `mediaFailedIds` 去掉 gone 的 id；`manifestJSON` 輸出 `media_gone_ids`。驗證：4.1 的測試與既有的重試測試通過 [after: 4.1]
+- [x] 4.1 先寫失敗的測試（Requirement: Media retry by message id 的分類表與 Scenario: Retried message no longer exists）：`messageIsGone` 對 404、400 `Message not found` 為真，對 400 `Chat not found`、429 限流、`notAuthenticated`、其他錯誤為假；重試 `[7100, 7300]`、7100 回 404、7300 下載失敗時 `media_gone_ids` 為 `[7100]`、`media_failed_ids` 為 `[7300]`、`media_retried_ids` 為 `[]`，manifest JSON 有 `media_gone_ids`；沒有給 `retry_media_message_ids` 時 manifest 沒有這個欄位（Requirement: Content-free manifest）；本機快取路徑照舊把 id 放回 `media_failed_ids`。驗證：`swift test --filter ArchiveMediaTests` 先失敗
+- [x] 4.2 依設計「重試的分類」實作：`retryMedia` 以 `do/catch` 保留錯誤，`messageIsGone` 為真時列入 `mediaGoneIds`；`archive` 最後從 `mediaFailedIds` 去掉 gone 的 id；`manifestJSON` 輸出 `media_gone_ids`。驗證：4.1 的測試與既有的重試測試通過 [after: 4.1]
 
 ## 5. 媒體的 quarantine 屬性（#75 item 2）
 

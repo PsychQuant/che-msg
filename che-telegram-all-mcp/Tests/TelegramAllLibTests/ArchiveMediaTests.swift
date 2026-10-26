@@ -12,6 +12,7 @@ final class ArchiveMediaTests: XCTestCase {
         var onDownload: ((Int) -> Void)?
         var downloads: [Int] = []
         var messages: [Int64: [String: Any]] = [:]
+        var messageErrors: [Int64: Error] = [:]
         var ext = "jpg"
         init(cache: URL) { self.cache = cache }
         func download(fileId: Int) async throws -> String {
@@ -25,6 +26,7 @@ final class ArchiveMediaTests: XCTestCase {
             return path.path
         }
         func message(chatId: Int64, messageId: Int64) async throws -> [String: Any] {
+            if let error = messageErrors[messageId] { throw error }
             guard let m = messages[messageId] else { throw NSError(domain: "fake", code: 2) }
             return m
         }
@@ -347,5 +349,75 @@ final class ArchiveMediaTests: XCTestCase {
             XCTAssertEqual(ArchiveMedia.fileName(type: "document", name: "a\(scalar)b.pdf", downloadedPath: "/c/x"), "ab.pdf",
                            String(format: "U+%04X", scalar.unicodeScalars.first!.value))
         }
+    }
+
+    // MARK: - Retried messages that no longer exist (#75)
+
+    private func tdlib(_ code: Int, _ message: String) -> Error {
+        TDLibClient.TDError.tdlibError(code: code, message: message)
+    }
+
+    // Example "retry outcomes": only TDLib saying the message does not exist counts as gone.
+    func testMessageIsGoneOnlyWhenTDLibSaysSo() {
+        XCTAssertTrue(ChatArchiver.messageIsGone(tdlib(404, "Not Found")), "getMessage's documented answer")
+        XCTAssertTrue(ChatArchiver.messageIsGone(tdlib(404, "")))
+        XCTAssertTrue(ChatArchiver.messageIsGone(tdlib(400, "Message not found")))
+        XCTAssertFalse(ChatArchiver.messageIsGone(tdlib(400, "Chat not found")))
+        XCTAssertFalse(ChatArchiver.messageIsGone(tdlib(400, "Message not found in chat")), "the exact text only")
+        XCTAssertFalse(ChatArchiver.messageIsGone(tdlib(429, "Too Many Requests: retry after 30")))
+        XCTAssertFalse(ChatArchiver.messageIsGone(TDLibClient.TDError.notAuthenticated))
+        XCTAssertFalse(ChatArchiver.messageIsGone(NSError(domain: "fake", code: 404)))
+    }
+
+    // Scenario "Retried message no longer exists".
+    func testRetriedMessageThatNoLongerExistsIsGone() async throws {
+        let root = scratch(), out = root.appendingPathComponent("out")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        downloader.messages = [7300: Self.media(7300, 5, fileId: 73)]
+        downloader.failing = [73]
+        downloader.messageErrors = [7100: tdlib(404, "Not Found"), 7400: tdlib(400, "Chat not found"),
+                                    7500: tdlib(400, "Message not found")]
+        let result = try await archiver([], downloader: downloader).archive(
+            .init(chatId: 777, outputDir: out, afterMessageId: 9000, utcOffset: "+08:00",
+                  retryMediaMessageIds: [7100, 7300, 7400, 7500]))
+        XCTAssertEqual(result.mediaGoneIds, [7100, 7500])
+        XCTAssertEqual(result.mediaFailedIds, [7300, 7400])
+        XCTAssertEqual(result.mediaRetriedIds, [])
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.manifestJSON().utf8)) as? [String: Any])
+        XCTAssertEqual(object["media_gone_ids"] as? [Int], [7100, 7500])
+        XCTAssertEqual(object["media_failed_ids"] as? [Int], [7300, 7400])
+    }
+
+    /// A download that failed in the walk, then the message was deleted before the retry: listed as gone only.
+    func testAnIdGoneOnRetryIsNotAlsoFailed() async throws {
+        let root = scratch(), out = root.appendingPathComponent("out")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        downloader.failing = [71]
+        downloader.messageErrors = [7100: tdlib(404, "Not Found")]
+        let result = try await archiver([Self.media(7100, 3, fileId: 71)], downloader: downloader)
+            .archive(.init(chatId: 777, outputDir: out, utcOffset: "+08:00", retryMediaMessageIds: [7100]))
+        XCTAssertEqual(result.mediaGoneIds, [7100])
+        XCTAssertEqual(result.mediaFailedIds, [])
+    }
+
+    /// `media_gone_ids` appears with `media_retried_ids`: TDLib path, at least one id to retry.
+    func testMediaGoneIdsOnlyWithRetriesOnTheTDLibPath() async throws {
+        let root = scratch()
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        func manifest(_ result: ChatArchiver.Result) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.manifestJSON().utf8)) as? [String: Any])
+        }
+        let plain = try await archiver([], downloader: downloader)
+            .archive(.init(chatId: 777, outputDir: root.appendingPathComponent("a"), utcOffset: "+08:00"))
+        XCTAssertNil(try manifest(plain)["media_gone_ids"])
+        let empty = try await archiver([], downloader: downloader)
+            .archive(.init(chatId: 777, outputDir: root.appendingPathComponent("b"), utcOffset: "+08:00",
+                           retryMediaMessageIds: []))
+        XCTAssertNil(try manifest(empty)["media_gone_ids"])
+        let local = try await archiver([], downloader: nil, kind: .localCache)
+            .archive(.init(chatId: 777, outputDir: root.appendingPathComponent("c"), utcOffset: "+08:00",
+                           retryMediaMessageIds: [7100]))
+        XCTAssertNil(try manifest(local)["media_gone_ids"])
+        XCTAssertEqual(local.mediaFailedIds, [7100], "the local cache returns the ids unchanged")
     }
 }

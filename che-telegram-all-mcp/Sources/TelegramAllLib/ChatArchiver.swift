@@ -61,6 +61,8 @@ public struct ChatArchiver {
         public var mediaFailedIds: [Int64] = []
         public var mediaPendingLocalCache = 0
         public var mediaRetriedIds: [Int64]?
+        /// Retried ids whose message TDLib says no longer exists (#75); set with `mediaRetriedIds`.
+        public var mediaGoneIds: [Int64]?
         public var files: [String] = []
         public var newMessages = 0
         public var mediaMessages = 0
@@ -92,6 +94,7 @@ public struct ChatArchiver {
             object["media_failed_ids"] = mediaFailedIds.map { NSNumber(value: $0) }
             object["media_pending_local_cache"] = mediaPendingLocalCache
             if let mediaRetriedIds { object["media_retried_ids"] = mediaRetriedIds.map { NSNumber(value: $0) } }
+            if let mediaGoneIds { object["media_gone_ids"] = mediaGoneIds.map { NSNumber(value: $0) } }
             if let stoppedReason { object["stopped_reason"] = stoppedReason }
             if let retryAfterSeconds { object["retry_after_seconds"] = retryAfterSeconds }
             if let bookmarkUnsafeReason { object["bookmark_unsafe_reason"] = bookmarkUnsafeReason }
@@ -171,10 +174,10 @@ public struct ChatArchiver {
         }
         try await retryMedia(request, chatDir: chatDir, into: &result)
         // An id can fail in the walk and again (or not) on retry; list each once, and not
-        // at all when the retry saved it.
-        let retried = Set(result.mediaRetriedIds ?? [])
+        // at all when the retry saved it or found the message gone.
+        let settled = Set((result.mediaRetriedIds ?? []) + (result.mediaGoneIds ?? []))
         var listed = Set<Int64>()
-        result.mediaFailedIds = result.mediaFailedIds.filter { !retried.contains($0) && listed.insert($0).inserted }
+        result.mediaFailedIds = result.mediaFailedIds.filter { !settled.contains($0) && listed.insert($0).inserted }
         result.files = files.sorted()
         result.complete = reachedBound && result.stoppedReason == nil
         if !reachedBound && result.stoppedReason == nil { result.stoppedReason = "no-progress" }
@@ -232,6 +235,15 @@ public struct ChatArchiver {
 
     /// The longest wait reported (TDLib's own clamp in NetQueryDelayer).
     static let maxReportedWaitSeconds = 14 * 24 * 60 * 60
+
+    /// True when fetching a message failed because TDLib says it does not exist: code 404, which
+    /// td_api.tl documents for `getMessage` ("Returns a 404 error if the message doesn't exist"),
+    /// or code 400 with exactly `Message not found`. Anything else — `Chat not found`, a rate
+    /// limit, no session — may pass, so the id stays pending (#75).
+    static func messageIsGone(_ error: Error) -> Bool {
+        guard case TDLibClient.TDError.tdlibError(let code, let message) = error else { return false }
+        return code == 404 || (code == 400 && message == "Message not found")
+    }
 
     private func isBelowBound(_ message: [String: Any], id: Int64, _ request: Request) -> Bool {
         if let after = request.afterMessageId { return id <= after }
@@ -295,16 +307,23 @@ public struct ChatArchiver {
         }
     }
 
-    /// Retries the media of `retryMediaMessageIds` by fetching each message by id.
+    /// Retries the media of `retryMediaMessageIds` by fetching each message by id; an id whose
+    /// message no longer exists is listed in `mediaGoneIds` instead of failing again.
     private func retryMedia(_ request: Request, chatDir: URL, into result: inout Result) async throws {
         guard let requested = request.retryMediaMessageIds, !requested.isEmpty else { return }
         var unique = Set<Int64>()
         let ids = requested.filter { unique.insert($0).inserted }
         guard let media else { result.mediaFailedIds.append(contentsOf: ids); return }
         var retried: [Int64] = []
+        var gone: [Int64] = []
         for id in ids {
-            guard let message = try? await media.message(chatId: request.chatId, messageId: id) else {
-                result.mediaFailedIds.append(id); continue
+            let message: [String: Any]
+            do {
+                message = try await media.message(chatId: request.chatId, messageId: id)
+            } catch {
+                // A deleted message would otherwise be retried on every run.
+                if Self.messageIsGone(error) { gone.append(id) } else { result.mediaFailedIds.append(id) }
+                continue
             }
             switch await ArchiveMedia.ensure(message, chatDir: chatDir, downloader: media, maxBytes: request.maxMediaBytes) {
             case .downloaded:
@@ -319,6 +338,7 @@ public struct ChatArchiver {
             }
         }
         result.mediaRetriedIds = retried
+        result.mediaGoneIds = gone
     }
 
     private func senderLabel(_ message: [String: Any], _ names: [Int64: String], _ selfLabel: String) -> String {
