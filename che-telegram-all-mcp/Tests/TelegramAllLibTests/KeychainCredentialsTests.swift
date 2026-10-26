@@ -5,7 +5,10 @@ import XCTest
 /// Covers "Keychain credential lookup is bounded and keeps no copy"
 /// (telegram-auth-coordination; PsychQuant/che-msg#49). A small shell script
 /// in a scratch directory plays `/usr/bin/security`, so no test reads a real
-/// Keychain.
+/// Keychain. Like the real tool with `-g`, the fake prints the item's
+/// attributes on stdout and `password: "<value>"` or `password: 0x<hex>  "…"`
+/// on stderr (`-w` would print a non-ASCII value as bare hex, which cannot be
+/// told apart from an ASCII value that looks like hex).
 final class KeychainCredentialsTests: XCTestCase {
     private var dir: URL!
 
@@ -35,21 +38,71 @@ final class KeychainCredentialsTests: XCTestCase {
 
     // MARK: - Outcomes of a lookup (spec example table)
 
-    func testValueWithTrailingNewlineIsFound() async throws {
-        let (result, messages) = try await lookup("printf 'secret\\n'")
+    /// What `security find-generic-password -g` writes for a stored `value`:
+    /// attributes on stdout, the password line on stderr.
+    private func dashG(_ passwordLine: String) -> String {
+        "printf 'keychain: \"/x\"\\nclass: \"genp\"\\n'; printf '%s\\n' '\(passwordLine)' >&2"
+    }
+
+    func testQuotedValueIsFound() async throws {
+        let (result, messages) = try await lookup(dashG(#"password: "secret""#))
         XCTAssertEqual(result, .found("secret"))
         XCTAssertEqual(messages, [])
     }
 
-    func testOnlyOneTrailingNewlineIsRemoved() async throws {
-        let (result, _) = try await lookup("printf 'a\\nb\\n'")
-        XCTAssertEqual(result, .found("a\nb"))
+    func testHexValueIsDecodedAsUTF8() async throws {
+        // café, as security prints a value with non-ASCII bytes
+        let (result, messages) = try await lookup(dashG(#"password: 0x636166C3A9  "caf\303\251""#))
+        XCTAssertEqual(result, .found("café"))
+        XCTAssertEqual(messages, [])
+    }
+
+    func testHexValueWithANewlineIsDecoded() async throws {
+        let (result, _) = try await lookup(dashG(#"password: 0x6C696E65310A6C696E6532  "line1\012line2""#))
+        XCTAssertEqual(result, .found("line1\nline2"))
+    }
+
+    func testQuotedTextThatLooksLikeHexStaysText() async throws {
+        let (result, _) = try await lookup(dashG(#"password: "636166c3a9""#))
+        XCTAssertEqual(result, .found("636166c3a9"))
+    }
+
+    func testQuoteInsideTheValueIsKept() async throws {
+        let (result, _) = try await lookup(dashG(#"password: "end"""#))
+        XCTAssertEqual(result, .found(#"end""#))
     }
 
     func testEmptyValueIsAbsent() async throws {
-        let (result, messages) = try await lookup("exit 0")
+        let (result, messages) = try await lookup(dashG("password: "))
         XCTAssertEqual(result, .absent)
         XCTAssertEqual(messages, [])
+    }
+
+    func testOutputWithoutAPasswordLineIsUnavailable() async throws {
+        let (result, messages) = try await lookup("printf 'keychain: \"/x\"\\n'; echo 'something else' >&2", .password)
+        XCTAssertEqual(result, .unavailable(exitStatus: 0))
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertTrue(messages.first?.contains("TELEGRAM_2FA_PASSWORD") == true, "\(messages)")
+    }
+
+    func testHexThatIsNotUTF8IsUnavailable() async throws {
+        let (result, messages) = try await lookup(dashG(#"password: 0xFF  "\377""#), .password)
+        XCTAssertEqual(result, .unavailable(exitStatus: 0))
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertFalse(messages.first?.contains("FF") ?? true, "the diagnostic must not show the value: \(messages)")
+    }
+
+    func testOutputBeyondTheLimitIsUnavailable() async throws {
+        let (result, _) = try await lookup("printf 'password: \"'; head -c 70000 /dev/zero | tr '\\0' a; printf '\"\\n'", .password)
+        XCTAssertEqual(result.value, nil, "a truncated value must not be used")
+    }
+
+    func testAToolThatCannotStartFailsAtOnce() async throws {
+        let source = SecurityCLICredentialSource(executable: dir.appendingPathComponent("missing"), diagnostics: { _ in })
+        let started = Date()
+        let result = await source.lookup(.phone)
+        XCTAssertEqual(result, .unavailable(exitStatus: -1))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5, "no output grace when nothing was started")
     }
 
     func testItemNotFoundIsAbsentWithoutADiagnostic() async throws {
@@ -74,6 +127,7 @@ final class KeychainCredentialsTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 3, "the lookup must give up at its time limit")
         XCTAssertEqual(messages.count, 1)
         XCTAssertTrue(messages[0].contains("TELEGRAM_2FA_PASSWORD"), messages[0])
+        XCTAssertTrue(messages[0].contains("0.5"), "the diagnostic names the time limit: \(messages[0])")
         let pid = try XCTUnwrap(Int32(String(contentsOfFile: pidFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)))
         var gone = false
@@ -89,7 +143,7 @@ final class KeychainCredentialsTests: XCTestCase {
     func testOutputHeldOpenByAnotherProcessDoesNotBlockTheLookup() async throws {
         let pidFile = dir.appendingPathComponent("holder").path
         let started = Date()
-        let (result, _) = try await lookup("sleep 30 & echo $! > '\(pidFile)'; printf 'x'; exit 0", timeout: 0.5)
+        let (result, _) = try await lookup("sleep 30 & echo $! > '\(pidFile)'; printf 'password: \"x\"\\n' >&2; exit 0", timeout: 0.5)
         let holder = Int32((try? String(contentsOfFile: pidFile, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0
         if holder > 0 { kill(holder, SIGKILL) }
@@ -119,20 +173,20 @@ final class KeychainCredentialsTests: XCTestCase {
 
     func testChildGetsConstantArgumentsOnly() async throws {
         let argsFile = dir.appendingPathComponent("args").path
-        _ = try await lookup("printf '%s\\n' \"$@\" > '\(argsFile)'; printf 'x'", .password)
+        _ = try await lookup("printf '%s\\n' \"$@\" > '\(argsFile)'; printf 'password: \"x\"\\n' >&2", .password)
         let args = try String(contentsOfFile: argsFile, encoding: .utf8).split(separator: "\n").map(String.init)
-        XCTAssertEqual(args, ["find-generic-password", "-a", "che-telegram-all-mcp", "-s", "TELEGRAM_2FA_PASSWORD", "-w"])
+        XCTAssertEqual(args, ["find-generic-password", "-a", "che-telegram-all-mcp", "-s", "TELEGRAM_2FA_PASSWORD", "-g"])
     }
 
     func testKeychainPathIsPassedLast() async throws {
         let argsFile = dir.appendingPathComponent("args").path
         let source = SecurityCLICredentialSource(
-            executable: try fakeSecurity("printf '%s\\n' \"$@\" > '\(argsFile)'; printf 'x'"),
+            executable: try fakeSecurity("printf '%s\\n' \"$@\" > '\(argsFile)'; printf 'password: \"x\"\\n' >&2"),
             keychainPath: "/tmp/scratch.keychain-db", diagnostics: { _ in })
         _ = await source.lookup(.phone)
         let args = try String(contentsOfFile: argsFile, encoding: .utf8).split(separator: "\n").map(String.init)
         XCTAssertEqual(args.last, "/tmp/scratch.keychain-db")
-        XCTAssertEqual(Array(args.dropLast()), ["find-generic-password", "-a", "che-telegram-all-mcp", "-s", "TELEGRAM_PHONE", "-w"])
+        XCTAssertEqual(Array(args.dropLast()), ["find-generic-password", "-a", "che-telegram-all-mcp", "-s", "TELEGRAM_PHONE", "-g"])
     }
 
     /// The child must never read the MCP server's standard input (the JSON-RPC
@@ -140,17 +194,22 @@ final class KeychainCredentialsTests: XCTestCase {
     /// the duration, so an inherited stdin would be visible.
     func testChildStdinIsTheNullDevice() async throws {
         let (result, _) = try await withRedirected(fd: 0, feeding: "leaked\n") {
-            try await self.lookup("if read -r line; then printf '%s' \"$line\"; else printf 'eof'; fi")
+            try await self.lookup("if read -r line; then v=$line; else v=eof; fi; printf 'password: \"%s\"\\n' \"$v\" >&2")
         }
         XCTAssertEqual(result, .found("eof"))
     }
 
-    /// The child's error output is discarded, not copied to the server's stderr.
-    func testChildStderrIsNotForwarded() async throws {
-        let captured = try await captureOutput(fd: 2) {
-            _ = try await self.lookup("echo 'child-stderr-marker' >&2; printf 'x'")
+    /// The child's output (its stderr carries the password) is read by the
+    /// lookup, never copied to the server's own stdout or stderr.
+    func testChildOutputIsNotForwarded() async throws {
+        var captured = ""
+        let stdout = try await captureOutput(fd: 1) {
+            captured = try await self.captureOutput(fd: 2) {
+                _ = try await self.lookup("echo 'child-stdout-marker'; printf 'password: \"child-secret-marker\"\\n' >&2")
+            }
         }
-        XCTAssertFalse(captured.contains("child-stderr-marker"), captured)
+        XCTAssertFalse(captured.contains("child-secret-marker"), captured)
+        XCTAssertFalse(stdout.contains("child-stdout-marker") || stdout.contains("child-secret-marker"), stdout)
     }
 
     // MARK: - No copy of the value
@@ -196,10 +255,15 @@ final class KeychainCredentialsTests: XCTestCase {
 
         let source = SecurityCLICredentialSource(keychainPath: keychain, diagnostics: { _ in })
         let phone = await source.lookup(.phone)
+        let missing = await source.lookup(.password)
+        // A non-ASCII 2FA password: `security -w` would print it as bare hex.
+        _ = try run(security, ["add-generic-password", "-a", SecurityCLICredentialSource.account,
+                               "-s", KeychainCredential.password.rawValue, "-w", "密碼pässwörd", keychain])
         let password2FA = await source.lookup(.password)
 
         XCTAssertEqual(phone, .found("+10000000000"))
-        XCTAssertEqual(password2FA, .absent)
+        XCTAssertEqual(missing, .absent)
+        XCTAssertEqual(password2FA, .found("密碼pässwörd"))
         XCTAssertEqual(try run(security, ["list-keychains", "-d", "user"]), searchListBefore,
                        "the test must not change the user's keychain search list")
     }

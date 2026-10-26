@@ -42,10 +42,15 @@ public protocol KeychainCredentialSource: Sendable {
 /// lookup is bounded and keeps no copy" (telegram-auth-coordination).
 ///
 /// - The arguments are constants: account `che-telegram-all-mcp`, the
-///   credential's service name, `-w`, and the keychain path only when one is
+///   credential's service name, `-g`, and the keychain path only when one is
 ///   given (tests use a scratch keychain file; production passes none).
+/// - `-g`, not `-w`: `-w` prints a value with any non-ASCII or control byte as
+///   bare hex, which cannot be told apart from an ASCII value that looks like
+///   hex. `-g` writes the attributes to stdout and the value to stderr as
+///   `password: "<value>"` or `password: 0x<HEX>  "<escaped>"` (measured on
+///   macOS 27; PsychQuant/che-msg#49 verify round 1).
 /// - The child's stdin is the null device, so it can never read the MCP
-///   server's JSON-RPC input; its stderr is discarded.
+///   server's JSON-RPC input; its stdout (attributes only) is discarded.
 /// - A child still running after `timeout` seconds is terminated and the
 ///   result is `timedOut`.
 /// - The value is returned and nothing else keeps it: no property, no cache,
@@ -72,7 +77,7 @@ public struct SecurityCLICredentialSource: KeychainCredentialSource {
     }
 
     func arguments(for credential: KeychainCredential) -> [String] {
-        var args = ["find-generic-password", "-a", Self.account, "-s", credential.rawValue, "-w"]
+        var args = ["find-generic-password", "-a", Self.account, "-s", credential.rawValue, "-g"]
         if let keychainPath { args.append(keychainPath) }
         return args
     }
@@ -88,10 +93,10 @@ public struct SecurityCLICredentialSource: KeychainCredentialSource {
         process.executableURL = executable
         process.arguments = arguments(for: credential)
         process.standardInput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        let output = OutputCollector(stdout.fileHandleForReading)
+        process.standardOutput = FileHandle.nullDevice
+        let stderr = Pipe()
+        process.standardError = stderr
+        let output = OutputCollector(stderr.fileHandleForReading)
 
         let outcome = await withCheckedContinuation { (continuation: CheckedContinuation<ChildOutcome, Never>) in
             let once = ResumeOnce(continuation)
@@ -107,16 +112,20 @@ public struct SecurityCLICredentialSource: KeychainCredentialSource {
             let pid = process.processIdentifier
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                 guard process.isRunning else { return }
-                process.terminate()
+                // Resume first: once terminated, the exit handler would report
+                // the signal's exit status instead of the timeout.
                 once.resume(.timedOut)
+                process.terminate()
                 DispatchQueue.global().asyncAfter(deadline: .now() + Self.killGrace) {
                     if process.isRunning { kill(pid, SIGKILL) }
                 }
             }
         }
         // Never wait on the pipe without a bound: a process that inherited the
-        // child's stdout can keep it open after the child has gone.
-        let data = await output.finish(waitingUpTo: outcome == .timedOut ? 0 : Self.outputGrace)
+        // child's stderr can keep it open after the child has gone. Nothing to
+        // wait for when the child timed out or never started.
+        let waitForOutput = outcome == .timedOut || outcome == .couldNotStart ? 0 : Self.outputGrace
+        let (data, truncated) = await output.finish(waitingUpTo: waitForOutput)
 
         switch outcome {
         case .timedOut:
@@ -128,13 +137,61 @@ public struct SecurityCLICredentialSource: KeychainCredentialSource {
         case .exited(44):
             return .absent
         case .exited(0):
-            var value = String(decoding: data, as: UTF8.self)
-            if value.hasSuffix("\n") { value.removeLast() }
-            return value.isEmpty ? .absent : .found(value)
+            if truncated {
+                diagnostics("che-telegram-all-mcp: Keychain lookup for \(credential.rawValue) printed more than \(OutputCollector.limit) bytes; treated as not stored")
+                return .unavailable(exitStatus: 0)
+            }
+            switch Self.parsePasswordLine(data) {
+            case .value(let value):
+                return value.isEmpty ? .absent : .found(value)
+            case .unreadable(let reason):
+                diagnostics("che-telegram-all-mcp: Keychain lookup for \(credential.rawValue) \(reason); treated as not stored")
+                return .unavailable(exitStatus: 0)
+            }
         case .exited(let status):
             diagnostics("che-telegram-all-mcp: Keychain lookup for \(credential.rawValue) failed with exit status \(status); treated as not stored")
             return .unavailable(exitStatus: status)
         }
+    }
+
+    enum PasswordLine: Equatable {
+        case value(String)
+        case unreadable(String)   // why, never the value
+    }
+
+    /// The value on the `password:` line of `security -g`'s stderr: the text
+    /// between the quotes, or the hex after `0x` decoded as UTF-8.
+    static func parsePasswordLine(_ stderr: Data) -> PasswordLine {
+        let text = String(decoding: stderr, as: UTF8.self)
+        guard let line = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .first(where: { $0.hasPrefix("password:") }) else {
+            return .unreadable("printed no password line")
+        }
+        let rest = line.dropFirst("password:".count).drop(while: { $0 == " " })
+        if rest.isEmpty { return .value("") }
+        if rest.hasPrefix("0x") {
+            let hex = rest.dropFirst(2).prefix { $0.isHexDigit }
+            guard hex.count % 2 == 0, !hex.isEmpty else { return .unreadable("printed a malformed hex value") }
+            var bytes = [UInt8]()
+            bytes.reserveCapacity(hex.count / 2)
+            var index = hex.startIndex
+            while index < hex.endIndex {
+                let next = hex.index(index, offsetBy: 2)
+                guard let byte = UInt8(hex[index..<next], radix: 16) else {
+                    return .unreadable("printed a malformed hex value")
+                }
+                bytes.append(byte)
+                index = next
+            }
+            guard let value = String(bytes: bytes, encoding: .utf8) else {
+                return .unreadable("holds a value that is not UTF-8")
+            }
+            return .value(value)
+        }
+        if rest.count >= 2, rest.hasPrefix("\""), rest.hasSuffix("\"") {
+            return .value(String(rest.dropFirst().dropLast()))
+        }
+        return .unreadable("printed a password line in an unknown form")
     }
 
     private static func format(_ seconds: TimeInterval) -> String {
@@ -148,14 +205,15 @@ private enum ChildOutcome: Equatable, Sendable {
     case couldNotStart
 }
 
-/// Collects a child's stdout in the background, up to `limit` bytes, so the
+/// Collects a child's output in the background, up to `limit` bytes, so the
 /// child never blocks on a full pipe and the caller never blocks on EOF.
-private final class OutputCollector: @unchecked Sendable {
-    private static let limit = 64 * 1024
+final class OutputCollector: @unchecked Sendable {
+    static let limit = 64 * 1024
     private let handle: FileHandle
     private let lock = NSLock()
     private var data = Data()
     private var reachedEnd = false
+    private var truncated = false
 
     init(_ handle: FileHandle) {
         self.handle = handle
@@ -165,23 +223,26 @@ private final class OutputCollector: @unchecked Sendable {
             self.lock.withLock {
                 if chunk.isEmpty {
                     self.reachedEnd = true
-                } else if self.data.count < Self.limit {
-                    self.data.append(chunk.prefix(Self.limit - self.data.count))
+                } else {
+                    let room = Self.limit - self.data.count
+                    if chunk.count > room { self.truncated = true }
+                    if room > 0 { self.data.append(chunk.prefix(room)) }
                 }
             }
             if chunk.isEmpty { readable.readabilityHandler = nil }
         }
     }
 
-    /// Waits up to `seconds` for EOF, then stops reading and returns what arrived.
-    func finish(waitingUpTo seconds: TimeInterval) async -> Data {
+    /// Waits up to `seconds` for EOF, then stops reading and returns what
+    /// arrived, and whether more than `limit` bytes were written.
+    func finish(waitingUpTo seconds: TimeInterval) async -> (Data, Bool) {
         let deadline = Date().addingTimeInterval(seconds)
-        while !lock.withLock({ reachedEnd }), Date() < deadline {
+        while !lock.withLock({ reachedEnd }), Date() < deadline, !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         handle.readabilityHandler = nil
         try? handle.close()
-        return lock.withLock { data }
+        return lock.withLock { (data, truncated) }
     }
 }
 
