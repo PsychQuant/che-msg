@@ -11,3 +11,9 @@
 ## 3. 文件
 
 - [x] 3.1 plugin README：Skills 表、只在輸入時執行的 skill 清單、Usage Examples、新段落「Searching the archive」（設定、輸出、引用與限制、隱私）；CHANGELOG `[Unreleased]` 記錄 #80。驗證：README 寫的參數與上限和腳本一致；`for t in tests/che-telegram-mcp/*.sh; do bash "$t" | tail -1; done` 全部通過 [after: 2.2]
+
+## 4. verify 第一輪的修正
+
+- [x] 4.1 先寫失敗的測試（Requirement: Archive reader contract；Requirement: Search filters and bounded output；Requirement: Read-only search with the git-ignore guard）：`<!--` 加 U+0301／U+200D／U+FE0F 的內文行、標頭之後的註解行、沒有標頭的區塊；搜尋中聊天目錄被換成 symlink（包住 guard 的 white-box 測試）；`GIT_CEILING_DIRECTORIES`、`GIT_CONFIG_COUNT`、`GIT_CONFIG_PARAMETERS`、`GIT_CONFIG_GLOBAL`、`GIT_CONFIG_SYSTEM` 各自不能放行；global excludes 照 git 的讀法生效；註記上限；含換行標記的摘錄寬度；5000 位數字；20 MiB 訊息的記憶體；隱形字元的跳脫。驗證：舊腳本 308 個檢查有 61 個失敗
+- [x] 4.2 依設計「註記只在錨點與標頭之間」「目錄以 descriptor 開啟，日檔相對於它讀」「git 檢查做在腳本裡，檢查實際要讀的檔案」「輸出是一個 JSON 物件，危險字元寫成跳脫」「結果與上限」修正腳本，原始碼只含 ASCII。驗證：308 個檢查在 `python3` 與 `/usr/bin/python3` 都通過 [after: 4.1]
+- [x] 4.3 與寫入端一致的案例：U+2028 與 NEL 不結束一行、非 ASCII 數字不是標頭時間、以 scalar 跳脫的 `\<!--` 加組合字元讀回時去掉反斜線。驗證：318 個檢查在兩個 interpreter 都通過 [after: 4.2]

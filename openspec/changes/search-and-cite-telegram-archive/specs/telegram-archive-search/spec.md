@@ -6,7 +6,7 @@ Defines the read-only search over the Telegram chat archive that `archive-telegr
 
 ### Requirement: Archive reader contract
 
-The archive search SHALL read only the day files of the layout that the `telegram-chat-archive` requirement "Day file format" defines: in each directory directly under the archive directory whose name is a decimal integer (a chat id, negative for groups and channels), the files named `YYYY-MM-DD.md`. It SHALL NOT read any other file or directory, `media/` included, and SHALL NOT enter a chat directory that is a symbolic link; such a directory SHALL be listed as skipped with reason `symlinked-chat-directory`. A day file SHALL be opened without following a symbolic link and without waiting for a writer, and read only when it is a regular file. Lines SHALL be split on LF only. A day file SHALL be searched only when it contains no carriage return, is valid UTF-8, and its leading frontmatter records a `chat_id` equal to its directory name, a `date` equal to its file name and a well-formed `utc_offset`; every other day file SHALL be listed as skipped with its reason (`not-regular-file`, `unreadable`, `carriage-return`, `not-utf8`, `too-large`, `bad-frontmatter`, `chat-id-mismatch`, `date-mismatch`) and not searched. A message block SHALL start at a line that is exactly `<!-- msg:<digits> -->` whose value fits a signed 64-bit integer, and SHALL run to the next such line or the end of the file. Text before the first block SHALL be ignored, and a later block with an id already seen in the same file SHALL be ignored, as the archive's merge does. Inside a block, every line other than the anchor that begins with `<!--` SHALL be read as an annotation and not as message text (the archive escapes every body line that begins with `<!--`, so such a line can only have been written outside the message, for example the marker that #72 places after the anchor of a block written from the local cache). The first remaining line SHALL be read as the header when it has the form `**HH:mm <sender>**：`. The lines after it, without trailing empty lines, SHALL be the message text, with one leading backslash removed from each line whose remainder begins with `<!--` or with `**` followed by a time, which undoes the archive's escape.
+The archive search SHALL read only the day files of the layout that the `telegram-chat-archive` requirement "Day file format" defines: in each directory directly under the archive directory whose name is a decimal integer (a chat id, negative for groups and channels), the files named `YYYY-MM-DD.md`. It SHALL NOT read any other file or directory, `media/` included. It SHALL open the archive directory and each chat directory without following a symbolic link, and SHALL reach every day file relative to its chat directory's open descriptor, never through a path resolved again. A chat directory that is a symbolic link SHALL be listed as skipped with reason `symlinked-chat-directory`; a chat directory whose path, after the git check, no longer names the directory the search opened SHALL be listed as skipped with reason `changed-during-search` and not read. A day file SHALL be opened without following a symbolic link and without waiting for a writer, and read only when it is a regular file. Lines SHALL be split on LF only, as the archive splits them: U+2028, U+2029 and NEL stay inside a line. A day file SHALL be searched only when it contains no carriage return, is valid UTF-8, and its leading frontmatter records a `chat_id` equal to its directory name, a `date` equal to its file name and a well-formed `utc_offset`; every other day file SHALL be listed as skipped with its reason (`not-regular-file`, `unreadable`, `carriage-return`, `not-utf8`, `too-large`, `bad-frontmatter`, `chat-id-mismatch`, `date-mismatch`) and not searched. A message block SHALL start at a line that is exactly `<!-- msg:<digits> -->` whose value fits a signed 64-bit integer (leading zeros allowed, as the archive's own parser reads them), and SHALL run to the next such line or the end of the file. No number of more than 19 significant digits SHALL be converted, so a long run of digits in an anchor or a `chat_id` never fails the search. Text before the first block SHALL be ignored, and a later block with an id already seen in the same file SHALL be ignored, as the archive's merge does. Inside a block, the lines that begin with `<!--` and stand between the anchor and the header line `**HH:mm <sender>**：` (`HH` and `mm` in ASCII digits) SHALL be read as annotations, not as message text; that is where #72 writes its marker for a block written from the local cache. At most 5 annotations SHALL be returned, each cut to 48 characters, and `annotations_truncated` SHALL say whether any was dropped or cut. A line that begins with `<!--` after the header SHALL be message text: the archive decides whether to escape a body line by comparing grapheme clusters, so `<!--` followed by a combining mark, U+200D or U+FE0F is written without the backslash. When no header follows the anchor and its comment lines, the block SHALL have no header and no annotations, and all its lines SHALL be text. The lines after the header, without trailing empty lines, SHALL be the message text, with one leading backslash removed from each line whose remainder begins with `<!--` or with `**` followed by a time, which undoes the archive's escape.
 
 #### Scenario: Marker line after the anchor
 
@@ -17,6 +17,16 @@ The archive search SHALL read only the day files of the layout that the `telegra
 
 - **WHEN** message 10's text was archived with the escaped line `\<!-- msg:99 -->`
 - **THEN** the file yields one block, message 10, whose text contains the line `<!-- msg:99 -->`, and the citation `telegram:777/99` is not found
+
+#### Scenario: Comment-like line in the message body
+
+- **WHEN** block 22 of chat 777 has its header and then the body line `<!--` followed by U+0301 and ` line 0`, which the archive wrote without a backslash
+- **THEN** the text of `telegram:777/22` holds that line, its annotations are empty, and a search for `line 0` finds it
+
+#### Scenario: Chat directory replaced during the search
+
+- **WHEN** after the git check `777/` is renamed and a symbolic link to another directory takes its name
+- **THEN** the search lists `777` as skipped with reason `changed-during-search` and returns no text from either directory
 
 #### Scenario: Day file with CRLF line endings
 
@@ -51,7 +61,7 @@ The citation of an archived message SHALL be the text `telegram:<chat_id>/<messa
 ---
 ### Requirement: Search filters and bounded output
 
-A search SHALL take at least one filter: text terms (each SHALL occur in the message text, compared after Unicode case folding), a sender (a case-folded substring of the sender as written), a date range (inclusive bounds on the day-file names), and chat ids. Matching messages SHALL be ordered newest first by date, time and message id, and at most `max_results` of them (default 20, accepted 1 to 100) SHALL be returned. The output SHALL report how many messages matched, how many are shown, whether the list was cut, how many day files were searched, the skipped day files with their reasons (at most 20 listed, with the total), and the requested chats that have no directory. Each result SHALL carry a one-line snippet of at most `snippet_chars` characters of message text (default 80, accepted 20 to 200), taken around the first occurrence of the first text term or from the start of the text, with each line break written as ` ⏎ ` and `…` where text was cut; the sender SHALL be cut to 64 characters. A search SHALL NOT return a message's whole text. Whole text SHALL be returned only for the citations named in the call, at most 10 per call, each cut to 4000 characters with a flag saying so. The output SHALL be one JSON object on standard output, in which C0 and C1 control characters, DEL, U+2028, U+2029, U+200E, U+200F, U+061C and the bidirectional embedding, override and isolate characters (U+202A to U+202E, U+2066 to U+2069) are written as `\uXXXX` escapes, so that no such character reaches a terminal raw. Out-of-range limits, a call without any filter, and a call that mixes citations with filters SHALL be refused as usage errors.
+A search SHALL take at least one filter: text terms (each SHALL occur in the message text, compared after Unicode case folding), a sender (a case-folded substring of the sender as written), a date range (inclusive bounds on the day-file names), and chat ids. Matching messages SHALL be ordered newest first by date, time and message id, and at most `max_results` of them (default 20, accepted 1 to 100) SHALL be returned. The output SHALL report how many messages matched, how many are shown, whether the list was cut, how many day files were searched, the skipped day files with their reasons (at most 20 listed, with the total), and the requested chats that have no directory. Each result SHALL carry a one-line snippet of the message text, in which each line break is written as ` ⏎ `: at most `snippet_chars` characters of that rendering, markers included (default 80, accepted 20 to 200), taken around the first occurrence of the first text term or from the start of the text, with `…` where it was cut; the sender SHALL be cut to 64 characters. A search SHALL NOT return a message's whole text. Whole text SHALL be returned only for the citations named in the call, at most 10 per call, each cut to 4000 characters with a flag saying so. The output SHALL be one JSON object on standard output, in which C0 and C1 control characters, DEL, U+00AD, U+061C, U+200B to U+200F, U+2028 to U+202E, U+2060 to U+2064, U+2066 to U+2069, U+FEFF, U+FFF9 to U+FFFB and the tag characters U+E0000 to U+E007F are written as `\uXXXX` escapes (a surrogate pair above U+FFFF), so that no such character reaches a terminal raw or hides in what the reader is shown. Out-of-range limits, a call without any filter, and a call that mixes citations with filters SHALL be refused as usage errors.
 
 #### Scenario: More matches than the cap
 
@@ -63,6 +73,11 @@ A search SHALL take at least one filter: text terms (each SHALL occur in the mes
 - **WHEN** the only match is a 500-character message whose term sits in its middle
 - **THEN** the snippet holds the term, begins and ends with `…`, and is not longer than 80 characters plus the two ellipses
 
+#### Scenario: Snippet of a message with many lines
+
+- **WHEN** the only match is a message of 40 lines `ab` and `snippet_chars` is 20
+- **THEN** the snippet begins `ab ⏎ ab`, and the part before its closing `…` has at most 20 characters
+
 #### Scenario: Bidirectional override in a message
 
 - **WHEN** a matching message contains U+202E and an ESC character
@@ -71,7 +86,7 @@ A search SHALL take at least one filter: text terms (each SHALL occur in the mes
 ---
 ### Requirement: Read-only search with the git-ignore guard
 
-The search SHALL NOT create, write, rename or delete any file, and SHALL NOT start TDLib or call an MCP tool. Before reading any day file it SHALL ask git, with the environment variables that select a repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`, `GIT_PREFIX`) removed, whether the archive directory is inside a git work tree. When it is, every day file the search is about to read SHALL be reported ignored by `git check-ignore`, which does not report a tracked file; otherwise the search SHALL refuse with `not_ignored`, name up to five of the files that are not ignored, and read none. When git fails for any reason other than "not a git repository" (git missing, dubious ownership), the search SHALL refuse with `git_failed` and read nothing.
+The search SHALL NOT create, write, rename or delete any file, and SHALL NOT start TDLib or call an MCP tool. Before reading any day file it SHALL ask git whether the archive directory is inside a git work tree, running git with no environment variable but `PATH`, `HOME`, `XDG_CONFIG_HOME` and `LC_ALL=C`, so that no `GIT_*` variable of the caller (for example `GIT_DIR`, `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`) changes the answer. git then applies the repository's own ignore rules together with the system and global configuration and excludes, as it reads them in a plain shell. When it is, every day file the search is about to read SHALL be reported ignored by `git check-ignore`, which does not report a tracked file; otherwise the search SHALL refuse with `not_ignored`, name up to five of the files that are not ignored, and read none. When git fails for any reason other than "not a git repository" (git missing, dubious ownership), the search SHALL refuse with `git_failed` and read nothing.
 
 #### Scenario: Archive inside a repository and not ignored
 
@@ -82,6 +97,16 @@ The search SHALL NOT create, write, rename or delete any file, and SHALL NOT sta
 
 - **WHEN** `.gitignore` covers the archive but `777/2026-10-11.md` was committed
 - **THEN** the search refuses with `not_ignored` and names that file
+
+#### Scenario: Caller's environment cannot widen the excludes
+
+- **WHEN** the repository does not ignore the archive and the caller's environment sets `GIT_CONFIG_PARAMETERS` so that `core.excludesFile` names a file holding `*`
+- **THEN** the search refuses with `not_ignored`
+
+#### Scenario: Global excludes as git reads them
+
+- **WHEN** the repository's `.gitignore` does not cover the archive but `core.excludesFile` in `~/.gitconfig` names a file holding `archives/`
+- **THEN** the day files count as ignored and the search runs
 
 #### Scenario: Archive outside any repository
 
