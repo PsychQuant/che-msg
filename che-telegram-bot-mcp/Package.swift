@@ -3,7 +3,11 @@ import PackageDescription
 
 let package = Package(
     name: "CheTelegramBotMCP",
-    platforms: [.macOS(.v13)],
+    // macOS 26 has the Swift libraries the build would otherwise link for
+    // back-deployment (libswiftCompatibilitySpan), which the release does not
+    // ship (PsychQuant/che-msg#91). Written as a string: .v26 needs
+    // swift-tools-version 6.2, whose default language mode is Swift 6.
+    platforms: [.macOS("26.0")],
     products: [
         .library(name: "TelegramBotAPI", targets: ["TelegramBotAPI"]),
         .library(name: "CheTelegramBotMCPCore", targets: ["CheTelegramBotMCPCore"]),

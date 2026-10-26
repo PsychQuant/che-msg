@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **Behavior change:** the binary runs on macOS 26 or later; the deployment target was macOS 13 ([#91](https://github.com/PsychQuant/che-msg/issues/91)). With a target below macOS 26, Xcode 26 and later link `@rpath/libswiftCompatibilitySpan.dylib` into the binary (swift-collections' `RigidDeque` uses `OutputSpan`); macOS 26 has that library built in, and the release does not ship it. The `v0.8.0` binary declares macOS 13 but loads it, so on macOS 13–15 it most likely does not start unless Xcode 26 or later is installed (not tested on those systems); the stated minimum is now the one the binary has.
+
 ### Distribution
 - Before signing, the release build lists each binary's load commands with `otool` and refuses one that loads a Swift back-deployment library (`@rpath/libswiftCompatibility*.dylib`) other than weakly, naming the library and the architecture ([#91](https://github.com/PsychQuant/che-msg/issues/91)).
 
