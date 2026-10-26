@@ -93,6 +93,15 @@ internal enum CredentialPlan: Equatable {
     case nothing
 }
 
+/// The authorization state that asks for a Keychain credential. A lookup's
+/// outcome is recorded only for that state (#95).
+internal func waitingState(for credential: KeychainCredential) -> TDLibClient.AuthState {
+    switch credential {
+    case .phone: return .waitingForPhoneNumber
+    case .password: return .waitingForPassword
+    }
+}
+
 internal func credentialPlan(state: TDLibClient.AuthState, envPhone: String?, envPassword: String?) -> CredentialPlan {
     switch decideAutoFire(state: state, envApiId: nil, envApiHash: nil, envPhone: envPhone,
                           envPassword: envPassword, envAuthCode: nil) {

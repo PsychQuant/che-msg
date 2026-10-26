@@ -20,4 +20,11 @@ final class KeychainMissTests: XCTestCase {
         XCTAssertEqual(KeychainMiss.timedOut.rawValue, "timed_out")
         XCTAssertEqual(KeychainMiss.unavailable.rawValue, "unavailable")
     }
+
+    /// auth_run's lookup records its outcome only while TDLib still waits for
+    /// that credential (Codex review of #95).
+    func testEachCredentialBelongsToTheStateThatAsksForIt() {
+        XCTAssertEqual(waitingState(for: .phone), .waitingForPhoneNumber)
+        XCTAssertEqual(waitingState(for: .password), .waitingForPassword)
+    }
 }

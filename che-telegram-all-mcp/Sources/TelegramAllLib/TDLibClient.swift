@@ -385,16 +385,22 @@ public final class TDLibClient {
     /// Returns nil when there is no value, and records why for the state the
     /// lookup started in (#95).
     public func lookUpKeychainCredential(_ credential: KeychainCredential) async -> String? {
-        let generation = credentialLookups.generationNow
+        // Bound to the state that asks for this credential, read together with
+        // it: a lookup that starts after TDLib has moved on records nothing.
+        let generation: UInt64? = lock.withLock {
+            authState == waitingState(for: credential) ? credentialLookups.generationNow : nil
+        }
         let result = await credentials.lookup(credential)
-        credentialLookups.note(generation, miss: KeychainMiss(result))
+        if let generation { credentialLookups.note(generation, miss: KeychainMiss(result)) }
         return result.value
     }
 
-    /// Why the current state's last Keychain lookup produced no value, for
-    /// `auth_status` (#95); nil when none did or none ran.
-    public var lastKeychainMiss: KeychainMiss? {
-        lock.withLock { credentialLookups.lastMiss }
+    /// The authorization state and why its last Keychain lookup produced no
+    /// value (nil when none did or none ran), read together so that the
+    /// outcome belongs to that state (#95). The generation a lookup records
+    /// against changes only under this lock.
+    public func authStateAndKeychainMiss() -> (state: AuthState, keychainMiss: KeychainMiss?) {
+        lock.withLock { (authState, credentialLookups.lastMiss) }
     }
 
     /// Persist auto-fire failure for surfacing via `auth_status`.

@@ -490,11 +490,12 @@ public final class CheTelegramAllMCPServer {
                 result = "{\"status\": \"\(tdlib.getAuthState().rawValue)\"}"
 
             case "auth_status":
+                let auth = tdlib.authStateAndKeychainMiss()
                 return authStatusResult(
-                    state: tdlib.getAuthState(),
+                    state: auth.state,
                     lastError: tdlib.getLastAutoFireError(),
                     sync: syncState.snapshot,
-                    keychainMiss: tdlib.lastKeychainMiss
+                    keychainMiss: auth.keychainMiss
                 )
 
             case "auth_run":
@@ -539,11 +540,12 @@ public final class CheTelegramAllMCPServer {
                 if tdlib.isSubmittingKeychainCredential {
                     await tdlib.waitForAuthorizationToSettle(timeout: 15)
                 }
+                let auth = tdlib.authStateAndKeychainMiss()
                 return authStatusResult(
-                    state: tdlib.getAuthState(),
+                    state: auth.state,
                     lastError: tdlib.getLastAutoFireError(),
                     sync: syncState.snapshot,
-                    keychainMiss: tdlib.lastKeychainMiss
+                    keychainMiss: auth.keychainMiss
                 )
 
             case "logout":
