@@ -47,10 +47,11 @@ OFFSET = re.compile(r"[+-]([0-9]{2}):([0-9]{2})")
 # Also the variation selectors U+FE00-FE0E and U+E0100-E01EF and the fillers that render as
 # nothing (U+034F, U+115F, U+1160, U+180E, U+3164, U+FFA0, U+FFFC). U+FE0F stays raw: it
 # selects the emoji form after a symbol such as U+2764, and a run of it carries no more than
-# its length.
+# its length. A lone surrogate (an undecodable byte in a path, read with surrogateescape)
+# is escaped too, so the output is valid UTF-8 whatever the encoder's error handler.
 UNSAFE = re.compile(r"[\x7f-\x9f\xad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e"
                     r"\u2060-\u2064\u2066-\u2069\u3164\ufe00-\ufe0e\ufeff\uffa0\ufff9-\ufffc"
-                    r"\U000e0000-\U000e007f\U000e0100-\U000e01ef]")
+                    r"\ud800-\udfff\U000e0000-\U000e007f\U000e0100-\U000e01ef]")
 # git sees only these, so no GIT_* variable from the caller (GIT_DIR, GIT_CEILING_DIRECTORIES,
 # GIT_CONFIG_COUNT/KEY/VALUE, GIT_CONFIG_PARAMETERS, GIT_CONFIG_GLOBAL, ...) changes the answer:
 # the repository's own rules plus the system and global config, as git reads them in a plain shell.
@@ -543,7 +544,8 @@ def search(archive: str, archive_fd: int, args: argparse.Namespace) -> dict:
                                                             and sender_term not in (sender or "").casefold()):
                     continue
                 matched += 1
-                key = (ref.date, parsed[0] or "", ref.chat_id, mid)
+                # Newest first: date, time, message id; the chat id only breaks a tie between chats.
+                key = (ref.date, parsed[0] or "", mid, ref.chat_id)
                 if len(kept) >= args.max_results and key <= kept[0][0]:
                     continue
                 hit = record(ref, offset, mid, parsed)
