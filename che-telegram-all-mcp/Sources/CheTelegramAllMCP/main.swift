@@ -19,6 +19,10 @@ case .unknownFlag(let flag):
     fputs("Error: unknown flag '\(flag)'. Run with --help for usage.\n", stderr)
     exit(2)
 case .runServer:
+    // Answers can be written after the input has ended (#57). A client that
+    // has also closed its end of stdout would otherwise kill the server with
+    // SIGPIPE before it closes TDLib; ignored, the write fails with EPIPE.
+    signal(SIGPIPE, SIG_IGN)
     do {
         let server = try await CheTelegramAllMCPServer()
         try await server.run()

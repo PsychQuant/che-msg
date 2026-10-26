@@ -129,4 +129,58 @@ final class RunAnswersBeforeExitTests: XCTestCase {
         XCTAssertEqual(CheTelegramAllMCPServer.defaultAnswerTimeout, 30)
         XCTAssertEqual(CheTelegramAllMCPServer.defaultAnswerTimeout, TDLibLifecycle<TDLibClient>.closeTimeout)
     }
+
+    // MARK: - The built server
+
+    /// The built server next to the test bundle, or nil when it is not built.
+    private func serverBinary() -> URL? {
+        let buildDir = Bundle(for: type(of: self)).bundleURL.resolvingSymlinksInPath().deletingLastPathComponent()
+        let binary = buildDir.appendingPathComponent("CheTelegramAllMCP")
+        return FileManager.default.isExecutableFile(atPath: binary.path) ? binary : nil
+    }
+
+    /// A client that has closed its end of stdout (it crashed, or `| head -n 1`):
+    /// writing an answer fails with EPIPE instead of killing the server with
+    /// SIGPIPE, so the server still closes TDLib and exits with status 0. Only
+    /// `initialize` and `tools/list` are sent, so TDLib is never opened; HOME
+    /// points at a scratch directory all the same.
+    func testTheServerExitsNormallyWhenTheClientClosedStdout() throws {
+        guard let binary = serverBinary() else {
+            throw XCTSkip("CheTelegramAllMCP binary not built — skip subprocess test")
+        }
+        let input = cache.appendingPathComponent("input.jsonl")
+        try [ScriptedMessages.initialize(id: 1), ScriptedMessages.initialized, ScriptedMessages.toolsList(id: 2)]
+            .map { $0 + "\n" }.joined().write(to: input, atomically: true, encoding: .utf8)
+        // A pipe whose read end is closed before the server starts: its
+        // first write has no reader.
+        var fds: [Int32] = [0, 0]
+        XCTAssertEqual(pipe(&fds), 0)
+        close(fds[0])
+        let stdout = FileHandle(fileDescriptor: fds[1], closeOnDealloc: true)
+        let stderr = Pipe()
+
+        let process = Process()
+        process.executableURL = binary
+        var environment = ProcessInfo.processInfo.environment.filter { !$0.key.contains("TELEGRAM") }
+        environment["HOME"] = cache.path
+        environment["CFFIXED_USER_HOME"] = cache.path
+        process.environment = environment
+        process.standardInput = try FileHandle(forReadingFrom: input)
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        try? stdout.close()
+
+        let deadline = Date().addingTimeInterval(20)
+        while process.isRunning && Date() < deadline { usleep(20_000) }
+        if process.isRunning {
+            process.terminate()
+            process.waitUntilExit()
+            XCTFail("the server did not exit within 20 s")
+        }
+        let log = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        XCTAssertEqual(process.terminationReason, .exit,
+                       "the server was killed by signal \(process.terminationStatus); stderr: \(log)")
+        XCTAssertEqual(process.terminationStatus, 0, "stderr: \(log)")
+    }
 }
