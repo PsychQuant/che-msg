@@ -30,7 +30,12 @@ internal func shouldLogStartup(env: [String: String]) -> Bool {
 
 public final class CheTelegramAllMCPServer {
     private let server: Server
-    private let transport: StdioTransport
+    private let transport: PendingRequestTransport
+    /// How long `run()` waits, once the input has ended, for the answers to
+    /// requests already read (#57).
+    private let answerTimeout: TimeInterval
+    /// The same 30 s as `TDLibLifecycle.closeTimeout` (#57).
+    static let defaultAnswerTimeout: TimeInterval = 30
     private let tools: [Tool]
     /// TDLib opens on the first call that needs it and closes after the idle
     /// timeout; nothing is opened or locked at startup (PsychQuant/che-msg#58).
@@ -52,7 +57,9 @@ public final class CheTelegramAllMCPServer {
     init(lock: TDLibProcessLock, idleTimeout: TimeInterval?,
          reader: LocalCacheReading = LocalTDLibReader(directory: TDLibClient.databaseDirectory),
          syncState: TDLibSyncState = TDLibSyncState(),
-         openTDLib: (@Sendable () async throws -> TDLibClient)? = nil) async throws {
+         openTDLib: (@Sendable () async throws -> TDLibClient)? = nil,
+         transport: any Transport = StdioTransport(),
+         answerTimeout: TimeInterval = defaultAnswerTimeout) async throws {
         self.reader = reader
         self.syncState = syncState
         // Diagnostic hook (#29): when CHE_TELEGRAM_LOG_STARTUP=1, print
@@ -106,7 +113,8 @@ public final class CheTelegramAllMCPServer {
             capabilities: .init(tools: .init())
         )
 
-        transport = StdioTransport()
+        self.transport = await PendingRequestTransport(wrapping: transport)
+        self.answerTimeout = answerTimeout
 
         let registerStart = DispatchTime.now()
         await registerHandlers()
@@ -133,6 +141,15 @@ public final class CheTelegramAllMCPServer {
             idleChecks?.cancel()
             await lifecycle.shutdown()
             throw error
+        }
+        // The SDK answers each request in a task of its own, and the receive
+        // loop above ends with the input, not with those tasks; answer the
+        // requests already read before closing TDLib (#57).
+        if await !transport.waitUntilAnswered(timeout: answerTimeout) {
+            let unanswered = await transport.unansweredCount
+            fputs("che-telegram-all-mcp: \(unanswered) request(s) still unanswered "
+                  + String(format: "%g", answerTimeout) + " s after the input ended; closing TDLib without them\n",
+                  stderr)
         }
         // Close TDLib here, before returning, rather than leaving it to a
         // deinit that may run on another thread while the process exits.
