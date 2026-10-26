@@ -22,7 +22,8 @@ extension TelegramAll {
                 + "Get them from https://my.telegram.org"
             )
         }
-        return try await TDLibClient()
+        // The CLI never reads the Keychain (#96): see NoKeychainCredentialSource.
+        return try await TDLibClient(credentials: NoKeychainCredentialSource())
     }
 
     static func waitForAuth(_ client: TDLibClient) async throws {

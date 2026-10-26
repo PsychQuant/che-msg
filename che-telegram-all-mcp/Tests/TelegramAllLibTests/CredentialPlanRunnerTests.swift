@@ -38,9 +38,12 @@ final class CredentialPlanRunnerTests: XCTestCase {
                 duringLookup?(tracker)
                 return lookupResult
             },
-            submit: { value in
-                calls.send(value)
+            // Like TDLibClient: the state check runs inside the coalesced
+            // task, right before the TDLib request (#96).
+            submit: { value, stillCurrent in
                 duringSubmit?(tracker)
+                guard stillCurrent() else { throw StaleCredentialSubmission() }
+                calls.send(value)
                 if submitFails { throw Rejected() }
             },
             recordFailure: { error in calls.failed(error, inFlight: tracker.isInFlight) })
@@ -124,6 +127,29 @@ final class CredentialPlanRunnerTests: XCTestCase {
             let (_, tracker, _) = await run(.lookUp(.password), lookupResult: result)
             XCTAssertEqual(tracker.lastMiss, expected, "\(result)")
         }
+    }
+
+    // MARK: - The state is checked right before the request (#96)
+
+    func testAKeychainValueIsNotSentWhenTheStateChangesBeforeTheRequest() async {
+        let (calls, tracker, error) = await run(.lookUp(.phone), lookupResult: .found("+886900000417"),
+                                                duringSubmit: { _ = $0.stateChanged(lookingUp: false) })
+        XCTAssertEqual(calls.sentList, [], "the state changed between the lookup and the request")
+        XCTAssertNil(error, "nothing failed: nothing was sent")
+        XCTAssertEqual(calls.failureList.count, 0)
+        XCTAssertEqual(tracker.current, .notNeeded)
+    }
+
+    func testAnEnvironmentValueIsNotSentWhenTheStateChangesBeforeTheRequest() async {
+        let (calls, _, error) = await run(.fire("+886900000417"),
+                                          duringSubmit: { _ = $0.stateChanged(lookingUp: false) })
+        XCTAssertEqual(calls.sentList, [])
+        XCTAssertNil(error)
+    }
+
+    func testTheCheckPassesWhileTheStateIsUnchanged() async {
+        let (calls, _, _) = await run(.fire("+886912345678"), duringSubmit: { _ in })
+        XCTAssertEqual(calls.sentList, ["+886912345678"])
     }
 
     func testAnEnvironmentValueRecordsNoReason() async {

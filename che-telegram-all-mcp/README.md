@@ -96,7 +96,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 |----------|----------|-------------|
 | `TELEGRAM_API_ID` | Yes | Telegram API ID (numeric). Auto-fired when state is `waitingForParameters`. |
 | `TELEGRAM_API_HASH` | Yes | Telegram API hash (string). Auto-fired alongside `TELEGRAM_API_ID`. |
-| `TELEGRAM_PHONE` | No | Phone number in international format (e.g., `+886912345678`). Auto-fired when state is `waitingForPhoneNumber`. Useful for SSH / remote setup. When unset, the server reads the Keychain item of the same name (account `che-telegram-all-mcp`) at that moment (0.9.0 and later). |
+| `TELEGRAM_PHONE` | No | Phone number in international format (e.g., `+886912345678`). Auto-fired when state is `waitingForPhoneNumber`. Useful for SSH / remote setup. When unset, the server reads the Keychain item of the same name (account `che-telegram-all-mcp`) at that moment (0.9.0 and later); the `telegram-all` CLI never reads the Keychain. |
 | `TELEGRAM_2FA_PASSWORD` | No | 2FA password. Auto-fired when state is `waitingForPassword`. When unset, the server reads the Keychain item of the same name (account `che-telegram-all-mcp`) at that moment (0.9.0 and later). |
 | `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` | No | Seconds TDLib may stay idle before the server closes it and releases the lock (default `600`; `0` keeps it open). A non-numeric or negative value falls back to 600 with a warning on stderr. |
 
@@ -146,7 +146,7 @@ Several Claude Code sessions can run this server at the same time ([#58](https:/
 - The reader accepts only the TDLib version it was verified against (1.8.60); otherwise it returns `local_reader_unavailable` with reason `unsupported_tdlib_version` rather than guess.
 - A wrapper from plugin che-telegram-mcp 1.4.x or older still holds its own lock directory (`~/.cache/che-telegram-all-mcp.lock`); 0.6.0 servers treat it as a holder while that wrapper runs.
 
-The `telegram-all` CLI does not take this lock yet ([#61](https://github.com/PsychQuant/che-msg/issues/61)); do not run it while a session holds TDLib.
+The `telegram-all` CLI does not take this lock yet ([#61](https://github.com/PsychQuant/che-msg/issues/61)); do not run it while a session holds TDLib. The CLI never reads the Keychain ([#96](https://github.com/PsychQuant/che-msg/issues/96)): give the phone number and the 2FA password with `auth-phone` and `auth-password`, or in the environment, which it still sends automatically.
 
 ## When telegram-all stops syncing
 

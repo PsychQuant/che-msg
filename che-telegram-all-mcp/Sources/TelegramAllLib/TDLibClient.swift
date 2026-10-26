@@ -358,17 +358,22 @@ public final class TDLibClient {
             await runCredentialPlan(
                 plan, generation: generation, tracker: tracker,
                 lookup: { await source.lookup($0) },
-                submit: { [weak self] value in try await self?.submitCredential(value, for: state) },
+                submit: { [weak self] value, stillCurrent in
+                    try await self?.submitCredential(value, for: state, onlyIf: stillCurrent)
+                },
                 recordFailure: { [weak self] error in self?.recordAutoFireError(error) })
         }
     }
 
     /// Sends an auto-fired phone number or 2FA password through the coalesced
-    /// path. The value is not kept; a failure is thrown to the caller.
-    private func submitCredential(_ value: String, for state: AuthState) async throws {
+    /// path, only if `onlyIf` still holds inside that task, right before the
+    /// TDLib request (#96). The value is not kept; a failure is thrown to the
+    /// caller.
+    private func submitCredential(_ value: String, for state: AuthState,
+                                  onlyIf stillCurrent: @escaping @Sendable () -> Bool) async throws {
         switch state {
-        case .waitingForPhoneNumber: try await sendPhoneNumber(value)
-        case .waitingForPassword: try await sendPassword(value)
+        case .waitingForPhoneNumber: try await sendPhoneNumber(value, onlyIf: stillCurrent)
+        case .waitingForPassword: try await sendPassword(value, onlyIf: stillCurrent)
         case .waitingForParameters, .waitingForCode, .ready, .closed: return
         }
     }
@@ -441,7 +446,15 @@ public final class TDLibClient {
     }
 
     public func sendPhoneNumber(_ phoneNumber: String) async throws {
+        try await sendPhoneNumber(phoneNumber, onlyIf: { true })
+    }
+
+    /// `onlyIf` is evaluated inside the coalesced task, immediately before the
+    /// request: false sends nothing and throws `StaleCredentialSubmission` to
+    /// every caller of that task (#96).
+    private func sendPhoneNumber(_ phoneNumber: String, onlyIf stillCurrent: @escaping @Sendable () -> Bool) async throws {
         try await coalesceTask(holder: sendPhoneTask) { [self] in
+            guard stillCurrent() else { throw StaleCredentialSubmission() }
             do {
                 _ = try await client.setAuthenticationPhoneNumber(phoneNumber: phoneNumber, settings: nil)
             } catch {
@@ -461,7 +474,13 @@ public final class TDLibClient {
     }
 
     public func sendPassword(_ password: String) async throws {
+        try await sendPassword(password, onlyIf: { true })
+    }
+
+    /// See `sendPhoneNumber(_:onlyIf:)`.
+    private func sendPassword(_ password: String, onlyIf stillCurrent: @escaping @Sendable () -> Bool) async throws {
         try await coalesceTask(holder: sendPasswordTask) { [self] in
+            guard stillCurrent() else { throw StaleCredentialSubmission() }
             do {
                 _ = try await client.checkAuthenticationPassword(password: password)
             } catch {

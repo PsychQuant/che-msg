@@ -292,5 +292,24 @@ final class AuthRunHandlerTests: XCTestCase {
                                            envApiId: 1, envApiHash: "h", envPhone: nil, envPassword: nil),
                        "a phone number found for an earlier state is not sent at waitingForCode")
     }
+
+    // MARK: - Descriptions never carry a value (#96)
+
+    func testAnActionNeverPrintsItsValue() {
+        let actions: [AuthRunAction] = [
+            .callSetParameters(apiId: 12345, apiHash: "hash-value"), .callSendPhone("+886900000417"),
+            .callSendCode("54321"), .callSendPassword("secret-2fa"),
+        ]
+        for action in actions {
+            for text in ["\(action)", String(reflecting: action)] {
+                for value in ["hash-value", "886900000417", "54321", "secret-2fa"] {
+                    XCTAssertFalse(text.contains(value), text)
+                }
+            }
+        }
+        XCTAssertEqual("\(AuthRunAction.callSendPassword("x"))", "callSendPassword(<redacted>)")
+        XCTAssertEqual("\(AuthRunAction.callSetParameters(apiId: 12345, apiHash: "h"))", "callSetParameters(apiId: 12345, apiHash: <redacted>)")
+        XCTAssertEqual("\(AuthRunAction.needsArgs(["phone"]))", "needsArgs([\"phone\"])")
+    }
 }
 

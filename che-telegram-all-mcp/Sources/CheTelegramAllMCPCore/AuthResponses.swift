@@ -149,7 +149,7 @@ private func authStatusLastError(_ error: TDLibClient.TDError?) -> [String: Any]
 
 /// Decision returned by `decideAuthRunAction`, used by Server's `auth_run`
 /// handler to dispatch to the correct TDLibClient method.
-internal enum AuthRunAction: Equatable {
+internal enum AuthRunAction: Equatable, CustomStringConvertible {
     case callSetParameters(apiId: Int, apiHash: String)
     case callSendPhone(String)
     case callSendCode(String)
@@ -157,6 +157,19 @@ internal enum AuthRunAction: Equatable {
     case noOpReady
     case errorClosed
     case needsArgs([String])
+
+    /// Never shows a credential (#96); the API ID and argument names are not secret.
+    var description: String {
+        switch self {
+        case .callSetParameters(let apiId, _): return "callSetParameters(apiId: \(apiId), apiHash: <redacted>)"
+        case .callSendPhone: return "callSendPhone(<redacted>)"
+        case .callSendCode: return "callSendCode(<redacted>)"
+        case .callSendPassword: return "callSendPassword(<redacted>)"
+        case .noOpReady: return "noOpReady"
+        case .errorClosed: return "errorClosed"
+        case .needsArgs(let args): return "needsArgs(\(args))"
+        }
+    }
 }
 
 /// Pure routing function for the `auth_run` MCP tool.

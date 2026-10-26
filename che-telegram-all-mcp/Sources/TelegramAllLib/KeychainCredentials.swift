@@ -57,6 +57,15 @@ public protocol KeychainCredentialSource: Sendable {
     func lookup(_ credential: KeychainCredential) async -> KeychainLookup
 }
 
+/// A source that never reads the Keychain and finds nothing. The
+/// `telegram-all` CLI uses it: every CLI command opens TDLib, and with the
+/// Keychain a logged-out database would send a stored phone number (and
+/// Telegram a login code), or race `auth-phone` (PsychQuant/che-msg#96).
+public struct NoKeychainCredentialSource: KeychainCredentialSource {
+    public init() {}
+    public func lookup(_ credential: KeychainCredential) async -> KeychainLookup { .absent }
+}
+
 /// Reads a credential with `/usr/bin/security find-generic-password`, the same
 /// tool and items the wrapper and the README use. Spec: "Keychain credential
 /// lookup is bounded and keeps no copy" (telegram-auth-coordination).

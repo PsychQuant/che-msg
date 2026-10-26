@@ -87,10 +87,30 @@ internal func authorizationIsSettled(state: TDLibClient.AuthState, hasAutoFireEr
 /// it: send the environment's value, look the credential up in the Keychain,
 /// or nothing (any other state, including the SMS code, which is never looked
 /// up). Spec: "Auto-fire chain covers params, phone, and password steps".
-internal enum CredentialPlan: Equatable {
+internal enum CredentialPlan: Equatable, CustomStringConvertible {
     case fire(String)
     case lookUp(KeychainCredential)
     case nothing
+
+    /// Never shows the value (#96).
+    var description: String {
+        switch self {
+        case .fire: return "fire(<redacted>)"
+        case .lookUp(let credential): return "lookUp(\(credential.rawValue))"
+        case .nothing: return "nothing"
+        }
+    }
+}
+
+/// Thrown, and nothing sent, when the authorization state changed between
+/// deciding to send an automatic value and the TDLib request
+/// (PsychQuant/che-msg#96). An explicit call that joined that coalesced
+/// request gets it too, instead of a success for a value that was never sent.
+public struct StaleCredentialSubmission: Error, LocalizedError, Equatable {
+    public init() {}
+    public var errorDescription: String? {
+        "The authorization state changed before the value was sent, so nothing was sent. Check auth_status and try again."
+    }
 }
 
 /// The authorization state that asks for a Keychain credential. A lookup's
@@ -193,25 +213,38 @@ internal final class CredentialLookupTracker: @unchecked Sendable {
 /// Runs the credential part of an auto-fire plan, outside TDLib's callback
 /// thread (PsychQuant/che-msg#49): sends the environment's value, or looks the
 /// credential up and sends what it finds while the state is still the one the
-/// lookup was started for. A failed submission is passed to `recordFailure`
-/// (for `auth_status`) before the state counts as settled, so an answer given
-/// once it has settled carries the error; a failure for a state that has moved
-/// on is not recorded. `TDLibClient` passes its Keychain source, its coalesced
-/// send and its auto-fire error record.
+/// lookup was started for. `submit` gets a check bound to that state, which
+/// `TDLibClient` evaluates inside the coalesced task right before the TDLib
+/// request; when it fails, nothing is sent and `submit` throws
+/// `StaleCredentialSubmission`, which is not a failure to record (#96). A
+/// failed submission is passed to `recordFailure` (for `auth_status`) before
+/// the state counts as settled, so an answer given once it has settled carries
+/// the error; a failure for a state that has moved on is not recorded.
+/// `TDLibClient` passes its Keychain source, its coalesced send and its
+/// auto-fire error record.
 internal func runCredentialPlan(_ plan: CredentialPlan, generation: UInt64, tracker: CredentialLookupTracker,
                                 lookup: @Sendable (KeychainCredential) async -> KeychainLookup,
-                                submit: @Sendable (String) async throws -> Void,
+                                submit: @Sendable (String, @escaping @Sendable () -> Bool) async throws -> Void,
                                 recordFailure: @Sendable (Error) -> Void) async {
+    let stillCurrent: @Sendable () -> Bool = { tracker.isCurrent(generation) }
     switch plan {
     case .nothing:
         return
     case .fire(let value):
-        do { try await submit(value) } catch { recordFailure(error) }
+        do {
+            try await submit(value, stillCurrent)
+        } catch is StaleCredentialSubmission {
+            return
+        } catch {
+            recordFailure(error)
+        }
     case .lookUp(let credential):
         let result = await lookup(credential)
         guard tracker.finish(generation, miss: KeychainMiss(result)), let value = result.value else { return }
         do {
-            try await submit(value)
+            try await submit(value, stillCurrent)
+        } catch is StaleCredentialSubmission {
+            return
         } catch {
             if tracker.isCurrent(generation) { recordFailure(error) }
             tracker.submissionFailed(generation)
