@@ -241,6 +241,12 @@ reset; write_config -40 30 240; cp "$CONFIG" "$SCRATCH/before.json"
 export STUB_POS="5,5"; printf '\n\n' | run calibrate; rc=$?; unset STUB_POS
 if [ "$rc" -ne 0 ] && unchanged && untouched && grep -q '互動式終端機' "$SCRATCH/out.log"; then ok "calibrate with two lines piped in: same, the calibration is not overwritten"
 else bad "calibrate piped (exit $rc, config unchanged: $(unchanged && echo yes || echo no), osascript ran: $([ -e "$SCRATCH/osascript.log" ] && echo yes || echo no)): $(tr '\n' ' ' < "$CONFIG")"; fi
+# stdin a pipe while stdout and stderr are a terminal, as in `printf '\n\n' |
+# calibrate` typed at a terminal: the check must be on stdin, not on output.
+reset; write_config -40 30 240; cp "$CONFIG" "$SCRATCH/before.json"
+pty '' "$SHEBANG_BASH" -c 'printf "\n\n" | "$1" calibrate' _ "$TARGET"; rc=$?
+if [ "$rc" -ne 0 ] && unchanged && untouched && grep -q '互動式終端機' "$SCRATCH/out.log"; then ok "calibrate with a pipe on stdin and a terminal on stdout: refused the same way"
+else bad "calibrate, pipe on stdin, terminal on stdout (exit $rc, config unchanged: $(unchanged && echo yes || echo no), osascript ran: $([ -e "$SCRATCH/osascript.log" ] && echo yes || echo no))"; fi
 reset
 printf '\n250\n' | run calibrate; rc=$?
 if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && untouched && grep -q '互動式終端機' "$SCRATCH/out.log"; then ok "calibrate piped, no config yet: none is written"
