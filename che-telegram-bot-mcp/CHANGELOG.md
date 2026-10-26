@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Distribution
+- Before signing, the release build lists each binary's load commands with `otool` and refuses one that loads a Swift back-deployment library (`@rpath/libswiftCompatibility*.dylib`) other than weakly, naming the library and the architecture ([#91](https://github.com/PsychQuant/che-msg/issues/91)).
+
 ## [0.9.0] - 2026-11-01
 
 ### Changed

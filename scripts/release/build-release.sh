@@ -36,8 +36,10 @@
 #
 # The .mcpb bundles hold the mcpb files of the commit printed at the start,
 # whatever the working tree holds or HEAD becomes; a package with no mcpb
-# directory at that commit gets no bundle. The --version of telegram-all and
-# of CheSlackMCP is checked before signing and, in the signing modes, once
+# directory at that commit gets no bundle. Before signing, otool checks that
+# no binary needs a Swift back-deployment library at launch, which the
+# release does not ship (PsychQuant/che-msg#91). The --version of telegram-all
+# and of CheSlackMCP is checked before signing and, in the signing modes, once
 # more on the signed binary, so every signed build launches each of those
 # hardened-runtime binaries once (the bot has no --version).
 # Before the full mode writes .build/dist/vX it checks again that HEAD is that
@@ -69,7 +71,7 @@ else
     MODE=unsigned
 fi
 
-for tool in swift lipo mcpb shasum git perl unzip cmp; do
+for tool in swift lipo otool mcpb shasum git perl unzip cmp; do
     command -v "$tool" >/dev/null 2>&1 || { echo "Error: $tool not found; it is needed to build the release." >&2; exit 1; }
 done
 VERSION_CHECK_TIMEOUT="${VERSION_CHECK_TIMEOUT:-20}"
@@ -206,6 +208,42 @@ build_arch() {
     [[ "$archs" == "$arch" ]] || { echo "Error: the $arch build of $bin contains '$archs'" >&2; exit 1; }
 }
 
+# check_load_commands <binary> <name>: no architecture of the binary needs one
+# of Swift's back-deployment libraries (@rpath/libswiftCompatibility*.dylib) at
+# launch. The toolchain links one when the deployment target is older than the
+# macOS that has it built in (libswiftCompatibilitySpan: macOS 26). The release
+# does not ship it, so dyld stops the binary on an older macOS, though it starts
+# on the build machine, whose /usr/lib/swift has it (PsychQuant/che-msg#91).
+# A weak load (LC_LOAD_WEAK_DYLIB) does not stop the binary and is allowed.
+check_load_commands() {
+    local listing="$STAGE/load-commands-$2" archs slices needed
+    # From a file, so a failed otool stops the build instead of reading as
+    # "loads nothing".
+    otool -l -arch all "$1" > "$listing" 2>&1 || {
+        echo "Error: otool cannot list the load commands of $2:" >&2
+        tail -n 5 "$listing" | sed 's/^/         /' >&2; exit 1; }
+    # One listing per architecture: otool exits 0 for a file it cannot read
+    # ("is not an object file").
+    archs=$(lipo -archs "$1" | wc -w | tr -d ' ')
+    slices=$(grep -c '^Load command 0$' "$listing" || true)
+    [[ "$slices" == "$archs" ]] || {
+        echo "Error: otool lists load commands for $slices of the $archs architectures in $2:" >&2
+        tail -n 5 "$listing" | sed 's/^/         /' >&2; exit 1; }
+    # Every dylib load but the weak one: dyld needs the library at launch (a
+    # lazy load, where the binary first uses it).
+    needed=$(awk '
+        / \(architecture [^ ]+\):$/ { arch = $NF; sub(/\):$/, "", arch) }
+        $1 == "cmd" { cmd = $2 }
+        $1 == "name" && cmd ~ /^LC_(LOAD|REEXPORT|LOAD_UPWARD|LAZY_LOAD)_DYLIB$/ && $2 ~ /^@rpath\/libswiftCompatibility/ {
+            print "         " $2 " (" cmd (arch == "" ? "" : ", " arch) ")" }' "$listing")
+    [[ -z "$needed" ]] || {
+        echo "Error: $2 loads a Swift back-deployment library that the release does not ship:" >&2
+        printf '%s\n' "$needed" >&2
+        echo "       dyld stops it at launch on a macOS that does not have the library built in," >&2
+        echo "       though it starts on this machine (PsychQuant/che-msg#91)." >&2
+        exit 1; }
+}
+
 # write_sha256 <file>: <file>.sha256 holds the hash only, as che-mcps' releases do.
 write_sha256() { shasum -a 256 "$1" | awk '{print $1}' > "$1.sha256"; }
 
@@ -243,6 +281,7 @@ for entry in "${PACKAGES[@]}"; do
     [[ "$archs" == "arm64 x86_64 " ]] || { echo "Error: $bin has architectures '$archs'" >&2; exit 1; }
 
     # Checked before signing, so a wrong build is not sent to Apple first.
+    check_load_commands "$UNIVERSAL" "$bin"
     if [[ "$VERSION_CHECKED" == *" $bin "* ]]; then
         check_version "$UNIVERSAL" "$bin" "$pkg"
     fi

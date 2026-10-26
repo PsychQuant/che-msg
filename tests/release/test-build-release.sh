@@ -72,6 +72,14 @@
 #      its Package.resolved, its Sources and a symlink in it are checked like
 #      the Telegram packages'; a Slack pin that disagrees with X stops the
 #      build before anything is built.
+#  20. A binary that loads @rpath/libswiftCompatibilitySpan.dylib, not weakly,
+#      though it starts on this machine and answers --version: refused before
+#      it is signed, naming the library and each architecture that loads it,
+#      nothing in dist; for telegram-all in the full mode, with --sign-only
+#      and unsigned, for the bot binary, and for a bot binary whose x86_64
+#      slice alone loads it. Binaries that load it weakly are released. An
+#      otool that fails, or lists no load commands and exits 0, stops the
+#      build before anything is signed (#91).
 #
 # Usage:
 #   bash tests/release/test-build-release.sh
@@ -122,19 +130,36 @@ int main(int argc, char **argv) {
 }
 EOF
 printf 'int main(void) { return 0; }\n' > "$PROGS/bot.c"
+# A stand-in for Swift's back-deployment library, with the install name the
+# toolchain links (#91). The programs that load it find it through an rpath,
+# as the real binaries find it in /usr/lib/swift on a build machine with
+# macOS 26 or later, so they start here and pass the --version check.
+mkdir -p "$PROGS/swiftlib"
+printf 'int span_stand_in(void) { return 1; }\n' > "$PROGS/swiftlib/span.c"
+cc -arch arm64 -arch x86_64 -dynamiclib -install_name @rpath/libswiftCompatibilitySpan.dylib \
+    -o "$PROGS/swiftlib/libswiftCompatibilitySpan.dylib" "$PROGS/swiftlib/span.c" ||
+    { echo "ERROR: cc cannot build a dylib" >&2; exit 1; }
+NEEDS_SPAN=("-Wl,-rpath,$PROGS/swiftlib" "$PROGS/swiftlib/libswiftCompatibilitySpan.dylib")
+WEAK_SPAN=("-Wl,-weak_library,$PROGS/swiftlib/libswiftCompatibilitySpan.dylib")
 for arch in arm64 x86_64; do
     ALL=-DNAME='"che-telegram-all-mcp"' SLACK=-DNAME='"che-slack-mcp"'
     if ! { cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/CheTelegramAllMCP-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"0.0.1\"" -o "$PROGS/WrongVersion-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" "$ALL" -DHANG=1 -DVERSION="\"$X\"" -o "$PROGS/Hang-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" "$ALL" -DHANG=0 -DEXIT=3 -DVERSION="\"$X\"" -o "$PROGS/FailsAfterVersion-$arch" "$PROGS/all.c" &&
+           cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/AllNeedsSpan-$arch" "$PROGS/all.c" "${NEEDS_SPAN[@]}" &&
+           cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/AllWeakSpan-$arch" "$PROGS/all.c" "${WEAK_SPAN[@]}" &&
            cc -arch "$arch" "$SLACK" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/CheSlackMCP-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" "$SLACK" -DHANG=0 -DVERSION="\"0.0.1\"" -o "$PROGS/SlackWrongVersion-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" "$SLACK" -DHANG=1 -DVERSION="\"$X\"" -o "$PROGS/SlackHang-$arch" "$PROGS/all.c" &&
-           cc -arch "$arch" -o "$PROGS/CheTelegramBotMCP-$arch" "$PROGS/bot.c"; }; then
+           cc -arch "$arch" -o "$PROGS/CheTelegramBotMCP-$arch" "$PROGS/bot.c" &&
+           cc -arch "$arch" -o "$PROGS/BotNeedsSpan-$arch" "$PROGS/bot.c" "${NEEDS_SPAN[@]}" &&
+           cc -arch "$arch" -o "$PROGS/BotWeakSpan-$arch" "$PROGS/bot.c" "${WEAK_SPAN[@]}"; }; then
         echo "ERROR: cc cannot build for $arch" >&2; exit 1
     fi
 done
+cp "$PROGS/CheTelegramBotMCP-arm64" "$PROGS/BotNeedsSpanX86-arm64"
+cp "$PROGS/BotNeedsSpan-x86_64" "$PROGS/BotNeedsSpanX86-x86_64"
 
 PINNED=(
     che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/CLIBootstrap.swift
@@ -178,9 +203,14 @@ PINNED=(
 #                           answer wrongly once signed
 #            slack-wrong-version, slack-hang-version, slack-signed-wrong-version
 #                           the same for the CheSlackMCP build
+#            all-needs-span  the telegram-all build loads
+#                           @rpath/libswiftCompatibilitySpan.dylib, not weakly
+#            bot-needs-span  the bot build does
+#            bot-x86-needs-span  only the x86_64 build of the bot binary does
+#            weak-span      both builds load it weakly
 # FAKE_MODE, when set, is passed to the fake signing tools.
 make_repo() {
-    local base="$SCRATCH/$1" repo="$SCRATCH/$1/repo" f all_prog=CheTelegramAllMCP slack_prog=CheSlackMCP same_arch=0
+    local base="$SCRATCH/$1" repo="$SCRATCH/$1/repo" f all_prog=CheTelegramAllMCP bot_prog=CheTelegramBotMCP slack_prog=CheSlackMCP same_arch=0
     local signed_bin="" signed_prog=""
     case "${2:-}" in
         wrong-version) all_prog=WrongVersion ;;
@@ -191,6 +221,10 @@ make_repo() {
         slack-wrong-version) slack_prog=SlackWrongVersion ;;
         slack-hang-version) slack_prog=SlackHang ;;
         slack-signed-wrong-version) signed_bin=CheSlackMCP; signed_prog=SlackWrongVersion ;;
+        all-needs-span) all_prog=AllNeedsSpan ;;
+        bot-needs-span) bot_prog=BotNeedsSpan ;;
+        bot-x86-needs-span) bot_prog=BotNeedsSpanX86 ;;
+        weak-span) all_prog=AllWeakSpan; bot_prog=BotWeakSpan ;;
     esac
     mkdir -p "$repo/scripts/release" "$base/swiftbin"
     for f in "${PINNED[@]}"; do
@@ -238,7 +272,7 @@ if [ "\$product" = CheTelegramBotMCP ] && [ -x "$base/hook" ]; then "$base/hook"
 if [ \$show = 1 ]; then echo "$base/swiftbin"; exit 0; fi
 [ -z "\$arch" ] && arch=arm64             # a build without --arch is for the host
 [ $same_arch = 1 ] && arch=arm64
-src=\$product; [ "\$product" = CheTelegramAllMCP ] && src=$all_prog; [ "\$product" = CheSlackMCP ] && src=$slack_prog
+src=$bot_prog; [ "\$product" = CheTelegramAllMCP ] && src=$all_prog; [ "\$product" = CheSlackMCP ] && src=$slack_prog
 cp "$PROGS/\$src-\$arch" "$base/swiftbin/\$product"
 EOF
     cat > "$base/fakebin/mcpb" <<EOF
@@ -428,6 +462,59 @@ test_case "a per-arch build with the wrong architecture"
 R=$(make_repo same-arch same-arch)
 build "$R" "${SIGN_ENV[@]}" --
 if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'x86_64'; then pass "refused, naming x86_64"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+
+# ------------------------------------------ back-deployment libraries (#91)
+test_case "a binary that loads a Swift back-deployment library, not weakly (#91)"
+SPAN=@rpath/libswiftCompatibilitySpan.dylib
+if [ "$("$PROGS/AllNeedsSpan-arm64" --version 2>&1)" = "che-telegram-all-mcp $X" ]; then pass "fixture: a telegram-all binary that loads it starts here"; else fail "fixture: it does not start: $("$PROGS/AllNeedsSpan-arm64" --version 2>&1 | head -2)"; fi
+for run in all-needs-span:full all-needs-span:sign-only all-needs-span:unsigned bot-needs-span:full bot-x86-needs-span:full; do
+    variant=${run%%:*}; mode=${run#*:}
+    case "$variant" in
+        all-needs-span)     bin=CheTelegramAllMCP; loads="arm64 x86_64"; clean="" ;;
+        bot-needs-span)     bin=CheTelegramBotMCP; loads="arm64 x86_64"; clean="" ;;
+        bot-x86-needs-span) bin=CheTelegramBotMCP; loads=x86_64; clean=arm64 ;;
+    esac
+    R=$(make_repo "$variant-$mode" "$variant")
+    case "$mode" in
+        full)      build "$R" "${SIGN_ENV[@]}" --; DIST="$R/.build/dist/v$X" ;;
+        sign-only) build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; DIST="$R/.build/dist/v$X-sign-only" ;;
+        unsigned)  build "$R" --; DIST="$R/.build/dist/v$X-unsigned" ;;
+    esac
+    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF "$bin loads a Swift back-deployment library"; then pass "$variant, $mode: refused, naming $bin"; else fail "$variant, $mode: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+    for a in $loads; do
+        if printf '%s' "$OUT" | grep -qF "$SPAN (LC_LOAD_DYLIB, $a)"; then pass "$variant, $mode: names the library in $a"; else fail "$variant, $mode: does not name the library in $a"; fi
+    done
+    for a in $clean; do
+        if printf '%s' "$OUT" | grep -qF "$SPAN (LC_LOAD_DYLIB, $a)"; then fail "$variant, $mode: names $a, which does not load it"; else pass "$variant, $mode: does not name $a"; fi
+    done
+    if calls "$R" "codesign --force" | grep -q "/$bin\$"; then fail "$variant, $mode: $bin was signed"; else pass "$variant, $mode: $bin was not signed"; fi
+    if [ -e "$DIST" ]; then fail "$variant, $mode: left ${DIST#"$R/"}"; else pass "$variant, $mode: nothing in dist"; fi
+done
+
+test_case "binaries that load it weakly are released (#91)"
+R=$(make_repo weak-span weak-span)
+build "$R" "${SIGN_ENV[@]}" --
+if [ "$RC" -eq 0 ] && [ -f "$R/.build/dist/v$X/CheTelegramBotMCP" ]; then pass "exit 0, written to .build/dist/v$X"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+if otool -l "$R/.build/dist/v$X/CheTelegramAllMCP" 2>/dev/null | grep -q 'cmd LC_LOAD_WEAK_DYLIB'; then pass "fixture: the released telegram-all loads it weakly"; else fail "fixture: no weak load in the released telegram-all"; fi
+
+test_case "an otool that fails, or lists no load commands, stops the build (#91)"
+REAL_OTOOL=$(command -v otool)
+for how in fails no-listing; do
+    R=$(make_repo "otool-$how")
+    case "$how" in
+        # The whole listing, then a failure: it must not read as a clean listing.
+        fails)      printf '#!/bin/bash\n"%s" "$@"\nexit 1\n' "$REAL_OTOOL" > "$R/../fakebin/otool"
+                    want="otool cannot list the load commands of CheTelegramAllMCP" ;;
+        # What otool prints, with exit 0, for a file that is not Mach-O.
+        no-listing) printf '#!/bin/bash\nfor last; do :; done\necho "$last: is not an object file"\n' > "$R/../fakebin/otool"
+                    want="otool lists load commands for 0 of the 2 architectures in CheTelegramAllMCP" ;;
+    esac
+    chmod +x "$R/../fakebin/otool"
+    build "$R" "${SIGN_ENV[@]}" --
+    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF "$want"; then pass "$how: refused ($want)"; else fail "$how: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+    if calls "$R" "codesign --force" >/dev/null; then fail "$how: something was signed first"; else pass "$how: refused before signing"; fi
+    if [ -e "$R/.build/dist/v$X" ]; then fail "$how: left a dist directory"; else pass "$how: nothing in dist"; fi
+done
 
 # ---------------------------------------------------------- other modes
 test_case "--sign-only without NOTARY_PROFILE"
