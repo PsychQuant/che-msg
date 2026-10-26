@@ -546,11 +546,13 @@ code:
 ---
 ### Requirement: Wrapper reports why it did not start
 
-The wrapper SHALL exit before starting the server in exactly three cases: the API credentials `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are missing from the Keychain; no server binary it can run is installed and none could be installed before it answers (no release asset found, the download failed, or the download is still running in the background when the first-install wait ends); or the binary it would run is older than 0.7.0, judged by the binary's own answer to `--version`, run without Telegram credentials and stopped after 5 seconds (binaries before 0.6.0 give no answer and open TDLib without the server-side lock; 0.6.x binaries send Telegram's log-out from `logout`, which makes TDLib delete its local database). In all three cases it SHALL exit with status 1 without starting the server, SHALL write the cause to stderr, and SHALL answer the first message it reads on stdin as follows:
+The wrapper SHALL exit before starting the server in exactly four cases: the API credentials `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are missing from the Keychain; no server binary it can run is installed and none could be installed before it answers (no release asset found, the download failed, or the download is still running in the background when the first-install wait ends); the binary it would run is older than 0.7.0, judged by the binary's own answer to `--version`, run without Telegram credentials and stopped after 5 seconds (binaries before 0.6.0 give no answer and open TDLib without the server-side lock; 0.6.x binaries send Telegram's log-out from `logout`, which makes TDLib delete its local database); or the plugin's `lib/startup-error.sh` or `lib/download.sh` cannot be read. In all four cases it SHALL exit with status 1 without starting the server, SHALL write the cause to stderr, and SHALL answer the first message it reads on stdin as follows:
 
 - an `initialize` request, or a first line without a method: one JSON-RPC 2.0 error with the request's `id` (`null` when there is none), `error.code` -32000, an `error.message` naming the cause, and `error.data.docsUrl` pointing at the section "When telegram-all does not start" of the plugin README;
 - a request for any other method, such as `server/discover`: one JSON-RPC 2.0 error with that request's `id` and `error.code` -32601 (method not found), and not the -32000 error;
 - a notification for any other method: no answer.
+
+When `lib/startup-error.sh` itself cannot be read, the wrapper has no reader for stdin: it reads nothing and writes the -32000 error with `id` null, whatever the first message is. A client that discards an error whose `id` is null then receives no answer, and the cause is only on stderr.
 
 What the client displays of either answer is outside this requirement.
 
@@ -589,6 +591,16 @@ What the client displays of either answer is outside this requirement.
 | `server/discover` request, id 1 | -32601 error, id 1 |
 | `server/discover` request, id `"probe-1"` | -32601 error, id `"probe-1"` |
 | notification `notifications/initialized` | none |
+
+#### Scenario: The plugin's lib/download.sh cannot be read
+
+- **WHEN** the plugin's `lib/download.sh` is missing and Claude Code sends an `initialize` request with id 7
+- **THEN** the only line on stdout is the -32000 error with `id` 7, `error.data.docsUrl`, and a message saying the plugin is incomplete; the cause is on stderr, the wrapper exits with status 1, and no server process is started
+
+#### Scenario: The reader itself cannot be read
+
+- **WHEN** the plugin's `lib/startup-error.sh` is missing and Claude Code sends an `initialize` request with id 7, or a `server/discover` request with id 1
+- **THEN** the only line on stdout is the -32000 error with `id` null and a message saying the plugin is incomplete, and no -32601 answer is written; the cause is on stderr, the wrapper exits with status 1, and no server process is started
 
 <!-- @trace
 source: telegram-all-sqlite-reader

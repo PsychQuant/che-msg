@@ -318,6 +318,7 @@ The cases, and what to do:
 - **Still downloading**: on a first install the binary is not there yet; the message says it is downloading in the background (with its size). Reconnect with `/mcp` in a few minutes, once `~/bin/.che-telegram-mcp-download/CheTelegramAllMCP.log` says it was installed ([#67](https://github.com/PsychQuant/che-msg/issues/67)). On a slow link, see [A slow link](#a-slow-link).
 - **Binary not available**: the download failed or found no release asset. The message says why: the transfer was interrupted (reconnect with `/mcp` and the next start resumes it), the server answered with an HTTP error (the pinned release or its asset does not exist), GitHub could not be reached to look up the sha256, the download did not match its sha256 (it was removed), no sha256 is known for the version, or another session is downloading it. Reconnect, or install it by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
 - **Binary too old**: the binary found is older than 0.7.0 — typically the previous version, kept because the download of the new one failed, or an old copy outside `~/bin` (such as `~/.local/bin`), which the wrapper never upgrades. The message names the binary and why it was not upgraded. Binaries before 0.6.0 open TDLib without coordinating with other sessions, and 0.6.x binaries send Telegram's log-out from `logout`, which deletes the local database, so the wrapper runs neither. Install the current one by hand as in [Manual install](#manual-install-if-auto-download-fails), then reconnect.
+- **Plugin incomplete**: the plugin's `lib/startup-error.sh` or `lib/download.sh` cannot be read (a damaged or partial copy of the plugin). Reinstall the plugin, then reconnect with `/mcp`. When `lib/startup-error.sh` is the file that cannot be read, the wrapper cannot read Claude Code's first request, so its JSON-RPC error carries `id` null, which Claude Code discards; the reason is then only in the MCP log.
 
 Another session using `telegram-all` is never a reason: the wrapper takes no lock on the server (only one around its download) and stops only the server it started itself.
 
@@ -328,7 +329,7 @@ On a first install the bot wrapper may stop before the server starts. It then wr
 - **Still downloading**: the binary is not there yet and is downloading in the background (about 18 MB). Reconnect with `/mcp` in a minute, once `~/bin/.che-telegram-mcp-download/CheTelegramBotMCP.log` says it was installed.
 - **Binary not available**: the download failed. The message says why, for the same reasons as for telegram-all (see [When telegram-all does not start](#when-telegram-all-does-not-start)). Reconnect, or install it by hand as in [Manual install](#manual-install-if-auto-download-fails).
 
-A missing bot token stops it too, with the setup command on stderr only (the server's MCP log): store `TELEGRAM_BOT_TOKEN` in the Keychain as in step 2 of [Track B](#track-b--bot-only), then reconnect.
+A missing bot token stops it too, with the setup command on stderr only (the server's MCP log): store `TELEGRAM_BOT_TOKEN` in the Keychain as in step 2 of [Track B](#track-b--bot-only), then reconnect. So does an incomplete plugin, as for telegram-all (**Plugin incomplete** in [When telegram-all does not start](#when-telegram-all-does-not-start)).
 
 ### When telegram-all stops syncing
 
