@@ -22,9 +22,7 @@ internal func tdlibInUseResult(holderPid: Int32?) -> CallTool.Result {
         "type": "tdlib_in_use",
         "lock_holder_pid": holderPid.map { NSNumber(value: $0) } ?? NSNull(),
         "message": "TDLib is in use by \(holderDescription(holderPid)), so this tool cannot run now. "
-            + "That session closes TDLib after it has been idle for its idle timeout "
-            + "(\(IdleTimeout.environmentVariable), \(Int(IdleTimeout.defaultSeconds)) seconds by default); "
-            + "try again then, or use the session that holds it.",
+            + TDLibProcessLock.holderReleaseHint,
     ])
 }
 

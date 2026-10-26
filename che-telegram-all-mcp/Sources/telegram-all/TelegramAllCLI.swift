@@ -29,7 +29,8 @@ extension TelegramAll {
     /// Takes the TDLib lock the server takes, opens TDLib, runs `body`, then
     /// closes TDLib and releases the lock (#61). While another process holds
     /// TDLib, prints which one on stderr and exits with status 1 without
-    /// opening it.
+    /// opening it. A close that does not finish also exits with status 1,
+    /// after `TDLibCommandSession` has said so on stderr.
     static func withTDLib<T>(_ body: (TDLibClient) async throws -> T) async throws -> T {
         do {
             // The CLI never reads the Keychain (#96): see NoKeychainCredentialSource.
@@ -38,6 +39,8 @@ extension TelegramAll {
                                                      body: body)
         } catch let held as TDLibCommandSession.Held {
             fputs(held.message + "\n", stderr)
+            throw ExitCode.failure
+        } catch is TDLibCommandSession.NotClosed {
             throw ExitCode.failure
         }
     }

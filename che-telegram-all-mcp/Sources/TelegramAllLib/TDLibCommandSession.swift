@@ -13,13 +13,15 @@ public enum TDLibCommandSession {
         public let message: String
     }
 
+    /// Thrown by `run` after the command succeeded when TDLib did not close;
+    /// the lock is kept until the process exits.
+    public struct NotClosed: Error, Equatable {}
+
     /// The line `telegram-all` prints when another process holds TDLib.
     public static func heldMessage(holderPid: Int32?) -> String {
         let holder = holderPid.map { "process \($0)" } ?? "another process (unknown holder)"
         return "telegram-all: TDLib is in use by \(holder), so this command did not open it. "
-            + "A Claude Code session closes TDLib after it has been idle for its idle timeout "
-            + "(\(IdleTimeout.environmentVariable), \(Int(IdleTimeout.defaultSeconds)) seconds by default); "
-            + "try again then."
+            + TDLibProcessLock.holderReleaseHint
     }
 
     /// Takes `lock`: nil when this process now holds it, otherwise the
@@ -35,8 +37,9 @@ public enum TDLibCommandSession {
     /// can release a local before the end of its scope. A close that does not
     /// finish within 30 s keeps the lock until the process exits (the kernel
     /// drops the flock then), so no other process opens TDLib while this one
-    /// may still be running it. Throws `Held` without opening anything when
-    /// another process holds TDLib.
+    /// may still be running it, and fails the command: `body`'s error if it
+    /// threw, otherwise `NotClosed`. Throws `Held` without opening anything
+    /// when another process holds TDLib.
     public static func run<Client: TDLibClosable, T>(
         lock: TDLibProcessLock,
         log: (String) -> Void = { fputs($0 + "\n", stderr) },
@@ -65,6 +68,7 @@ public enum TDLibCommandSession {
                 + "keeping the TDLib lock until telegram-all exits")
             // Never released: the lock's deinit would release it otherwise.
             _ = Unmanaged.passRetained(lock)
+            if case .success = result { throw NotClosed() }
         }
         return try result.get()
     }

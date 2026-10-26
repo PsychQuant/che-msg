@@ -113,16 +113,32 @@ final class TDLibCommandSessionTests: XCTestCase {
     }
 
     /// A close that does not finish keeps the lock until the process exits,
-    /// so no other process opens TDLib while this one may still be running it.
-    func testACloseThatDoesNotFinishKeepsTheLockUntilExit() async throws {
+    /// so no other process opens TDLib while this one may still be running it,
+    /// and fails the command, so that a script can tell.
+    func testACloseThatDoesNotFinishKeepsTheLockAndFailsTheCommand() async throws {
         let client = makeClient()
         client.closeResult = false
-        try await run(makeLock(), client: client) { _ in }
+        do {
+            try await run(makeLock(), client: client) { _ in }
+            XCTFail("a close that does not finish must fail the command")
+        } catch is TDLibCommandSession.NotClosed {}
         XCTAssertFalse(lockIsFree(), "the lock outlives the lock object; the kernel drops it at exit")
         XCTAssertEqual(log.lines, [
             "telegram-all: TDLib did not report authorizationStateClosed within 30 s; "
                 + "keeping the TDLib lock until telegram-all exits",
         ])
+    }
+
+    /// When the command itself failed, its error is the one reported.
+    func testAFailedCommandWhoseCloseDoesNotFinishReportsTheCommandsError() async throws {
+        let client = makeClient()
+        client.closeResult = false
+        do {
+            try await run(makeLock(), client: client) { _ -> Void in throw Failure() }
+            XCTFail("the command's error must reach the caller")
+        } catch is Failure {}
+        XCTAssertFalse(lockIsFree())
+        XCTAssertEqual(log.lines.count, 1)
     }
 
     // MARK: - Lock held elsewhere
@@ -173,14 +189,16 @@ final class TDLibCommandSessionTests: XCTestCase {
     }
 
     func testTheMessageNamesTheHolderOrSaysItIsUnknown() {
+        let release = "Try again once it has released TDLib: a telegram-all command releases it when it finishes; "
+            + "a Claude Code session using telegram-all releases it when the session ends, and can release it earlier, "
+            + "once it has had no calls for its idle timeout (CHE_TELEGRAM_ALL_IDLE_TIMEOUT, 600 seconds by default; "
+            + "0 means never)."
+        XCTAssertEqual(TDLibProcessLock.holderReleaseHint, release)
         XCTAssertEqual(TDLibCommandSession.heldMessage(holderPid: 4242),
-                       "telegram-all: TDLib is in use by process 4242, so this command did not open it. "
-                       + "A Claude Code session closes TDLib after it has been idle for its idle timeout "
-                       + "(CHE_TELEGRAM_ALL_IDLE_TIMEOUT, 600 seconds by default); try again then.")
+                       "telegram-all: TDLib is in use by process 4242, so this command did not open it. " + release)
         XCTAssertEqual(TDLibCommandSession.heldMessage(holderPid: nil),
-                       "telegram-all: TDLib is in use by another process (unknown holder), so this command "
-                       + "did not open it. A Claude Code session closes TDLib after it has been idle for its "
-                       + "idle timeout (CHE_TELEGRAM_ALL_IDLE_TIMEOUT, 600 seconds by default); try again then.")
+                       "telegram-all: TDLib is in use by another process (unknown holder), so this command did not "
+                       + "open it. " + release)
     }
 
     // MARK: - The CLI
@@ -194,7 +212,9 @@ final class TDLibCommandSessionTests: XCTestCase {
             .appendingPathComponent("Sources/telegram-all")
         let files = try FileManager.default.contentsOfDirectory(atPath: sources.path).filter { $0.hasSuffix(".swift") }
         XCTAssertFalse(files.isEmpty)
-        let creation = try NSRegularExpression(pattern: #"\bTDLibClient\s*(\.init)?\s*\("#)
+        let creation = try NSRegularExpression(pattern: #"\bTDLibClient\s*(\.\s*init)?\s*\("#)
+        // Other ways to reach the initializer: a function reference or an alias.
+        let indirect = try NSRegularExpression(pattern: #"\bTDLibClient\s*\.\s*init\b|\btypealias\b[^=]*=[^\n]*\bTDLibClient\b"#)
         var creations: [(file: String, previous: String, line: String)] = []
         for file in files {
             let lines = try String(contentsOf: sources.appendingPathComponent(file), encoding: .utf8)
@@ -205,6 +225,10 @@ final class TDLibCommandSessionTests: XCTestCase {
                 creations.append((file, index > 0 ? lines[index - 1] : "", line))
             }
             XCTAssertFalse(lines.contains { $0.contains("TDLibLifecycle") || $0.contains(".acquire()") }, file)
+            for line in lines where !line.contains("open: {") {
+                let hits = indirect.numberOfMatches(in: line, range: NSRange(line.startIndex..., in: line))
+                XCTAssertEqual(hits, 0, "\(file): TDLibClient reached other than by the one construction: \(line)")
+            }
         }
         XCTAssertEqual(creations.count, 1, "one place creates TDLib: \(creations.map(\.line))")
         XCTAssertTrue(creations.first?.previous.contains("TDLibCommandSession.run(") == true,

@@ -164,6 +164,20 @@ final class ToolRoutingTests: XCTestCase {
         XCTAssertFalse(isOpen)
     }
 
+    /// The holder can be a session or a telegram-all command (#61), and a
+    /// session may never go idle; the message says how each releases TDLib.
+    func testTheInUseMessageSaysHowEachKindOfHolderReleasesTDLib() async throws {
+        try holdTDLib(asPid: 4242)
+        let server = try await makeServer()
+        let payload = try json(await server.handleToolCall(name: "send_message", arguments: [:]))
+        XCTAssertEqual(payload["message"] as? String,
+                       "TDLib is in use by another process (PID 4242), so this tool cannot run now. "
+                       + "Try again once it has released TDLib: a telegram-all command releases it when it finishes; "
+                       + "a Claude Code session using telegram-all releases it when the session ends, and can release "
+                       + "it earlier, once it has had no calls for its idle timeout (CHE_TELEGRAM_ALL_IDLE_TIMEOUT, "
+                       + "600 seconds by default; 0 means never).")
+    }
+
     func testUnknownHolderIsReportedAsNull() async throws {
         try holdTDLib(asPid: nil)
         let server = try await makeServer()

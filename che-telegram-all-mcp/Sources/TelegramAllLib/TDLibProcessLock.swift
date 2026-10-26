@@ -15,6 +15,13 @@ public final class TDLibProcessLock {
         case heldBy(pid: Int32?)
     }
 
+    /// How whoever holds TDLib releases it, for messages that name a holder:
+    /// a server (a Claude Code session) or a `telegram-all` command (#61).
+    public static let holderReleaseHint = "Try again once it has released TDLib: a telegram-all command releases it "
+        + "when it finishes; a Claude Code session using telegram-all releases it when the session ends, and can "
+        + "release it earlier, once it has had no calls for its idle timeout (\(IdleTimeout.environmentVariable), "
+        + "\(Int(IdleTimeout.defaultSeconds)) seconds by default; 0 means never)."
+
     private let lockPath: String
     private let ownerPath: String
     private let legacyOwnerPath: String
