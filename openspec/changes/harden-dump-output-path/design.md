@@ -30,9 +30,13 @@
 
 替代方案是完全拒絕絕對路徑、改由 server 加前綴：會讓 README 範例與既有呼叫全部失效，又需要預設根目錄，捨棄。
 
+### 路徑以 Unicode scalar 讀，與 OS 相同
+
+Swift 的 `String.split(separator: "/")` 與 `hasPrefix("/")` 以 Character（grapheme cluster）為單位，而「`/` 加上一個組合用記號」（U+0301、U+200D、U+FE0F、U+034F 等）是一個 Character：Swift 看不到分隔符，OS 卻照樣在那裡分開。第一版因此可被繞過：`<root>/..` + "/" + U+0301 + `esc.md` 通過了 `..` 規則與根目錄檢查，實際寫到根目錄外；`<root>/dirlink` + "/" + U+0301 + `x.md` 也穿過了指向外面的 symlink（驗證時在 APFS 上重現）。`TelegramAllLib` 的 `ScalarPath` 以 scalar 讀路徑：第一個 scalar 是 `/` 才是絕對路徑，每個 `/` scalar 都分隔，元件逐 scalar 比較（不用 Swift 的 canonical equivalence，避免兩個 OS 視為不同的名稱被當成相同）；`.md` 結尾也以最後三個 scalar 判斷。`validateDumpOutputPath`、`resolvedExportRoot`、`resolvedOnLongestExistingPrefix`、`isStrictlyInside` 都改用它，不再有以 Character 切路徑的地方。
+
 ### 根目錄 opt-in，設錯時一律拒絕
 
-`CHE_TELEGRAM_ALL_EXPORT_ROOT` 沒設或是空字串時不限制。設了就必須是既存目錄的絕對路徑；不是的話（相對路徑、不存在、不是目錄、只有空白），每一次 dump 都以 `exportRootUnusable` 拒絕並說出設定值。這是安全設定，設錯時默默不限制等於讓使用者以為有沙箱，所以 fail closed；與 `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` 設錯時退回預設不同。值不做 trim，也不展開 `~`。
+`CHE_TELEGRAM_ALL_EXPORT_ROOT` 沒設或是空字串時不限制。設了就必須是既存目錄的絕對路徑；不是的話（相對路徑、不存在、不是目錄、只有空白），每一次 dump 都以 `exportRootUnusable` 拒絕並說出設定值。這是安全設定，設錯時默默不限制等於讓使用者以為有沙箱，所以 fail closed；與 `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` 設錯時退回預設不同。值不做 trim，也不展開 `~`：空字串是「沒設」，只有空白的值不是空字串、也不是絕對路徑，所以每一次 dump 都拒絕。
 
 ### 解析 symlink：最長既存前綴
 
@@ -50,6 +54,8 @@
 
 `TelegramAllLib` 新增 `ExportRoot`（與 `IdleTimeout` 同形）：`environmentVariable`、`parse(_:)`、`fromEnvironment(_:)`。`CheTelegramAllMCPServer` 的 convenience init 呼叫 `ExportRoot.fromEnvironment()`，designated init 收 `exportRoot: String?`（預設 nil）並存起來；TDLib 模式以 `MarkdownExporter(client:exportRoot:)` 傳入，本機快取路徑以 `LocalCacheReading.dumpChatToMarkdown(...exportRoot:)` 傳入。server 是唯一擁有這個值的地方，兩條路徑拿到同一個值；測試以 designated init 注入，不改測試 process 的環境變數。
 
+TDLib 模式要有真的 `TDLibClient` 才走得到，所以加一個 seam：`MarkdownExporter` 透過 `MarkdownExportSource`（`getChat`、`getChatHistory`、`getUser`；`TDLibClient` conform）讀取，server 的 TDLib 分支呼叫 `dumpInTDLibMode(parsed, source: tdlib)`，這是 Server.swift 唯一建立 `MarkdownExporter` 的地方。測試以替身呼叫 `dumpInTDLibMode` 與 `MarkdownExporter`，另有一個 source pin 確認 TDLib 分支經過這個 seam。與 `ChatArchiver` 以 `ArchiveHistorySource` 讀取的做法相同。
+
 替代方案是讓 `LocalTDLibReader` 自己存根目錄：要在 convenience init 對 reader 與 exporter 各注入一次，日後重構容易漏一邊；協定多一個參數只影響三個測試替身，採用協定參數。
 
 ### CLI 不變
@@ -66,9 +72,11 @@
   - `internal func validateOutputPath(_ path: String, exportRoot: String? = nil) throws`：先做根目錄檢查（`exportRoot` 非 nil 時），再做既有的父目錄檢查。
   - `LocalCacheReading.dumpChatToMarkdown` 多一個最後的參數 `exportRoot: String?`；`LocalTDLibReader.dumpChatToMarkdown` 的同名參數預設 nil。
   - `CheTelegramAllMCPServer.init(lock:idleTimeout:reader:syncState:exportRoot:)`，`exportRoot` 預設 nil；convenience init 傳 `ExportRoot.fromEnvironment()`。
+  - `TelegramAllLib`：`public enum ScalarPath { isAbsolute(_:), components(of:), isParent(_:), isCurrent(_:), same(_:_:) }`，以 Unicode scalar 讀路徑。
+  - `TelegramAllLib`：`public protocol MarkdownExportSource`（`TDLibClient` conform），`MarkdownExporter.init(client: MarkdownExportSource, exportRoot:)`；`CheTelegramAllMCPServer.dumpInTDLibMode(_:source:)`（internal）。
   - tool schema 的 `output_path` 說明寫出三條規則、根目錄與「既有檔案會被取代」。
 - **錯誤與邊界**：`output_path` 缺少時仍是 `output_path is required`。`..` 只看整段元件。路徑解析的邊界照「解析 symlink：最長既存前綴」一節。根目錄檢查在父目錄檢查之前，所以根目錄外且父目錄不存在的路徑回報 `outsideExportRoot`。
-- **驗收**：`ParseDumpArgsTests` 的 `testDumpRejectsTraversalPath`、`testDumpRejectsNonMarkdownExtension`、`testDumpRejectsRelativePath`（含錯誤訊息全文與 `.MD` 接受）；`MarkdownExporterContractTests` 的 `testValidateOutputPathRespectsExportRoot`（暫存目錄內：根內接受、根外拒絕、目錄 symlink 逃逸拒絕、檔案 symlink 逃逸拒絕、懸空 symlink 拒絕、根內 symlink 指回根內接受、`..` 在不存在的元件裡拒絕、根目錄不可用拒絕）與 `ExportRoot.parse` 的測試；`LocalReaderToolTests` 驗證本機快取路徑在根目錄外拒絕且不寫檔；`ToolRoutingTests` 驗證 server 把注入的根目錄傳給 reader、三條規則在本機快取路徑也生效；`swift test --skip E2ETests` 兩個 bundle 全過。
+- **驗收**：`ParseDumpArgsTests` 的 `testDumpRejectsTraversalPath`（含 `/` 加組合用記號後的 `..`）、`testDumpRejectsNonMarkdownExtension`、`testDumpRejectsRelativePath`（含錯誤訊息全文與 `.MD` 接受）；`ScalarPathTests`；`MarkdownExporterContractTests` 的 `testValidateOutputPathRespectsExportRoot`（暫存目錄內：根內接受、根外拒絕、目錄 symlink 逃逸拒絕、檔案 symlink 逃逸拒絕、懸空 symlink 拒絕、根內 symlink 指回根內接受、`..` 在不存在的元件裡拒絕、根目錄不可用拒絕）與 `ExportRoot.parse` 的測試；`LocalReaderToolTests` 驗證本機快取路徑在根目錄外拒絕且不寫檔（含 `/` 加組合用記號後的 `..`）；`ToolRoutingTests` 驗證 server 把注入的根目錄傳給 reader、三條規則在本機快取路徑也生效、`dumpInTDLibMode` 用 server 的根目錄、TDLib 分支經過 seam；`MarkdownExporterContractTests` 的 `testExporterChecksItsExportRootBeforeReading`；`swift test --skip E2ETests` 兩個 bundle 全過。
 - **範圍內**：上述程式、tool schema、`telegram-history-export` spec、README、CHANGELOG。
 - **範圍外**：`archive_chat_to_markdown`、`download_message_media`、CLI `--dump-markdown`、預設根目錄、TOCTOU、寫入方式。
 
@@ -76,6 +84,6 @@
 
 - [Risk] 相對路徑與非 `.md` 路徑的既有呼叫會失敗（行為變更）→ CHANGELOG 以 Behavior change 標出，錯誤訊息說出規則；tool schema 本來就寫 Absolute 與 .md。
 - [Risk] 副檔名守門擋不住寫到 `~/Documents/x.md` 這類無害但不想要的位置 → 要沙箱就設 `CHE_TELEGRAM_ALL_EXPORT_ROOT`。
-- [Risk] TDLib 模式把根目錄傳給 `MarkdownExporter` 的那一行沒有單元測試（需要真的 `TDLibClient`）→ 根目錄邏輯本身在 `validateOutputPath` 測試，本機快取路徑與 server 的傳遞各有測試；TDLib 模式只是同一個值的轉交。
+- [Risk] TDLib 分支本身（`dumpInTDLibMode(parsed, source: tdlib)` 那一行）仍要真的 `TDLibClient` 才走得到 → 它不帶根目錄參數，根目錄在 `dumpInTDLibMode` 內傳入並有測試；另有 source pin 確認這一行經過 seam、Server.swift 不另外建立 `MarkdownExporter`。
 - [Risk] 驗證與寫入之間的 TOCTOU → 見 Non-Goals；這些 tool 不會建立 symlink。
 - [Trade-off] 根目錄內指向根目錄外的檔案 symlink 會被拒絕，即使 atomic write 實際上會取代 link → 選保守，不依賴 Foundation 的實作細節。

@@ -12,6 +12,8 @@ First, argument parsing SHALL refuse an `output_path` that:
 
 The rules SHALL be checked in that order, and the error message SHALL name the failed rule and quote the given value.
 
+In every check of this requirement, a path SHALL be read as the operating system reads it: by Unicode scalar. A path is absolute when its first scalar is `/` (U+002F); its components are separated at every `/` scalar, including a `/` followed by a combining mark or another scalar that joins it into one user-perceived character (for example U+0301, U+200D, U+FE0F, U+034F); and components are compared scalar for scalar, not by canonical equivalence.
+
 Second, before writing, the implementation SHALL verify that the parent directory of `output_path` exists and is writable by the current process. If it is not, the implementation MUST throw a distinguishable error (not a generic IO error) with the invalid path included in the error payload.
 
 When the server process starts with the environment variable `CHE_TELEGRAM_ALL_EXPORT_ROOT` set to a non-empty value, the implementation SHALL also, before the parent-directory check, restrict `output_path` to that root:
@@ -20,7 +22,7 @@ When the server process starts with the environment variable `CHE_TELEGRAM_ALL_E
 - `output_path` SHALL be resolved by following symbolic links on its longest existing prefix (an existing symbolic link counts as existing, even when it points nowhere) and appending the remaining components.
 - The dump SHALL be refused, with an error naming both the path and the configured root, when the resolved path does not lie strictly inside the resolved root, when a remaining component is `..`, when the existing prefix cannot be resolved (for example a dangling symbolic link or a loop), when a prefix cannot be examined for any reason other than not existing, or when the path contains a NUL character.
 
-When `CHE_TELEGRAM_ALL_EXPORT_ROOT` is unset or empty, no root restriction SHALL apply. The server SHALL read the variable once, at startup.
+When `CHE_TELEGRAM_ALL_EXPORT_ROOT` is unset or empty, no root restriction SHALL apply. The value SHALL NOT be trimmed: a value made only of spaces is not empty, is not an absolute path, and so refuses every dump. The server SHALL read the variable once, at startup.
 
 Both write paths of `dump_chat_to_markdown` SHALL apply these checks: TDLib mode, and the local-cache reader used while another process holds TDLib. The root restriction SHALL NOT apply to `archive_chat_to_markdown` or `download_message_media`, whose `output_dir` is chosen per workspace, and none of these checks SHALL apply to the `telegram-all history --dump-markdown` CLI flag.
 
@@ -46,6 +48,12 @@ Both write paths of `dump_chat_to_markdown` SHALL apply these checks: TDLib mode
 - **WHEN** `dump_chat_to_markdown(chat_id: 123, output_path: "/tmp/exports/../../Users/me/notes.md")` is invoked
 - **THEN** the tool returns an error result stating that `output_path` must not contain `..` components, quoting the given value
 - **AND** no message is fetched
+
+#### Scenario: Traversal hidden behind a combining mark refused
+
+- **WHEN** `dump_chat_to_markdown(chat_id: 123, output_path: "/tmp/.." + "/" + U+0301 + "esc.md")` is invoked, where the second `/` and U+0301 form one user-perceived character
+- **THEN** the tool returns an error result stating that `output_path` must not contain `..` components
+- **AND** nothing is written to `/` + U+0301 + `esc.md`
 
 #### Scenario: Non-Markdown target refused
 
@@ -75,9 +83,15 @@ Both write paths of `dump_chat_to_markdown` SHALL apply these checks: TDLib mode
 - **THEN** the tool returns an error result naming the path and the root
 - **AND** nothing is written under `/Users/me/.config`
 
+#### Scenario: Root escape hidden behind a combining mark refused
+
+- **WHEN** the server started with `CHE_TELEGRAM_ALL_EXPORT_ROOT=/Users/me/exports`, `/Users/me/exports/link` is a symbolic link to `/Users/me/.config`, and `dump_chat_to_markdown` is invoked with `output_path` `/Users/me/exports/link` + "/" + U+0301 + `x.md`
+- **THEN** the tool returns an error result naming the path and the root
+- **AND** nothing is written under `/Users/me/.config`
+
 #### Scenario: Unusable export root refuses every dump
 
-- **WHEN** the server started with `CHE_TELEGRAM_ALL_EXPORT_ROOT=exports` (a relative path) or with the path of a directory that does not exist, and `dump_chat_to_markdown` is invoked with any `output_path`
+- **WHEN** the server started with `CHE_TELEGRAM_ALL_EXPORT_ROOT=exports` (a relative path), with a value made only of spaces, or with the path of a directory that does not exist, and `dump_chat_to_markdown` is invoked with any `output_path`
 - **THEN** the tool returns an error result naming the configured root
 - **AND** no message is fetched
 
