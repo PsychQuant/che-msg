@@ -30,7 +30,8 @@ internal enum AutoFireAction: Equatable, CustomStringConvertible {
 /// - `WaitPhoneNumber` + `TELEGRAM_PHONE` → fire sendPhone
 /// - `WaitCode` → MUST NEVER fire (SMS code is one-shot, caller-supplied only)
 /// - `WaitPassword` + `TELEGRAM_2FA_PASSWORD` → fire sendPassword
-/// - `Ready` / `Closed` / missing creds → noOp
+/// - `Ready` / `Closing` / `Closed` / missing creds → noOp (nothing can be
+///   sent while TDLib logs out or closes; #64)
 ///
 /// `envAuthCode` is included as a parameter to make the "WaitCode never
 /// auto-fires" test explicit — even when set, the function must return noOp.
@@ -60,7 +61,7 @@ internal func decideAutoFire(
         guard let password = envPassword else { return .noOp }
         return .fireSendPassword(password)
 
-    case .ready, .closed:
+    case .ready, .closing, .closed:
         return .noOp
     }
 }
@@ -84,10 +85,13 @@ internal enum CredentialLookupStatus: Equatable, Sendable {
 /// opened on demand waits for this before its first call (PsychQuant/che-msg#58).
 /// While a Keychain lookup runs, or its value is being submitted, it is not
 /// settled (#49), or the first call would answer before the value is sent.
+/// Logging out or closing is not settled either: it ends in `closed` without
+/// a caller (#64).
 internal func authorizationIsSettled(state: TDLibClient.AuthState, hasAutoFireError: Bool, envApiId: Int?,
                                      envApiHash: String?, envPhone: String?, envPassword: String?,
                                      keychainLookup: CredentialLookupStatus) -> Bool {
     if state == .ready || state == .closed || hasAutoFireError { return true }
+    if state == .closing { return false }
     if keychainLookup == .pending || keychainLookup == .found { return false }
     return decideAutoFire(state: state, envApiId: envApiId, envApiHash: envApiHash, envPhone: envPhone,
                           envPassword: envPassword, envAuthCode: nil) == .noOp
@@ -132,7 +136,7 @@ internal func credentialPlan(state: TDLibClient.AuthState, envPhone: String?, en
     switch state {
     case .waitingForPhoneNumber: return .lookUp(.phone)
     case .waitingForPassword: return .lookUp(.password)
-    case .waitingForParameters, .waitingForCode, .ready, .closed: return .nothing
+    case .waitingForParameters, .waitingForCode, .ready, .closing, .closed: return .nothing
     }
 }
 

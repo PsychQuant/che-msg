@@ -37,6 +37,15 @@ final class AuthorizationSettleTests: XCTestCase {
         XCTAssertTrue(settled(.waitingForParameters, error: true, apiId: 1, apiHash: "h"))
     }
 
+    /// Logging out or closing ends in `closed` without a caller, so it is not
+    /// as far as authorization can go (#64); as in every state, a failed
+    /// automatic step still settles it.
+    func testClosingIsNotSettledUntilItHasClosed() {
+        XCTAssertFalse(settled(.closing))
+        XCTAssertFalse(settled(.closing, apiId: 1, apiHash: "h", phone: "+886900000000", password: "pw"))
+        XCTAssertTrue(settled(.closing, error: true))
+    }
+
     // MARK: - Keychain lookup (PsychQuant/che-msg#49; spec example "settled by lookup status")
 
     func testALookupInProgressIsNotSettled() {

@@ -10,6 +10,7 @@ import TelegramAllLib
 /// (design Decision 5), the response includes:
 ///   - `state`: matching `TDLibClient.AuthState` raw value
 ///   - `next_step`: null when ready/closed, otherwise `{tool, required_args, hint}`
+///     (while TDLib logs out or closes, `auth_status` again; #64)
 ///   - `last_error`: null when no auto-fire failure, otherwise structured payload
 ///   - `connection_state`, `unsynced_seconds`, `sync_stalled`: whether TDLib is
 ///     synced with Telegram (#63). A session Telegram has invalidated stays
@@ -72,7 +73,7 @@ private func keychainLookupPayload(state: TDLibClient.AuthState, miss: KeychainM
     switch state {
     case .waitingForPhoneNumber: return ["credential": "phone", "outcome": miss.rawValue]
     case .waitingForPassword: return ["credential": "password", "outcome": miss.rawValue]
-    case .waitingForParameters, .waitingForCode, .ready, .closed: return nil
+    case .waitingForParameters, .waitingForCode, .ready, .closing, .closed: return nil
     }
 }
 
@@ -108,6 +109,14 @@ private func authStatusNextStep(state: TDLibClient.AuthState, miss: KeychainMiss
             "tool": "auth_run",
             "required_args": ["code"],
             "hint": "Enter the verification code Telegram sent to your registered device.",
+        ]
+    case .closing:
+        // Spec: "every other state" gets an object. Nothing can be sent while
+        // TDLib logs out or closes; it reaches `closed` on its own (#64).
+        return [
+            "tool": "auth_status",
+            "required_args": [String](),
+            "hint": "TDLib is logging out or closing; call auth_status again in a few seconds.",
         ]
     case .waitingForPassword:
         return [
@@ -155,6 +164,8 @@ internal enum AuthRunAction: Equatable, CustomStringConvertible {
     case callSendCode(String)
     case callSendPassword(String)
     case noOpReady
+    /// TDLib is logging out or closing: nothing is sent, the state is reported (#64).
+    case reportClosing
     case errorClosed
     case needsArgs([String])
 
@@ -166,6 +177,7 @@ internal enum AuthRunAction: Equatable, CustomStringConvertible {
         case .callSendCode: return "callSendCode(<redacted>)"
         case .callSendPassword: return "callSendPassword(<redacted>)"
         case .noOpReady: return "noOpReady"
+        case .reportClosing: return "reportClosing"
         case .errorClosed: return "errorClosed"
         case .needsArgs(let args): return "needsArgs(\(args))"
         }
@@ -216,6 +228,9 @@ internal func decideAuthRunAction(
 
     case .ready:
         return .noOpReady
+
+    case .closing:
+        return .reportClosing
 
     case .closed:
         return .errorClosed

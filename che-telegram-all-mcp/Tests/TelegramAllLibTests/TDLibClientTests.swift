@@ -9,14 +9,15 @@ final class TDLibClientTests: XCTestCase {
         let states: [TDLibClient.AuthState] = [
             .waitingForParameters, .waitingForPhoneNumber,
             .waitingForCode, .waitingForPassword,
-            .ready, .closed,
+            .ready, .closing, .closed,
         ]
-        XCTAssertEqual(states.count, 6)
+        XCTAssertEqual(states.count, 7)
         XCTAssertEqual(TDLibClient.AuthState.waitingForParameters.rawValue, "waitingForParameters")
         XCTAssertEqual(TDLibClient.AuthState.waitingForPhoneNumber.rawValue, "waitingForPhoneNumber")
         XCTAssertEqual(TDLibClient.AuthState.waitingForCode.rawValue, "waitingForCode")
         XCTAssertEqual(TDLibClient.AuthState.waitingForPassword.rawValue, "waitingForPassword")
         XCTAssertEqual(TDLibClient.AuthState.ready.rawValue, "ready")
+        XCTAssertEqual(TDLibClient.AuthState.closing.rawValue, "closing")
         XCTAssertEqual(TDLibClient.AuthState.closed.rawValue, "closed")
     }
 

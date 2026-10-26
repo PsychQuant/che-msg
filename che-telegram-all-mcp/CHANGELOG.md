@@ -9,6 +9,7 @@
 - The release build builds and checks both binaries before it signs either, so a bad build of either is never sent to Apple. Besides telegram-all's `--version`, it lists each binary's load commands with `otool` and refuses one that needs, at launch, a library without a system library path (a load other than a weak one, of a path not under `/usr/lib/` or `/System/Library/`, with a `..` component, or of a Swift back-deployment library such as `/usr/lib/swift/libswiftCompatibility*`), naming the library, the load command and the architecture; `@rpath/libswiftCompatibilitySpan.dylib`, which the macOS 13 builds loaded, is one ([#91](https://github.com/PsychQuant/che-msg/issues/91)).
 
 ### Fixed
+- `auth_status` and `auth_run` report `state: "closing"` while TDLib is logging out or closing (`authorizationStateLoggingOut`, `authorizationStateClosing`) ([#64](https://github.com/PsychQuant/che-msg/issues/64)); they reported `ready` until TDLib had closed. `next_step` is `{"tool": "auth_status", "required_args": []}` with a hint to check again in a few seconds; `auth_run` sends nothing in that state, and nothing is sent automatically. `closed` still means TDLib has finished closing, which is what the lock waits for.
 - When TDLib does not close within 30 s, `logout` now says "the directory was not moved and TDLib is still held; try again" instead of "nothing was changed" ([#64](https://github.com/PsychQuant/che-msg/issues/64)). The close request has already gone to TDLib by then, so TDLib can still close later.
 
 ## [0.9.0] - 2026-11-01

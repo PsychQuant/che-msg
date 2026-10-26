@@ -104,6 +104,12 @@ public final class TDLibClient {
         case waitingForCode
         case waitingForPassword
         case ready
+        /// TDLib is logging out or closing (`authorizationStateLoggingOut`,
+        /// `authorizationStateClosing`; #64). Without it `auth_status` kept
+        /// reporting `ready` until TDLib had closed.
+        case closing
+        /// TDLib has finished closing (`authorizationStateClosed`): what
+        /// `close(timeout:)` and the lifecycle wait for before releasing the lock.
         case closed
     }
 
@@ -271,27 +277,43 @@ public final class TDLibClient {
         }
     }
 
-    private func handleAuthStateUpdate(_ state: AuthorizationState) {
+    /// The state this client tracks for TDLib's authorization state; nil for
+    /// the states it has no value for, which leave the current one as it is.
+    /// Logging out and closing are one state, `closing`, so that `closed`
+    /// keeps meaning TDLib has finished closing (#64).
+    static func authState(for state: AuthorizationState) -> AuthState? {
         switch state {
-        case .authorizationStateWaitTdlibParameters:
+        case .authorizationStateWaitTdlibParameters: return .waitingForParameters
+        case .authorizationStateWaitPhoneNumber: return .waitingForPhoneNumber
+        case .authorizationStateWaitCode: return .waitingForCode
+        case .authorizationStateWaitPassword: return .waitingForPassword
+        case .authorizationStateReady: return .ready
+        case .authorizationStateLoggingOut, .authorizationStateClosing: return .closing
+        case .authorizationStateClosed: return .closed
+        default: return nil
+        }
+    }
+
+    private func handleAuthStateUpdate(_ state: AuthorizationState) {
+        guard let tracked = Self.authState(for: state) else { return }
+        switch tracked {
+        case .waitingForParameters:
             enterStateWithoutLookup(.waitingForParameters)
             autoSetParametersIfAvailable()
-        case .authorizationStateWaitPhoneNumber:
+        case .waitingForPhoneNumber:
             enterCredentialState(.waitingForPhoneNumber)
-        case .authorizationStateWaitCode:
+        case .waitingForCode:
             // Spec requirement: SMS verification code is never auto-fired from
             // environment or the Keychain. The code MUST be supplied by an
             // explicit caller invocation (auth_run(code:) or auth_send_code(code:)).
             // DO NOT add an auto-fire or a lookup here.
             enterStateWithoutLookup(.waitingForCode)
-        case .authorizationStateWaitPassword:
+        case .waitingForPassword:
             enterCredentialState(.waitingForPassword)
-        case .authorizationStateReady:
+        case .ready:
             enterStateWithoutLookup(.ready)
-        case .authorizationStateClosed:
-            enterStateWithoutLookup(.closed)
-        default:
-            break
+        case .closing, .closed:
+            enterStateWithoutLookup(tracked)
         }
     }
 

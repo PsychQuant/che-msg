@@ -530,7 +530,7 @@ public final class CheTelegramAllMCPServer {
                     try await tdlib.sendAuthCode(code)
                 case .callSendPassword(let password):
                     try await tdlib.sendPassword(password)
-                case .noOpReady, .needsArgs:
+                case .noOpReady, .reportClosing, .needsArgs:
                     break
                 case .errorClosed:
                     return errorResult("Authentication session is closed. Restart the MCP server to retry.")

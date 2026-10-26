@@ -148,6 +148,20 @@ final class AuthRunHandlerTests: XCTestCase {
         XCTAssertEqual(action, .errorClosed)
     }
 
+    /// While TDLib logs out or closes nothing can be sent (#64): auth_run
+    /// reports the state, whatever the caller or the environment supplies.
+    func testClosing_reportsTheStateWithoutSending() {
+        let action = decideAuthRunAction(
+            state: .closing,
+            phone: "+886912345678", code: "12345", password: "pw",
+            envApiId: 12345, envApiHash: "abcdef",
+            envPhone: "+886900000000", envPassword: "envSecret",
+            keychainPhone: "+886900000001", keychainPassword: "from-keychain"
+        )
+        XCTAssertEqual(action, .reportClosing)
+        XCTAssertEqual("\(action)", "reportClosing")
+    }
+
     // MARK: - Argument precedence (caller arg overrides env var)
 
     func testCallerArgOverridesEnvVarForPhone() {
@@ -244,7 +258,7 @@ final class AuthRunHandlerTests: XCTestCase {
     }
 
     func testKeychainIsNeverReadForTheCodeOrOtherStates() {
-        for state in [TDLibClient.AuthState.waitingForCode, .waitingForParameters, .ready, .closed] {
+        for state in [TDLibClient.AuthState.waitingForCode, .waitingForParameters, .ready, .closing, .closed] {
             XCTAssertNil(authRunKeychainLookup(state: state, phone: nil, password: nil, envPhone: nil, envPassword: nil),
                          "\(state)")
         }
@@ -260,7 +274,7 @@ final class AuthRunHandlerTests: XCTestCase {
     }
 
     func testAKeychainValueIsDroppedWhenTheStateMovedOn() {
-        for stateNow in [TDLibClient.AuthState.ready, .waitingForCode, .waitingForPhoneNumber, .closed] {
+        for stateNow in [TDLibClient.AuthState.ready, .waitingForCode, .waitingForPhoneNumber, .closing, .closed] {
             let values = authRunKeychainValues(lookedUp: .password, value: "from-keychain", stateNow: stateNow,
                                                phone: nil, password: nil, envPhone: nil, envPassword: nil)
             XCTAssertNil(values.password, "\(stateNow)")

@@ -176,6 +176,19 @@ final class AutoFireChainTests: XCTestCase {
         XCTAssertEqual(action, .noOp)
     }
 
+    /// While TDLib logs out or closes nothing can be sent to it (#64).
+    func testClosing_neverFires() {
+        let action = decideAutoFire(
+            state: .closing,
+            envApiId: 12345,
+            envApiHash: "abcdef",
+            envPhone: "+886912345678",
+            envPassword: "envSecret",
+            envAuthCode: "12345"
+        )
+        XCTAssertEqual(action, .noOp)
+    }
+
     // MARK: - credentialPlan: the environment, then the Keychain (PsychQuant/che-msg#49)
 
     func testPlan_phoneFromTheEnvironmentIsSentWithoutALookup() {
@@ -204,8 +217,9 @@ final class AutoFireChainTests: XCTestCase {
     }
 
     func testPlan_otherStatesNeverLookUpTheKeychain() {
-        for state in [TDLibClient.AuthState.waitingForParameters, .ready, .closed] {
+        for state in [TDLibClient.AuthState.waitingForParameters, .ready, .closing, .closed] {
             XCTAssertEqual(credentialPlan(state: state, envPhone: nil, envPassword: nil), .nothing, "\(state)")
+            XCTAssertEqual(credentialPlan(state: state, envPhone: "+886912345678", envPassword: "pw"), .nothing, "\(state)")
         }
     }
 }

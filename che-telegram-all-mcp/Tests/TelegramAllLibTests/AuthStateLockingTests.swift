@@ -26,18 +26,19 @@ final class AuthStateLockingTests: XCTestCase {
             .waitingForCode,
             .waitingForPassword,
             .ready,
+            .closing,
             .closed
         ]
 
         await withTaskGroup(of: Void.self) { group in
-            // 1 writer cycling through all 6 states
+            // 1 writer cycling through all 7 states
             group.addTask {
                 for _ in 0..<500 {
                     for s in allCases { holder.set(s) }
                 }
             }
 
-            // 8 readers verifying every read returns one of the 6 valid cases
+            // 8 readers verifying every read returns one of the 7 valid cases
             for _ in 0..<8 {
                 group.addTask {
                     for _ in 0..<500 {
@@ -51,6 +52,7 @@ final class AuthStateLockingTests: XCTestCase {
                              .waitingForCode,
                              .waitingForPassword,
                              .ready,
+                             .closing,
                              .closed:
                             break
                         }

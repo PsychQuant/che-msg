@@ -76,6 +76,21 @@ final class AuthStatusNextStepTests: XCTestCase {
                       "Closed state has no actionable next step — null")
     }
 
+    /// TDLib logging out or closing (#64) falls under the spec's "every other
+    /// state" rule: an object, here asking to check again shortly.
+    func testClosingState_nextStepChecksAgain() throws {
+        let payload = try parsePayload(authStatusResult(state: .closing, lastError: nil,
+                                                        sync: sync("connectionStateUpdating", 500)))
+
+        XCTAssertEqual(payload["state"] as? String, "closing")
+        XCTAssertEqual(payload["sync_stalled"] as? Bool, false)
+        let nextStep = try XCTUnwrap(payload["next_step"] as? [String: Any])
+        XCTAssertEqual(nextStep["tool"] as? String, "auth_status")
+        XCTAssertEqual(nextStep["required_args"] as? [String], [])
+        XCTAssertEqual(nextStep["hint"] as? String,
+                       "TDLib is logging out or closing; call auth_status again in a few seconds.")
+    }
+
     // MARK: - last_error serialization (Task 1.6 — telegram-auth-error-reporting)
 
     func testFloodWaitErrorSerializedInLastError() throws {
@@ -273,7 +288,7 @@ final class AuthStatusNextStepTests: XCTestCase {
     }
 
     func testAnOutcomeIsNotReportedOutsideTheCredentialStates() throws {
-        for state in [TDLibClient.AuthState.waitingForCode, .waitingForParameters, .ready, .closed] {
+        for state in [TDLibClient.AuthState.waitingForCode, .waitingForParameters, .ready, .closing, .closed] {
             let payload = try parsePayload(authStatusResult(state: state, lastError: nil, keychainMiss: .timedOut))
             XCTAssertTrue(payload["keychain_lookup"] is NSNull, "\(state)")
         }
