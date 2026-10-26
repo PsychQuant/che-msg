@@ -30,6 +30,10 @@
 #      entitlements plist and a bad SPCTL_TIMEOUT_SECONDS are refused before
 #      codesign; signed entitlements that differ, and an spctl "rejected", fail;
 #      the notarization's temp files are removed.
+#  11. Output that a reader stops reading at its first match (an identity
+#      listing written in two parts, 256 KB after the matching line) does not
+#      fail any mode: under pipefail the writer's SIGPIPE used to end the run
+#      with exit 141 and no message.
 #
 # Usage:
 #   bash tests/release/test-release-preflight.sh
@@ -150,6 +154,17 @@ test_case "full mode, spctl does not see a notarized binary"
 D="$SCRATCH/not-notarized"; make_env "$D" not-notarized
 run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile -- "$D/Bin"
 if [ "$RC" -ne 0 ]; then pass "fails (exit $RC)"; else fail "exit 0"; fi
+
+test_case "output read only up to its first match does not fail the run"
+for mode_args in "full" "sign-only" "preflight"; do
+    D="$SCRATCH/split-$mode_args"; make_env "$D" split-output
+    case "$mode_args" in
+        full)      run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile -- "$D/Bin" ;;
+        sign-only) run_sign "$D" "DEVELOPER_ID=$IDENTITY" -- --sign-only "$D/Bin" ;;
+        preflight) run_sign "$D" "DEVELOPER_ID=$IDENTITY" NOTARY_PROFILE=test-profile -- --preflight ;;
+    esac
+    if [ "$RC" -eq 0 ]; then pass "$mode_args: exit 0"; else fail "$mode_args: exit $RC: $(printf '%s\n' "$OUT" | head -3)"; fi
+done
 
 test_case "--preflight"
 D="$SCRATCH/preflight"; make_env "$D"

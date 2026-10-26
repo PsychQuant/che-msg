@@ -32,6 +32,10 @@
 # value left over from one of their releases must not end up in these binaries.
 
 set -euo pipefail
+# Under pipefail a reader that stops early (grep -q, head, awk's exit) makes the
+# writer die of SIGPIPE and the pipeline report 141: set -e then ends the run
+# with no message, and `if !` reads it as "no match". So output is captured
+# first and matched with here-strings, and no reader in a pipe stops early.
 
 SIGN_ONLY=0
 PREFLIGHT=0
@@ -85,9 +89,12 @@ if [[ "$PREFLIGHT" == 0 && ! -f "$BINARY" ]]; then
     exit 1
 fi
 # -b: without it the output starts with the path, which may itself contain "Mach-O".
-if [[ "$PREFLIGHT" == 0 ]] && ! file -b "$BINARY" 2>/dev/null | grep -q "^Mach-O"; then
-    echo "Error: $BINARY is not a Mach-O binary ($(file -b "$BINARY" 2>&1))." >&2
-    exit 1
+if [[ "$PREFLIGHT" == 0 ]]; then
+    FILE_TYPE="$(file -b "$BINARY" 2>&1 || true)"
+    if ! grep -q "^Mach-O" <<<"$FILE_TYPE"; then
+        echo "Error: $BINARY is not a Mach-O binary ($FILE_TYPE)." >&2
+        exit 1
+    fi
 fi
 if [[ ! -f "$ENTITLEMENTS" ]] || ! plutil -lint -s "$ENTITLEMENTS" >/dev/null 2>&1; then
     echo "Error: $ENTITLEMENTS is missing or not a valid plist." >&2
@@ -98,15 +105,16 @@ fi
 # name or a word from the summary line is refused. The identity must be a
 # Developer ID Application one: notarization rejects anything else, and finding
 # out after a build or a signature wastes the run.
-IDENTITY_TYPE=$(security find-identity -p codesigning -v 2>/dev/null | awk -v id="$DEVELOPER_ID" '
+IDENTITIES="$(security find-identity -p codesigning -v 2>/dev/null || true)"
+IDENTITY_TYPE=$(awk -v id="$DEVELOPER_ID" '
     $1 ~ /^[0-9]+\)$/ && length($2) == 40 && $2 ~ /^[0-9A-F]+$/ {
         name = $0; sub(/^[^"]*"/, "", name); sub(/"[^"]*$/, "", name)
         if (toupper(id) == $2 || id == name) {
-            result = (index(name, "Developer ID Application: ") == 1) ? "developer-id" : "other"
-            if (result == "developer-id") { print result; exit }
+            if (index(name, "Developer ID Application: ") == 1) found = "developer-id"
+            else if (found == "") found = "other"
         }
     }
-    END { if (result == "other") print result }')
+    END { if (found != "") print found }' <<<"$IDENTITIES")
 case "$IDENTITY_TYPE" in
     developer-id) ;;
     other)
@@ -115,7 +123,7 @@ case "$IDENTITY_TYPE" in
     *)
         echo "Error: codesigning identity not found in the keychain: $DEVELOPER_ID" >&2
         echo "       Available identities:" >&2
-        security find-identity -p codesigning -v 2>&1 | grep -E '"[^"]*"' | sed 's/^/         /' >&2 || true
+        grep -E '"[^"]*"' <<<"$IDENTITIES" | sed 's/^/         /' >&2 || true
         exit 1 ;;
 esac
 if [[ "$SIGN_ONLY" == 0 ]] && ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
@@ -162,7 +170,7 @@ codesign --force \
 echo ""
 echo "[2/$STEPS] Verifying the signature..."
 VERIFY_OUTPUT="$(codesign --verify --strict --verbose=2 "$BINARY" 2>&1)"
-printf '%s\n' "$VERIFY_OUTPUT" | head -5
+sed -n '1,5p' <<<"$VERIFY_OUTPUT"
 
 # Check the signed result itself, so a wrong signing call fails here and not
 # at Apple: notarization needs hardened runtime and a Developer ID authority,
@@ -170,17 +178,17 @@ printf '%s\n' "$VERIFY_OUTPUT" | head -5
 echo ""
 echo "[3/$STEPS] Checking the signed binary..."
 SIGNATURE="$(codesign -dv --verbose=2 "$BINARY" 2>&1 || true)"
-if ! printf '%s\n' "$SIGNATURE" | grep -qE '^CodeDirectory .*flags=0x[0-9a-f]*\([^)]*runtime'; then
+if ! grep -qE '^CodeDirectory .*flags=0x[0-9a-f]*\([^)]*runtime' <<<"$SIGNATURE"; then
     echo "Error: the signed binary does not have the hardened-runtime flag." >&2
-    printf '%s\n' "$SIGNATURE" | grep -E '^(CodeDirectory|Authority|TeamIdentifier)' | sed 's/^/         /' >&2 || true
+    grep -E '^(CodeDirectory|Authority|TeamIdentifier)' <<<"$SIGNATURE" | sed 's/^/         /' >&2 || true
     exit 1
 fi
-if ! printf '%s\n' "$SIGNATURE" | grep -q '^Authority=Developer ID Application: '; then
+if ! grep -q '^Authority=Developer ID Application: ' <<<"$SIGNATURE"; then
     echo "Error: the signed binary is not signed by a Developer ID Application certificate." >&2
     exit 1
 fi
 # A SHA-1 hash cannot be compared with the authority's name; a name can.
-if ! [[ "$DEVELOPER_ID" =~ ^[0-9A-Fa-f]{40}$ ]] && ! printf '%s\n' "$SIGNATURE" | grep -qxF "Authority=$DEVELOPER_ID"; then
+if ! [[ "$DEVELOPER_ID" =~ ^[0-9A-Fa-f]{40}$ ]] && ! grep -qxF "Authority=$DEVELOPER_ID" <<<"$SIGNATURE"; then
     echo "Error: the signed binary's authority is not $DEVELOPER_ID." >&2
     exit 1
 fi
@@ -193,7 +201,7 @@ sys.exit(0 if got == want else 1)' "$ENTITLEMENTS"; then
     echo "Error: the signed binary's entitlements are not those in $ENTITLEMENTS." >&2
     exit 1
 fi
-printf '%s\n' "$SIGNATURE" | grep -E '^(Authority=Developer ID|TeamIdentifier|CodeDirectory)' | sed 's/^/  /' || true
+grep -E '^(Authority=Developer ID|TeamIdentifier|CodeDirectory)' <<<"$SIGNATURE" | sed 's/^/  /' || true
 echo "  entitlements: as in $(basename "$ENTITLEMENTS")"
 
 if [[ "$SIGN_ONLY" == 1 ]]; then
@@ -244,8 +252,8 @@ if [[ "$SPCTL_EXIT" -eq 142 ]]; then
     echo "       Retry when the network is back, or set SPCTL_TIMEOUT_SECONDS higher." >&2
     exit 1
 fi
-if ! printf '%s\n' "$SPCTL_OUTPUT" | grep -qE ': accepted$' ||
-   ! printf '%s\n' "$SPCTL_OUTPUT" | grep -qx "source=Notarized Developer ID"; then
+if ! grep -qE ': accepted$' <<<"$SPCTL_OUTPUT" ||
+   ! grep -qx "source=Notarized Developer ID" <<<"$SPCTL_OUTPUT"; then
     echo "Error: spctl does not accept $BINARY as notarized (exit $SPCTL_EXIT)." >&2
     printf '%s\n' "$SPCTL_OUTPUT" | sed 's/^/         /' >&2
     echo "       Apple's log: xcrun notarytool log ${SUBMISSION_ID:-<id>} --keychain-profile $NOTARY_PROFILE" >&2

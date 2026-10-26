@@ -12,6 +12,12 @@
 #           not-notarized      spctl does not accept the binary as notarized
 #           rejected-notarized spctl says "rejected" but names a notarized source
 #           notarize-fails-second  the second notarytool submit fails
+#           split-output       security and file write their listing in two
+#                              parts with a pause between them, and codesign
+#                              and spctl add 256 KB after the lines that
+#                              matter, so a reader that stops at its first
+#                              match closes the pipe while the writer is still
+#                              writing (the writer then gets SIGPIPE)
 #
 # "Signing" appends the line FAKE_SIGNED_MARK to the file, so a test can tell a
 # signed file from an unsigned copy of it.
@@ -33,11 +39,13 @@ if [ "$mode" = apple-development ]; then
 else
     echo '  1) $FAKE_IDENTITY_SHA1 "$FAKE_IDENTITY"'
 fi
+[ "$mode" = split-output ] && sleep 0.3
 echo "     1 valid identities found"
 EOF
     cat > "$bin/codesign" <<EOF
 #!/bin/bash
 echo "codesign \$*" >> "$log"
+fake_filler() { yes 'a long listing goes on after the line that matters' | head -n 5000; }
 case " \$* " in
     *" --force "*)
         for last; do :; done
@@ -52,7 +60,10 @@ case " \$* " in
         echo "Authority=$FAKE_IDENTITY" >&2
         echo "TeamIdentifier=TEAMID1234" >&2
         if [ "$mode" = no-runtime ]; then echo "CodeDirectory v=20500 flags=0x0(none)" >&2
-        else echo "CodeDirectory v=20500 flags=0x10000(runtime)" >&2; fi ;;
+        else echo "CodeDirectory v=20500 flags=0x10000(runtime)" >&2; fi
+        [ "$mode" = split-output ] && fake_filler >&2 ;;
+    *" --verify "*)
+        [ "$mode" = split-output ] && fake_filler >&2 ;;
 esac
 exit 0
 EOF
@@ -75,6 +86,8 @@ echo "spctl \$*" >> "$log"
 if [ "$mode" = not-notarized ]; then echo "\$4: rejected"; echo "source=Unnotarized Developer ID"; exit 3; fi
 if [ "$mode" = rejected-notarized ]; then echo "\$4: rejected"; echo "source=Notarized Developer ID"; exit 3; fi
 echo "\$4: accepted"; echo "source=Notarized Developer ID"
+[ "$mode" = split-output ] && yes 'a long listing goes on after the line that matters' | head -n 5000
+exit 0
 EOF
     cat > "$bin/ditto" <<EOF
 #!/bin/bash
@@ -83,4 +96,14 @@ for last; do :; done
 : > "\$last"
 EOF
     chmod +x "$bin/security" "$bin/codesign" "$bin/xcrun" "$bin/spctl" "$bin/ditto"
+    if [ "$mode" = split-output ]; then
+        cat > "$bin/file" <<EOF
+#!/bin/bash
+echo "Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64]"
+sleep 0.3
+echo "(for architecture x86_64):	Mach-O 64-bit executable x86_64"
+echo "(for architecture arm64):	Mach-O 64-bit executable arm64"
+EOF
+        chmod +x "$bin/file"
+    fi
 }
