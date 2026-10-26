@@ -32,11 +32,13 @@
 #   a JSON array (a batch; MCP has none)  -32600 with id null, exit 1
 #   an object whose method is missing,
 #     not a string or empty               REQUEST_ID = its id, or null
-#   anything else: no line within 2 s, an
-#     empty line, not exactly one JSON
-#     value, a value that is neither an
-#     object nor an array, an id of
-#     another type, or jq not on PATH     REQUEST_ID = null
+#   anything else: no complete line
+#     within 2 s (input that ends without
+#     a newline counts as none), an empty
+#     line, not exactly one JSON value, a
+#     value that is neither an object nor
+#     an array, an id of another type, or
+#     jq not on PATH                      REQUEST_ID = null
 #
 # There is no parser without jq: macOS ships /usr/bin/jq, and a hand-written
 # one read nested fields and mangled ids that were not plain integers or

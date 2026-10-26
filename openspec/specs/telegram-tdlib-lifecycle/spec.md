@@ -546,11 +546,14 @@ code:
 ---
 ### Requirement: Wrapper reports why it did not start
 
-The wrapper SHALL exit before starting the server in exactly four cases: the API credentials `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are missing from the Keychain; no server binary it can run is installed and none could be installed before it answers (no release asset found, the download failed, or the download is still running in the background when the first-install wait ends); the binary it would run is older than 0.7.0, judged by the binary's own answer to `--version`, run without Telegram credentials and stopped after 5 seconds (binaries before 0.6.0 give no answer and open TDLib without the server-side lock; 0.6.x binaries send Telegram's log-out from `logout`, which makes TDLib delete its local database); or the plugin's `lib/startup-error.sh` or `lib/download.sh` cannot be read. In all four cases it SHALL exit with status 1 without starting the server, SHALL write the cause to stderr, and SHALL answer the first message it reads on stdin as follows:
+The wrapper SHALL exit before starting the server in exactly four cases: the API credentials `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are missing from the Keychain; no server binary it can run is installed and none could be installed before it answers (no release asset found, the download failed, or the download is still running in the background when the first-install wait ends); the binary it would run is older than 0.7.0, judged by the binary's own answer to `--version`, run without Telegram credentials and stopped after 5 seconds (binaries before 0.6.0 give no answer and open TDLib without the server-side lock; 0.6.x binaries send Telegram's log-out from `logout`, which makes TDLib delete its local database); or the plugin's `lib/startup-error.sh` or `lib/download.sh` cannot be read. In all four cases it SHALL exit with status 1 without starting the server, SHALL write the cause to stderr, and SHALL answer the first line it reads on stdin, waiting at most 2 seconds for it. The line is judged with `jq` as one JSON value, and an object's `id` member counts only when its value is a string, a number or null. The answers, for these kinds of line and no other:
 
-- an `initialize` request, or a first line without a method: one JSON-RPC 2.0 error with the request's `id` (`null` when there is none), `error.code` -32000, an `error.message` naming the cause, and `error.data.docsUrl` pointing at the section "When telegram-all does not start" of the plugin README;
-- a request for any other method, such as `server/discover`: one JSON-RPC 2.0 error with that request's `id` and `error.code` -32601 (method not found), and not the -32000 error;
-- a notification for any other method: no answer.
+- an `initialize` request (an object whose `method` is `initialize` and that has an `id` member): the startup error, one JSON-RPC 2.0 error with that `id`, `error.code` -32000, an `error.message` naming the cause, and `error.data.docsUrl` pointing at the section "When telegram-all does not start" of the plugin README;
+- a request for any other method (an object whose `method` is any other non-empty string and that has an `id` member), such as `server/discover`: one JSON-RPC 2.0 error with that `id`, `null` included, and `error.code` -32601 (method not found), and not the startup error;
+- a notification (an object whose `method` is a non-empty string, `initialize` included, and that has no `id` member): no answer;
+- a JSON array (a batch, which MCP does not allow), empty or not: one JSON-RPC 2.0 error with `id` null and `error.code` -32600 (invalid request);
+- an object whose `method` is missing, not a string, or the empty string: the startup error, with the object's `id` if it has one and `null` otherwise;
+- anything else, namely no complete line within 2 seconds (input that ends without a newline counts as none), an empty line, a line that is not exactly one JSON value, a JSON value that is neither an object nor an array, an object whose `id` is not a string, number or null, or any line while `jq` is not on `PATH`: the startup error with `id` null.
 
 When `lib/startup-error.sh` itself cannot be read, the wrapper has no reader for stdin: it reads nothing and writes the -32000 error with `id` null, whatever the first message is. A client that discards an error whose `id` is null then receives no answer, and the cause is only on stderr.
 
@@ -585,12 +588,33 @@ What the client displays of either answer is outside this requirement.
 
 ##### Example: first messages
 
-| First message on stdin | Answer on stdout |
-| ---------------------- | ---------------- |
+| First line on stdin | Answer on stdout |
+| ------------------- | ---------------- |
 | `initialize` request, id 7 | -32000 error, id 7, with `error.data.docsUrl` |
 | `server/discover` request, id 1 | -32601 error, id 1 |
 | `server/discover` request, id `"probe-1"` | -32601 error, id `"probe-1"` |
+| `server/discover` request, id null | -32601 error, id null |
 | notification `notifications/initialized` | none |
+| notification `initialize` (no `id`) | none |
+| a batch `[{"jsonrpc":"2.0","id":1,"method":"server/discover"}]` | -32600 error, id null |
+| an object `{"id":9,"method":5}` | -32000 error, id 9 |
+| `not json` | -32000 error, id null |
+| nothing within 2 seconds | -32000 error, id null |
+
+#### Scenario: A notification first gets no answer
+
+- **WHEN** the Keychain holds no `TELEGRAM_API_ID` and the first message Claude Code sends is `initialize` without an `id` member
+- **THEN** nothing is written to stdout, the cause is on stderr, the wrapper exits with status 1, and no server process is started
+
+#### Scenario: A batch first
+
+- **WHEN** the Keychain holds no `TELEGRAM_API_ID` and the first line on stdin is a JSON array of requests
+- **THEN** the only line on stdout is a JSON-RPC 2.0 error with `id` null and `error.code` -32600, no -32000 error is written, and the wrapper exits with status 1
+
+#### Scenario: A client that sends nothing
+
+- **WHEN** the Keychain holds no `TELEGRAM_API_ID` and Claude Code keeps stdin open without writing to it
+- **THEN** after the 2-second wait the wrapper writes the -32000 error with `id` null and exits with status 1, without waiting for stdin to close
 
 #### Scenario: The plugin's lib/download.sh cannot be read
 
