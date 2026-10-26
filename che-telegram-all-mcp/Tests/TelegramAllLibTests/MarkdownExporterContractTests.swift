@@ -38,6 +38,121 @@ final class MarkdownExporterContractTests: XCTestCase {
                          "Writable parent directory MUST pass validation")
     }
 
+    // MARK: - (a') Export root (#21)
+
+    /// Unset or empty means no root; any other value is kept as given (not
+    /// trimmed) and judged when a dump runs.
+    func testExportRootParse() {
+        XCTAssertEqual(ExportRoot.environmentVariable, "CHE_TELEGRAM_ALL_EXPORT_ROOT")
+        XCTAssertNil(ExportRoot.parse(nil))
+        XCTAssertNil(ExportRoot.parse(""))
+        XCTAssertEqual(ExportRoot.parse("/Users/me/exports"), "/Users/me/exports")
+        XCTAssertEqual(ExportRoot.parse(" exports "), " exports ")
+        XCTAssertNil(ExportRoot.fromEnvironment([:]))
+        XCTAssertNil(ExportRoot.fromEnvironment(["CHE_TELEGRAM_ALL_EXPORT_ROOT": ""]))
+        XCTAssertEqual(ExportRoot.fromEnvironment(["CHE_TELEGRAM_ALL_EXPORT_ROOT": "/r"]), "/r")
+        XCTAssertNil(ExportRoot.fromEnvironment(["CHE_TELEGRAM_EXPORT_ROOT": "/r"]),
+                     "only the CHE_TELEGRAM_ALL_ name is read")
+    }
+
+    /// Scenarios "Path inside the export root accepted", "Path outside the
+    /// export root refused", "Symbolic link escape refused" and "Unusable
+    /// export root refuses every dump", in a temporary directory:
+    ///
+    ///     <base>/exports/2026/            root and a subdirectory
+    ///     <base>/exports/escape  -> <base>/outside
+    ///     <base>/exports/inner   -> <base>/exports/2026
+    ///     <base>/exports/file-link.md -> <base>/outside/target.md
+    ///     <base>/exports/dangling.md  -> <base>/outside/missing.md
+    ///     <base>/exports/notes.txt     a regular file
+    ///     <base>/exportsx/            a sibling sharing the root's prefix
+    ///     <base>/outside/target.md
+    func testValidateOutputPathRespectsExportRoot() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("export-root-\(UUID().uuidString)")
+        addTeardownBlock { try? fm.removeItem(at: base) }
+        let root = base.appendingPathComponent("exports")
+        let outside = base.appendingPathComponent("outside")
+        for dir in [root.appendingPathComponent("2026"), outside, base.appendingPathComponent("exportsx")] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        let outsideFile = outside.appendingPathComponent("target.md")
+        try "original".write(to: outsideFile, atomically: true, encoding: .utf8)
+        try "notes".write(to: root.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+        try fm.createSymbolicLink(at: root.appendingPathComponent("escape"), withDestinationURL: outside)
+        try fm.createSymbolicLink(at: root.appendingPathComponent("inner"), withDestinationURL: root.appendingPathComponent("2026"))
+        try fm.createSymbolicLink(at: root.appendingPathComponent("file-link.md"), withDestinationURL: outsideFile)
+        try fm.createSymbolicLink(at: root.appendingPathComponent("dangling.md"),
+                                  withDestinationURL: outside.appendingPathComponent("missing.md"))
+        let r = root.path
+
+        // Inside the root, symlinks resolved.
+        for path in ["\(r)/chat.md", "\(r)/2026/chat.md", "\(r)/inner/chat.md", "\(r)/2026/../chat.md", "\(r)/./chat.md"] {
+            XCTAssertNoThrow(try validateOutputPath(path, exportRoot: r), path)
+        }
+        // The temporary directory sits under /var -> /private/var: either spelling resolves the same.
+        if r.hasPrefix("/var/") {
+            XCTAssertNoThrow(try validateOutputPath("/private\(r)/chat.md", exportRoot: r))
+            XCTAssertNoThrow(try validateOutputPath("\(r)/chat.md", exportRoot: "/private\(r)"))
+        }
+
+        // Outside, or not resolvable to check.
+        let refused = [
+            "\(outside.path)/chat.md",                  // plainly outside
+            "\(outside.path)/missing-dir/chat.md",      // outside wins over a missing parent
+            "\(r)/escape/chat.md",                      // directory symlink out of the root
+            "\(r)/file-link.md",                        // file symlink out of the root
+            "\(r)/dangling.md",                         // dangling symlink
+            "\(r)/missing/../../outside/chat.md",       // '..' in components that do not exist
+            "\(r)/2026/../../outside/chat.md",          // '..' in the existing prefix, resolved
+            "\(r)/notes.txt/chat.md",                   // a prefix that is a file (ENOTDIR)
+            "\(base.path)/exportsx/chat.md",            // shares the root's prefix as a string
+            r,                                          // the root itself
+            "\(r)/chat\u{0}.md",                        // NUL: C would see another path
+            "exports/chat.md",                          // relative
+        ]
+        for path in refused {
+            XCTAssertThrowsError(try validateOutputPath(path, exportRoot: r), path) { error in
+                guard case MarkdownExporter.ExportError.outsideExportRoot(let p, let root) = error else {
+                    return XCTFail("\(path): wrong error \(error)")
+                }
+                XCTAssertEqual(p, path)
+                XCTAssertEqual(root, r)
+            }
+        }
+        XCTAssertEqual(try String(contentsOf: outsideFile, encoding: .utf8), "original")
+
+        // Inside the root but the parent is missing: the existing check reports it.
+        XCTAssertThrowsError(try validateOutputPath("\(r)/missing/chat.md", exportRoot: r)) { error in
+            guard case MarkdownExporter.ExportError.outputPathNotWritable(let p) = error else {
+                return XCTFail("wrong error \(error)")
+            }
+            XCTAssertEqual(p, "\(r)/missing/chat.md")
+        }
+
+        // A root that is not an absolute path to an existing directory refuses every path.
+        for badRoot in ["exports", " ", "\(base.path)/nope", "\(r)/notes.txt", "\(r)/dangling.md"] {
+            XCTAssertThrowsError(try validateOutputPath("\(r)/chat.md", exportRoot: badRoot), badRoot) { error in
+                guard case MarkdownExporter.ExportError.exportRootUnusable(let root) = error else {
+                    return XCTFail("\(badRoot): wrong error \(error)")
+                }
+                XCTAssertEqual(root, badRoot)
+            }
+        }
+
+        // No root: only the parent-directory check, as before.
+        XCTAssertNoThrow(try validateOutputPath("\(outside.path)/chat.md", exportRoot: nil))
+    }
+
+    func testExportRootErrorsNameThePathAndTheRoot() {
+        XCTAssertEqual(
+            MarkdownExporter.ExportError.outsideExportRoot(path: "/tmp/chat.md", root: "/Users/me/exports").errorDescription,
+            "Output path is outside CHE_TELEGRAM_ALL_EXPORT_ROOT (/Users/me/exports) or could not be resolved: /tmp/chat.md")
+        XCTAssertEqual(
+            MarkdownExporter.ExportError.exportRootUnusable(root: "exports").errorDescription,
+            "CHE_TELEGRAM_ALL_EXPORT_ROOT is not an absolute path to an existing directory: exports")
+    }
+
     // MARK: - (b) Secret chat warning in summary JSON
 
     func testSummaryContainsSecretChatWarningWhenFlagSet() throws {

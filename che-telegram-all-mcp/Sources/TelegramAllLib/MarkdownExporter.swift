@@ -3,7 +3,8 @@ import Foundation
 /// Orchestrates exporting a Telegram chat's history to a Markdown file.
 ///
 /// Workflow:
-///   1. Validate output_path parent directory exists and is writable.
+///   1. Validate output_path: inside the export root when one is set (#21),
+///      and its parent directory exists and is writable.
 ///   2. Fetch messages via `TDLibClient.getChatHistory` (with pagination + date filter).
 ///   3. Batch-resolve sender user_ids → display names (with fallback).
 ///   4. Render Markdown (day-grouped headings + `HH:mm sender: text` lines).
@@ -14,11 +15,21 @@ public struct MarkdownExporter {
     public enum ExportError: LocalizedError {
         case outputPathNotWritable(path: String)
         case invalidDateFormat(String)
+        /// `path` is not inside `root` (`CHE_TELEGRAM_ALL_EXPORT_ROOT` as
+        /// configured), or could not be resolved to tell (#21).
+        case outsideExportRoot(path: String, root: String)
+        /// `CHE_TELEGRAM_ALL_EXPORT_ROOT` is not an absolute path to an
+        /// existing directory, so no dump is written (#21).
+        case exportRootUnusable(root: String)
 
         public var errorDescription: String? {
             switch self {
             case .outputPathNotWritable(let path):
                 return "Output path is not writable: \(path)"
+            case .outsideExportRoot(let path, let root):
+                return "Output path is outside \(ExportRoot.environmentVariable) (\(root)) or could not be resolved: \(path)"
+            case .exportRootUnusable(let root):
+                return "\(ExportRoot.environmentVariable) is not an absolute path to an existing directory: \(root)"
             case .invalidDateFormat(let value):
                 return "Invalid date format: \(value)"
             }
@@ -26,9 +37,13 @@ public struct MarkdownExporter {
     }
 
     private let client: TDLibClient
+    /// `CHE_TELEGRAM_ALL_EXPORT_ROOT` as the server read it; nil means no
+    /// root (the CLI passes none).
+    private let exportRoot: String?
 
-    public init(client: TDLibClient) {
+    public init(client: TDLibClient, exportRoot: String? = nil) {
         self.client = client
+        self.exportRoot = exportRoot
     }
 
     /// Main entry point. Returns a JSON string with summary metadata.
@@ -40,7 +55,7 @@ public struct MarkdownExporter {
         untilDate: Foundation.Date? = nil,
         selfLabel: String = "我"
     ) async throws -> String {
-        try validateOutputPath(outputPath)
+        try validateOutputPath(outputPath, exportRoot: exportRoot)
 
         // Fetch the chat for title, type (for secret chat warning), and context.
         let chatJSON = try await client.getChat(chatId: chatId)
@@ -109,9 +124,23 @@ public struct MarkdownExporter {
 
 // MARK: - Pure helpers (file-scope `internal` for test access)
 
-/// Check that `outputPath`'s parent directory exists and is writable.
-/// Throws `ExportError.outputPathNotWritable` on failure.
-internal func validateOutputPath(_ path: String) throws {
+/// Check, before anything is fetched, that `path` may be written:
+/// - when `exportRoot` is set (#21), the root resolves to an existing
+///   directory (else `ExportError.exportRootUnusable`) and `path`, symlinks
+///   resolved on its longest existing prefix, lies strictly inside it (else
+///   `ExportError.outsideExportRoot`);
+/// - its parent directory exists and is writable (else
+///   `ExportError.outputPathNotWritable`).
+/// Shared by both dump write paths: `MarkdownExporter` and `LocalTDLibReader`.
+internal func validateOutputPath(_ path: String, exportRoot: String? = nil) throws {
+    if let exportRoot {
+        guard let root = resolvedExportRoot(exportRoot) else {
+            throw MarkdownExporter.ExportError.exportRootUnusable(root: exportRoot)
+        }
+        guard let target = resolvedOnLongestExistingPrefix(path), isStrictlyInside(target, root: root) else {
+            throw MarkdownExporter.ExportError.outsideExportRoot(path: path, root: exportRoot)
+        }
+    }
     let url = URL(fileURLWithPath: path)
     let parent = url.deletingLastPathComponent()
     let fm = FileManager.default

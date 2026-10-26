@@ -58,7 +58,7 @@
 
 ## Implementation Contract
 
-- **行為**：`dump_chat_to_markdown` 在讀任何訊息之前，拒絕不是絕對路徑、含 `..` 元件、或不以 `.md`（不分大小寫）結尾的 `output_path`，回 `isError: true` 的 `Error: output_path must ...; got "<值>"`。server 啟動時 `CHE_TELEGRAM_ALL_EXPORT_ROOT` 有非空值時，兩條寫入路徑都在抓訊息之前，拒絕解析 symlink 後不在根目錄之內的 `output_path`（`Output path is outside CHE_TELEGRAM_ALL_EXPORT_ROOT (<root>): <path>`）；根目錄不是既存目錄的絕對路徑時拒絕每一次 dump（`CHE_TELEGRAM_ALL_EXPORT_ROOT is not an absolute path to an existing directory: <root>`）。沒設或空字串時，只有父目錄存在且可寫的既有檢查。
+- **行為**：`dump_chat_to_markdown` 在讀任何訊息之前，拒絕不是絕對路徑、含 `..` 元件、或不以 `.md`（不分大小寫）結尾的 `output_path`，回 `isError: true` 的 `Error: output_path must ...; got "<值>"`。server 啟動時 `CHE_TELEGRAM_ALL_EXPORT_ROOT` 有非空值時，兩條寫入路徑都在抓訊息之前，拒絕解析 symlink 後不在根目錄之內的 `output_path`（`Output path is outside CHE_TELEGRAM_ALL_EXPORT_ROOT (<root>) or could not be resolved: <path>`，`<root>` 是設定值原樣）；根目錄不是既存目錄的絕對路徑時拒絕每一次 dump（`CHE_TELEGRAM_ALL_EXPORT_ROOT is not an absolute path to an existing directory: <root>`）。沒設或空字串時，只有父目錄存在且可寫的既有檢查。
 - **介面**：
   - `parseDumpChatToMarkdownArgs(_:timeZone:)` 簽名不變，多三條 `HandlerArgError`：`output_path must be an absolute path; got "<p>"`、`output_path must not contain '..' components; got "<p>"`、`output_path must end in .md; got "<p>"`。
   - `TelegramAllLib`：`public enum ExportRoot { static let environmentVariable = "CHE_TELEGRAM_ALL_EXPORT_ROOT"; static func parse(_ value: String?) -> String?; static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> String? }`，nil 或空字串回 nil，其他值原樣回傳。
