@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - README: a Requirements section: macOS 26 or later ([#91](https://github.com/PsychQuant/che-msg/issues/91)). The binaries after v0.8.0 are built for macOS 26; the v0.8.0 binaries most likely do not start on macOS 13–15 either unless Xcode 26 or later is installed.
 
+### Fixed
+- The SessionStart hook no longer announces an older release as an upgrade ([#89](https://github.com/PsychQuant/che-msg/issues/89)). It compared the installed version record with the latest release using `!=` after removing every whitespace character, so a binary newer than the latest release (kept by the wrappers since #83) got `⬆️ … v0.9.0 → v0.8.0 available`, and so did `0.8.0-beta` and `0. 9.0`. It now compares like the wrappers: the record trimmed of surrounding whitespace, both versions plain `x.y.z`, ordered with `sort -V`. An older record gets the arrow; a newer one gets one line saying it is newer than the latest release; a record that is not `x.y.z` is reported as such; an odd release tag keeps the hook quiet. New test `tests/che-telegram-mcp/test-hook-version-notice.sh`.
+
 ## [1.8.0] - 2026-11-01
 
 Pins binaries v0.9.0 (`DESIRED_VERSION`); the telegram-all minimum stays 0.7.0.

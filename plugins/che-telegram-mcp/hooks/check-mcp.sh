@@ -52,15 +52,27 @@ fetch_latest_tag() {
         | grep '"tag_name"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/'
 }
 
+# Compares like the wrappers (PsychQuant/che-msg#83, #89): the record trimmed of
+# surrounding whitespace only, both sides plain x.y.z, ordered with sort -V. Since
+# #83 a binary newer than the latest release is kept, so "different" is not "older".
 notify_if_outdated() {
     local name="$1" label="$2" latest="$3"
-    [[ -z "$latest" ]] && return  # API failed / offline / rate-limited; stay quiet
+    local plain='^[0-9]+\.[0-9]+\.[0-9]+$'
+    [[ "$latest" =~ $plain ]] || return  # API failed / offline / rate-limited / odd tag; stay quiet
     local version_file="$HOME/bin/.${name}.version"
     local installed=""
-    [[ -f "$version_file" ]] && installed=$(tr -d '[:space:]' < "$version_file" 2>/dev/null || true)
+    [[ -f "$version_file" ]] && installed=$(cat "$version_file" 2>/dev/null || true)
+    installed="${installed#"${installed%%[![:space:]]*}"}"
+    installed="${installed%"${installed##*[![:space:]]}"}"
     [[ -z "$installed" ]] && return  # not a managed install (source build / manual)
-    if [[ "$installed" != "$latest" ]]; then
+    if [[ ! "$installed" =~ $plain ]]; then
+        echo "⚠️  $label: version record ~/bin/.${name}.version is not a plain x.y.z version"
+    elif [[ "$installed" == "$latest" ]]; then
+        return
+    elif [[ "$(printf '%s\n%s\n' "$installed" "$latest" | sort -V | head -1)" == "$installed" ]]; then
         echo "⬆️  $label v$installed → v$latest available (wrapper auto-upgrades on next plugin update)"
+    else
+        echo "ℹ  $label v$installed is installed, newer than the latest release v$latest"
     fi
 }
 
