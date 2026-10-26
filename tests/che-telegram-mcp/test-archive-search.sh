@@ -416,13 +416,14 @@ def racing_guard(*args, **kwargs):
 sa.guard = racing_guard
 sys.exit(sa.main(["--archive", sys.argv[2], "--text", "secret"]))
 """
-    p = subprocess.run([PY, "-I", "-c", snippet, SEARCH, A, outside], capture_output=True, timeout=20, cwd=SCRATCH, env=env())
+    p = subprocess.run([PY, "-I", "-B", "-c", snippet, SEARCH, A, outside], capture_output=True, timeout=20, cwd=SCRATCH, env=env())
     try:
         d = json.loads(p.stdout.decode("utf-8"))
     except ValueError:
         d = None
     check(p.returncode == 0 and d is not None, f"search ran: rc={p.returncode} {p.stderr[-300:]!r}")
     check(b"outside" not in p.stdout and b"Mallory" not in p.stdout, f"the symlink target was not read: {p.stdout[:300]!r}")
+    check(not os.path.exists(os.path.join(os.path.dirname(SEARCH), "__pycache__")), "importing the script left no __pycache__ beside it")
     if d:
         check(cites(d) == [] and {"file": "777", "reason": "changed-during-search"} in d.get("skipped", []),
               f"the swapped chat is skipped: {d}")
