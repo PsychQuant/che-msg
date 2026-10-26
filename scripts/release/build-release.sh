@@ -81,13 +81,20 @@ echo "[2/4] Checking the commit and the signing setup..."
 COMMIT=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null) || { echo "Error: $ROOT has no commit to build from." >&2; exit 1; }
 SOURCE_PATHS=()
 for entry in "${PACKAGES[@]}"; do SOURCE_PATHS+=("${entry%%:*}/Sources" "${entry%%:*}/Package.swift"); done
-CHANGES=$(git -C "$ROOT" status --porcelain --untracked-files=no)
-UNTRACKED_SOURCES=$(git -C "$ROOT" ls-files --others --exclude-standard -- "${SOURCE_PATHS[@]}")
-if [[ -n "$CHANGES" || -n "$UNTRACKED_SOURCES" ]]; then
+# uncommitted_changes: one line per change to a tracked file, then per
+# untracked file in a package's Sources or Package.swift; nothing when the
+# tree is what the commit holds. The full mode checks this at the start and
+# again before the release files appear.
+uncommitted_changes() {
+    git -C "$ROOT" status --porcelain --untracked-files=no || return
+    git -C "$ROOT" ls-files --others --exclude-standard -- "${SOURCE_PATHS[@]}"
+}
+CHANGES=$(uncommitted_changes)
+if [[ -n "$CHANGES" ]]; then
     if [[ "$MODE" == full ]]; then
         echo "Error: the working tree has uncommitted changes. A release is built from commit ${COMMIT:0:12}," >&2
         echo "       and its tag will point at that commit, so commit or stash these first:" >&2
-        printf '%s\n%s\n' "$CHANGES" "$UNTRACKED_SOURCES" | sed '/^$/d; s/^/         /' >&2
+        sed 's/^/         /' <<<"$CHANGES" >&2
         exit 1
     fi
     echo "  ⚠ uncommitted changes: this build is not what commit ${COMMIT:0:12} would produce."
@@ -227,6 +234,23 @@ for entry in "${PACKAGES[@]}"; do
     write_sha256 "$OUT/$bin"
     write_sha256 "$OUT/$pkg.mcpb"
 done
+
+# The checkout stays open through the notarization waits: a commit, a branch
+# switch or an edit there reaches the second package's build while the output
+# still names commit $COMMIT. So before anything appears in .build/dist/vX,
+# the full mode checks again that HEAD is that commit and the tree clean.
+if [[ "$MODE" == full ]]; then
+    HEAD_NOW=$(git -C "$ROOT" rev-parse HEAD)
+    CHANGES=$(uncommitted_changes)
+    if [[ "$HEAD_NOW" != "$COMMIT" || -n "$CHANGES" ]]; then
+        echo "Error: the checkout changed while the release was being built from commit ${COMMIT:0:12}:" >&2
+        [[ "$HEAD_NOW" == "$COMMIT" ]] || echo "         HEAD is now ${HEAD_NOW:0:12}" >&2
+        [[ -z "$CHANGES" ]] || sed 's/^/         /' <<<"$CHANGES" >&2
+        echo "       The files may not be what that commit produces, so nothing was written to ${DIST#"$ROOT/"}." >&2
+        echo "       Put the checkout back on that commit with a clean tree, and run the build again." >&2
+        exit 1
+    fi
+fi
 
 mkdir -p "$(dirname "$DIST")"
 mv "$OUT" "$DIST"

@@ -391,6 +391,28 @@ build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only
 if [ "$RC" -eq 0 ] && [ "$(git -C "$R" rev-parse HEAD)" != "$START" ]; then pass "built while HEAD moved (exit 0)"; else fail "exit $RC, or HEAD did not move: $(printf '%s' "$OUT" | tail -3)"; fi
 if [ "$(unzip -p "$R/.build/dist/v$X-sign-only/che-telegram-bot-mcp.mcpb" PRIVACY.md 2>/dev/null)" = "$committed" ]; then pass "the bundle holds the PRIVACY.md of the commit it printed"; else fail "the bundle holds the later commit's PRIVACY.md"; fi
 
+test_case "the checkout changes while a full build runs (#94)"
+for change in commit edit untracked; do
+    R=$(make_repo "moved-full-$change")
+    mkdir -p "$R/.build/dist/v$X"; echo old > "$R/.build/dist/v$X/old-asset"
+    case "$change" in
+        commit)    during_build "$R" "echo 'a later line' >> '$R/che-telegram-bot-mcp/mcpb/PRIVACY.md' && git -C '$R' -c user.name=t -c user.email=t@example.invalid commit -qam later"
+                   want="HEAD is now" ;;
+        edit)      during_build "$R" "echo 'local edit' >> '$R/plugins/che-telegram-mcp/README.md'"
+                   want="plugins/che-telegram-mcp/README.md" ;;
+        untracked) during_build "$R" "echo '// local' > '$R/che-telegram-bot-mcp/Sources/Extra.swift'"
+                   want="che-telegram-bot-mcp/Sources/Extra.swift" ;;
+    esac
+    build "$R" "${SIGN_ENV[@]}" --
+    if [ "$RC" -ne 0 ]; then pass "$change: refused (exit $RC)"; else fail "$change: exit 0"; fi
+    # Both packages were notarized, so the refusal is the check at the end.
+    n=$(calls "$R" "xcrun notarytool submit" | wc -l | tr -d ' ')
+    if [ "$n" -eq 2 ]; then pass "$change: refused after both notarizations"; else fail "$change: $n notarization submissions: $(printf '%s' "$OUT" | tail -3)"; fi
+    if printf '%s' "$OUT" | grep -q 'changed while' && printf '%s' "$OUT" | grep -qF "$want"; then pass "$change: says what changed ($want)"; else fail "$change: no message: $(printf '%s' "$OUT" | tail -4)"; fi
+    if [ -e "$R/.build/dist/v$X" ]; then fail "$change: left .build/dist/v$X: $(ls "$R/.build/dist/v$X" | tr '\n' ' ')"; else pass "$change: no .build/dist/v$X"; fi
+    if ! ls -d "$R"/.build/release-stage* >/dev/null 2>&1; then pass "$change: staging directory removed"; else fail "$change: staging left"; fi
+done
+
 # ----------------------------------------------------------- dist handling
 test_case "the second notarization fails"
 R=$(FAKE_MODE=notarize-fails-second make_repo second-fails)
