@@ -74,7 +74,7 @@ python3 -I '${CLAUDE_SKILL_DIR}/scripts/search_archive.py' --archive='<OUTPUT_AB
 - `annotations` 裡有以 `provisional` 開頭的項目時，在那一行註明「本機快取寫入，寄件人名稱與說明文字可能缺漏」。`annotations_truncated` 是 true 時，註記被截短或省略了（最多 5 個、每個 48 字元）。
 - `truncated` 是 true：寫出共 `matched` 則、顯示了最新的 `shown` 則，建議加上日期範圍、聊天或更多字詞縮小範圍。
 - `matched` 是 0：寫出搜尋了幾個日檔（`searched_files`）與用的條件。
-- `skipped` 不是空的：列出檔名與原因（`not-regular-file`：symlink、FIFO 或目錄；`carriage-return`：被別的編輯器存成 CRLF；`not-utf8`；`too-large`：超過 32 MiB；`bad-frontmatter`、`chat-id-mismatch`、`date-mismatch`：frontmatter 讀不到或不屬於這個位置；`symlinked-chat-directory`；`changed-during-search`：搜尋途中這個聊天目錄被換掉（例如換成 symlink），沒有讀；`unreadable`）。這些檔案沒有被搜尋。
+- `skipped` 不是空的：列出檔名與原因（`not-regular-file`：symlink、FIFO 或目錄；`carriage-return`：被別的編輯器存成 CRLF；`not-utf8`；`too-large`：超過 32 MiB；`bad-frontmatter`、`chat-id-mismatch`、`date-mismatch`：frontmatter 讀不到或不屬於這個位置；`symlinked-chat-directory`；`not-a-directory`：`--chat` 指名的 id 在歸檔裡是一般檔案；`changed-during-search`：搜尋途中這個聊天目錄被換掉（例如換成 symlink），沒有讀；`unreadable`）。這些檔案沒有被搜尋。
 - `missing_chats` 不是空的：這些 `chat_id` 在歸檔裡沒有目錄（還沒歸檔，或 id 寫錯）。
 
 錯誤（`error.type`）：
