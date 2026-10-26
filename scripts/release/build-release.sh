@@ -102,14 +102,16 @@ for entry in "${PACKAGES[@]}"; do
     pkg=${entry%%:*}
     if ! git -C "$ROOT" ls-files --error-unmatch -- "$pkg/Package.resolved" >/dev/null 2>&1; then
         problem="is not tracked"
+        remedy="if it holds the versions you mean to release, commit it (git add $pkg/Package.resolved);"
     elif [ ! -f "$ROOT/$pkg/Package.resolved" ]; then
         problem="is missing from the working tree"
+        remedy="restore the committed copy (git checkout -- $pkg/Package.resolved);"
     else
         continue
     fi
-    echo "Error: $pkg/Package.resolved $problem. The release builds only the dependency versions it records." >&2
-    echo "       Restore it from the last release (git checkout <tag> -- $pkg/Package.resolved); to update the" >&2
-    echo "       dependencies on purpose, run swift package update in $pkg, run its tests, and commit the file." >&2
+    echo "Error: $pkg/Package.resolved $problem. The release builds only the dependency versions it records:" >&2
+    echo "       $remedy to update the dependencies on purpose," >&2
+    echo "       run swift package update in $pkg, run its tests, and commit the file." >&2
     exit 1
 done
 # The bundles are packed from HEAD's files; a symlink there would pull in
