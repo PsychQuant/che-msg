@@ -16,7 +16,8 @@
 #        the files the wrappers source (download.sh, #56; startup-error.sh,
 #        #67); hooks/ only
 #        check-mcp.sh and hooks.json, whose only hook is the SessionStart
-#        command; skills/ exactly the six skills, each with only SKILL.md (a new
+#        command; skills/ exactly the six skills, each with only SKILL.md, and
+#        archive-telegram-search's scripts/ only search_archive.py (#80; a new
 #        skill must be added here and to (h) on purpose). plugin.json and the
 #        repository marketplace entry carry metadata keys only (no hooks,
 #        skills, mcpServers, …); the entry is the only one for this plugin and
@@ -195,6 +196,10 @@ expected = {
 }
 for name in SKILLS:
     expected[f"skills/{name}"] = ["SKILL.md"]
+# #80's search script, ahead of its SKILL.md
+expected["skills"] = sorted(SKILLS + ["archive-telegram-search"])
+expected["skills/archive-telegram-search"] = ["scripts"]
+expected["skills/archive-telegram-search/scripts"] = ["search_archive.py"]
 for rel, want in expected.items():
     got = listing(os.path.join(root, rel))
     if got != want:
