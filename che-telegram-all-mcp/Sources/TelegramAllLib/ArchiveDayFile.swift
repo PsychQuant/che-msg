@@ -221,7 +221,8 @@ public enum ArchiveDayFile {
 
     /// Writes the day file for `day` under `directory` (created when missing), merging with
     /// the file already there, by writing a temporary file in the same directory and renaming
-    /// it over the original. Leaves an existing file untouched when nothing is added.
+    /// it over the original. Leaves an existing file untouched when nothing is added, and refuses
+    /// one that is not a regular file or contains a carriage return.
     /// Returns the ids of the messages added.
     @discardableResult
     public static func write(directory: URL, chatId: Int64, day: String, utcOffset: String,
@@ -233,6 +234,10 @@ public enum ArchiveDayFile {
         // lock only keeps other archives out), and a dangling link must not read as "no file".
         let existing = try readDayFile(file, day: day).map { data -> String in
             guard let text = String(data: data, encoding: .utf8) else { throw WriteError.unreadableOffset(day: day) }
+            // The parser splits lines on LF, and "\r\n" is one Character: a CRLF body would yield no
+            // anchors and every message would be added again. Checked by scalar, for the touched
+            // day only, so the check before reading stays a 512-byte read per file (#76).
+            if text.unicodeScalars.contains("\r") { throw WriteError.carriageReturn(day: day) }
             return text
         }
         if let existing { try checkOffset(recordedIn: existing, day: day, utcOffset: utcOffset) }

@@ -5,8 +5,8 @@
 
 ## 2. 含 carriage return 的日檔（#76 item 2）
 
-- [ ] 2.1 先寫失敗的測試（Scenario: Carriage return below the frontmatter）：LF frontmatter、內文有 CRLF 的日檔，以及內文有單獨 CR 的日檔，`write` 回 `carriageReturn` 且檔案位元組不變；`ChatArchiver` 遇到這種日檔時呼叫失敗、沒有任何訊息寫兩次；含 CR 的訊息內文與寄件人經 `render` 後不含 `\r`。驗證：`swift test --filter ArchiveDayFileTests` 與 `--filter ChatArchiverTests` 先失敗（`render` 那一項本來就通過，作為不會誤拒工具自己輸出的保證）[after: 1.2]
-- [ ] 2.2 依設計「含 CR 的日檔在合併時拒絕」在 `write` 讀到舊檔後以 `unicodeScalars` 檢查 `\r`，新增 `WriteError.carriageReturn`；三種日檔錯誤的文字都含 `cannot be merged into safely`。驗證：2.1 的測試通過，錯誤文字的測試確認三種都含那一句 [after: 2.1]
+- [x] 2.1 先寫失敗的測試（Scenario: Carriage return below the frontmatter）：LF frontmatter、內文有 CRLF 的日檔，以及內文有單獨 CR 的日檔，`write` 回 `carriageReturn` 且檔案位元組不變；`ChatArchiver` 遇到這種日檔時呼叫失敗、沒有任何訊息寫兩次；含 CR 的訊息內文與寄件人經 `render` 後不含 `\r`。驗證：`swift test --filter ArchiveDayFileTests` 與 `--filter ChatArchiverTests` 先失敗（`render` 那一項本來就通過，作為不會誤拒工具自己輸出的保證）[after: 1.2]
+- [x] 2.2 依設計「含 CR 的日檔在合併時拒絕」在 `write` 讀到舊檔後以 `unicodeScalars` 檢查 `\r`，新增 `WriteError.carriageReturn`；三種日檔錯誤的文字都含 `cannot be merged into safely`。驗證：2.1 的測試通過，錯誤文字的測試確認三種都含那一句 [after: 2.1]
 
 ## 3. 媒體檔名（#76 item 5）
 

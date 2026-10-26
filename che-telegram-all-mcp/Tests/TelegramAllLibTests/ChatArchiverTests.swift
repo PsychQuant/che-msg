@@ -455,4 +455,27 @@ final class ChatArchiverTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), outside.path)
         XCTAssertEqual(try Data(contentsOf: outside), before)
     }
+
+    /// A day file with a CRLF body is refused when the call reaches it: nothing is added to it twice,
+    /// and the day written before it in the same call is kept.
+    func testDayFileWithACRLFBodyIsRefusedWithoutDuplicates() async throws {
+        let dir = try outputDir()
+        let chatDir = dir.appendingPathComponent("777")
+        try FileManager.default.createDirectory(at: chatDir, withIntermediateDirectories: true)
+        let file = chatDir.appendingPathComponent("2026-10-10.md")
+        let crlf = "---\nchat_id: 777\ndate: 2026-10-10\nutc_offset: \"+08:00\"\n---\n\n"
+            + "<!-- msg:10 -->\r\n**22:00 User 1001**：\r\nm10\r\n\r\n"
+        try Data(crlf.utf8).write(to: file)
+        let before = try Data(contentsOf: file)
+        // Newest first, one message per page: 40 (2026-10-11) is written before 10 (2026-10-10) is reached.
+        let source = FakeSource([Self.msg(40, 3), Self.msg(10, -600)])
+        do {
+            _ = try await archiver(source, pageSize: 1).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+            XCTFail("expected the day file with a carriage return to be refused")
+        } catch let error as ArchiveDayFile.WriteError {
+            XCTAssertEqual(error, .carriageReturn(day: "2026-10-10"))
+        }
+        XCTAssertEqual(try Data(contentsOf: file), before)
+        XCTAssertEqual(try ids(in: dir, "777/2026-10-11.md"), [40])
+    }
 }

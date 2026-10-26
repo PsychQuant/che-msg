@@ -381,4 +381,44 @@ final class ArchiveDayFileTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path), "the link's target is not created")
         XCTAssertEqual(fileType(dir.appendingPathComponent("2026-10-12.md")), S_IFDIR)
     }
+
+    // MARK: - Carriage returns (#76)
+
+    // Scenario "Carriage return below the frontmatter": "\r\n" is one Character, so the merge would
+    // find no anchor in a CRLF body and add every message again.
+    func testDayFileWithACarriageReturnIsRefusedAtTheMerge() throws {
+        let bodies = ["<!-- msg:5 -->\r\n**09:00 Alex**：\r\na\r\n\r\n",     // CRLF below LF frontmatter
+                      "<!-- msg:5 -->\n**09:00 Alex**：\na\rb\n\n"]           // a lone CR
+        for body in bodies {
+            let dir = try scratchDir()
+            let file = dir.appendingPathComponent("2026-10-11.md")
+            try Data((validHead + body).utf8).write(to: file)
+            let before = try Data(contentsOf: file)
+            XCTAssertNoThrow(try ArchiveDayFile.checkOffsets(directory: dir, utcOffset: "+08:00"),
+                             "the check before reading looks at the frontmatter only")
+            let m = ArchiveMessage(id: 11, date: utc(2026, 10, 11, 2, 0), sender: "Alex", body: "b")
+            XCTAssertThrowsError(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                          messages: [m])) { error in
+                XCTAssertEqual(error as? ArchiveDayFile.WriteError, .carriageReturn(day: "2026-10-11"))
+            }
+            XCTAssertEqual(try Data(contentsOf: file), before)
+        }
+    }
+
+    /// The refusal cannot hit a file the tool wrote: its output never contains a carriage return.
+    func testRenderedDayFilesHaveNoCarriageReturn() {
+        let m = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "A\r\nB\rC", body: "x\r\ny\rz\r")
+        let out = ArchiveDayFile.render(chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
+        XCTAssertFalse(out.unicodeScalars.contains("\r"), out)
+    }
+
+    /// Every day-file refusal carries the phrase the archive-telegram skill matches on.
+    func testDayFileRefusalsShareOnePhrase() {
+        let errors: [ArchiveDayFile.WriteError] = [.unreadableOffset(day: "2026-10-11"), .notRegularFile(day: "2026-10-11"),
+                                                   .carriageReturn(day: "2026-10-11")]
+        for error in errors {
+            XCTAssertTrue(error.localizedDescription.contains("cannot be merged into safely"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("2026-10-11.md"), error.localizedDescription)
+        }
+    }
 }
