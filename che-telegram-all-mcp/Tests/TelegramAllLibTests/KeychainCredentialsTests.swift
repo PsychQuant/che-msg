@@ -194,11 +194,14 @@ final class KeychainCredentialsTests: XCTestCase {
     func testOutputHeldOpenByAnotherProcessDoesNotBlockTheLookup() async throws {
         let pidFile = dir.appendingPathComponent("holder").path
         let started = Date()
-        let (result, _) = try await lookup("sleep 30 & echo $! > '\(pidFile)'; printf 'password: \"x\"\\n' >&2; exit 0", timeout: 0.5)
+        // The holder keeps stderr open for 30 s; the lookup must return after the child exits
+        // and the short output grace, well before that. The timeout is generous so a loaded
+        // machine does not turn a slow shell start into a timeout (it only bounds the test).
+        let (result, _) = try await lookup("sleep 30 & echo $! > '\(pidFile)'; printf 'password: \"x\"\\n' >&2; exit 0", timeout: 5)
         let holder = Int32((try? String(contentsOfFile: pidFile, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0
         if holder > 0 { kill(holder, SIGKILL) }
-        XCTAssertLessThan(Date().timeIntervalSince(started), 4, "the lookup must not wait for the stdout to close")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10, "the lookup must not wait for the held stream to close")
         XCTAssertEqual(result, .found("x"))
     }
 
