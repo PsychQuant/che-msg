@@ -132,6 +132,13 @@ final class TelegramE2ETests: XCTestCase {
         XCTAssertNotNil(contacts)
     }
 
+    /// #34: `limit` reaches the fan-out (the unit tests cover boundedContactIds
+    /// itself, not its call site in getContacts).
+    func testGetContactsHonoursLimit() async throws {
+        let contacts = try parseJSONArray(try await client.getContacts(limit: 1))
+        XCTAssertLessThanOrEqual(contacts.count, 1)
+    }
+
     // MARK: - Read: search_chats
 
     func testSearchChats() async throws {
