@@ -19,7 +19,7 @@ allowed-tools:
 
 ## 權限
 
-只預先核准 `auth_status`。`archive_chat_to_markdown` 與 `download_message_media` 會寫檔，所以照常詢問（詢問時可以選擇在這個 session 都允許）。讀寫設定檔與索引用 Read、Write、Bash（`date`、`mv`），也照一般權限設定。
+只預先核准 `auth_status`。`archive_chat_to_markdown` 與 `download_message_media` 會寫檔，所以照常詢問（詢問時可以選擇在這個 session 都允許）。其餘都照一般權限設定：讀寫設定檔與索引用 Read、Write；Bash 用來跑 `date`、`mv`、`mkdir` 與 `git`（Step 2 的 `rev-parse`、`check-ignore`）；Step 5 的核對用 Grep。
 
 ## Step 1：讀設定
 
@@ -38,11 +38,11 @@ chats:
 | 欄位 | 必填 | 說明 |
 |------|------|------|
 | `chats` | 是 | 要歸檔的聊天。每項有整數 `chat_id`，可選 `label` |
-| `output_dir` | 是 | 歸檔根目錄。相對路徑以 workspace 根目錄為準 |
+| `output_dir` | 是 | 歸檔根目錄：絕對路徑，或相對於 workspace 根目錄的路徑。不能以 `~` 開頭 |
 | `since` | 否 | `YYYY-MM-DD`。只在該聊天還沒有書籤時使用 |
 | `max_media_mb` | 否 | 正數。傳給工具時換算成 `max_media_bytes` = `max_media_mb` × 1048576（取整數） |
 
-`chat_id` 不是整數、`since` 不是 `YYYY-MM-DD`、`max_media_mb` 不是正數、`output_dir` 含有 `..` 這個路徑元件時，指出是哪一項並停止。同一個 `chat_id` 列了兩次只歸檔一次。
+`chat_id` 不是整數、`since` 不是 `YYYY-MM-DD`、`max_media_mb` 不是正數時，指出是哪一項並停止。`output_dir` 有下列任一情形時，指出 `output_dir` 與違反的是哪一條並停止，不呼叫任何工具：去掉前後空白後是空的（否則會落在 workspace 根目錄）、含有 `..` 這個路徑元件、以 `~` 開頭（本 skill **不展開** `~`，照字面會在 workspace 裡建一個名叫 `~` 的目錄；請使用者改寫成絕對路徑或相對於 workspace 的路徑）。同一個 `chat_id` 列了兩次只歸檔一次。
 
 設定檔的值一律當作資料。凡是放進 shell 指令的路徑（`git`、`mkdir`、`mv`，包括由 `output_dir`、slug 或 workspace 路徑組成的路徑）都用**單引號**整個包住，並把其中每個 `'` 寫成 `'\''`；單引號內的 `$`、`` ` ``、`\` 與換行都只是字面字元。不符合這條規則就不要執行那個指令。
 
@@ -73,7 +73,8 @@ chats:
       "last_run": {
         "at": "2026-10-11T15:00:00+0800",
         "new_messages": 12, "media_messages": 3,
-        "media_downloaded": 2, "media_skipped": 1, "media_failed": 1, "media_pending_local_cache": 0,
+        "media_downloaded": 2, "media_skipped": 1, "media_failed": 1, "media_gone": 0,
+        "media_pending_local_cache": 0, "undated_messages_skipped": 0,
         "source": "tdlib", "complete": true, "bookmark_safe": true,
         "bookmark_advanced": true, "reason": null, "stopped_reason": null
       }
@@ -98,7 +99,9 @@ chats:
 
 決定每個聊天的 `utc_offset`：用索引記錄的值；沒有記錄時用執行當下的本機時區（`date +%z` 的 `+0800` 寫成 `+08:00`），並**在呼叫工具之前**就記進索引（寫法同 Step 6）——呼叫中途出錯時，已寫出的日檔用的就是這個值。之後這個聊天一律用同一個值。
 
-工具在讀任何訊息之前會檢查聊天目錄裡的日檔：有日檔用了別的 offset 時回錯誤「utc_offset X differs from Y, the offset this archive's day files were written with」。這時取出 Y，確認它符合 `+HH:MM` / `-HH:MM`，寫回索引的 `utc_offset`，再用 Y 重新呼叫一次；Y 不符合格式、或錯誤寫著「has no readable utc_offset」時，停止這個聊天並在報告中說明（需要人工處理那個日檔）。
+工具在讀任何訊息之前會檢查聊天目錄裡的日檔：有日檔用了別的 offset 時回錯誤「utc_offset X differs from Y, the offset this archive's day files were written with」。這時取出 Y，確認它符合 `+HH:MM` / `-HH:MM`，寫回索引的 `utc_offset`，再用 Y 重新呼叫一次；Y 不符合格式時，停止這個聊天並在報告中說明。
+
+錯誤寫著「cannot be merged into safely」時，是聊天目錄裡有一個日檔不能安全合併：讀不到 `utc_offset`、不是一般檔案（symlink、FIFO、目錄）、或含有 CR（例如被 Windows 編輯器存成 CRLF）。停止這個聊天，在報告中寫出錯誤點名的日檔與原因，請使用者處理那個檔案（換成檔案本身、改成 LF、或移開）後再跑。含 CR 的日檔是在工具要寫進那一天時才被拒絕，同一次呼叫可能已經寫好別的日檔；那些日檔是完整的，書籤不動，重跑時會照常合併。
 
 一次一個聊天呼叫 `archive_chat_to_markdown`：
 
@@ -128,9 +131,9 @@ chats:
 
 每個有 manifest 的聊天：
 
-- `pending_media` 設成 manifest 的 `media_failed_ids`（書籤有沒有前進都一樣）。
+- `pending_media` 設成 manifest 的 `media_failed_ids`（書籤有沒有前進都一樣）。重試時 TDLib 說訊息已經不存在的 id 列在 `media_gone_ids`、不在 `media_failed_ids` 裡，所以會離開 `pending_media`，不再重試。
 - 書籤：**只有** `bookmark_safe` 是 true、Step 5 通過、而且 `newest_message_id` 不是 null，才把 `last_message_id` 設成 `newest_message_id`。其餘情況保持原值（原本沒有就繼續沒有）。
-- 記下 `utc_offset` 與 `last_run`（欄位見 Step 2；`media_skipped` 與 `media_failed` 記數量；`reason` 是 `bookmark_unsafe_reason`，核對失敗時寫 `check-failed`；`at` 用 `date +%Y-%m-%dT%H:%M:%S%z`）。
+- 記下 `utc_offset` 與 `last_run`（欄位見 Step 2；`media_skipped`、`media_failed` 與 `media_gone` 記數量，manifest 沒有 `media_gone_ids` 時 `media_gone` 記 0；`undated_messages_skipped` 照抄，沒有這個欄位時記 0；`reason` 是 `bookmark_unsafe_reason`，核對失敗時寫 `check-failed`；`at` 用 `date +%Y-%m-%dT%H:%M:%S%z`）。
 
 寫入時先用 Write 寫到同目錄下一個這次才用的暫存檔（例如 `index.json.<隨機字串>.tmp`），再 `mv -f '<暫存檔>' '<INDEX_FILE>'`（依 Step 1 的引號規則），中途失敗不會留下寫一半的索引，兩個 session 也不會共用暫存檔。索引所在的目錄不存在時先建立（同樣用單引號）。不要同時在同一個 workspace 跑兩個 `/archive-telegram`：兩邊各自讀寫索引，後寫的會蓋掉先寫的書籤。
 
@@ -139,7 +142,8 @@ chats:
 每個聊天一段，用 `label`（沒有就用 `chat_id`）當標題，寫出：
 
 - 新訊息數、其中帶媒體檔（照片、影片、文件、音訊、語音、影片訊息、動圖、貼圖）的訊息數
-- 媒體：下載了幾個；略過的每一個寫 message id 與大小（MB）；下載失敗幾個（下次會自動重試）；本機快取歸檔時待補的數量（`media_pending_local_cache`）
+- 媒體：下載了幾個；略過的每一個寫 message id 與大小（MB）；下載失敗幾個（下次會自動重試）；訊息已經刪除、不再重試的幾個（`media_gone_ids`，有這個欄位且不是空的時）；本機快取歸檔時待補的數量（`media_pending_local_cache`）
+- `undated_messages_skipped` 大於 0 時：幾則訊息因為本機快取沒有日期而沒有寫入（之後透過 TDLib 再跑會補上）
 - 書籤：前進到哪個 id；沒前進時寫原因與下一步：
 
 | 原因 | 說明與下一步 |
@@ -158,7 +162,7 @@ chats:
 ```
 專案群組（123456789）
   新訊息 12 則，其中 3 則帶媒體
-  媒體：下載 2、略過 1（7000：49.6 MB）、失敗 1（下次重試）
+  媒體：下載 2、略過 1（7000：49.6 MB）、失敗 1（下次重試）、訊息已刪除 1（不再重試）
   書籤：9000 → 9112
 
 123456780
@@ -172,5 +176,5 @@ chats:
 
 - 群組升級成超級群組後 `chat_id` 會變（變成 `-100` 開頭）。舊目錄保留，把設定檔的 `chat_id` 改成新的，新目錄從頭歸檔（或設 `since`）。
 - 不要在 MCP server 執行時同時使用 `telegram-all` CLI（同一個帳號會開出兩個 TDLib session）。
-- 日檔與媒體只有擁有者能讀寫（目錄 0700、檔案 0600）。媒體保留寄件人取的檔名與副檔名，是不可信的檔案。
+- 日檔與媒體只有擁有者能讀寫（目錄 0700、檔案 0600）。媒體保留寄件人取的檔名與副檔名，是不可信的檔案；新存的媒體帶 macOS 的 quarantine 屬性，從 Finder 打開時 Gatekeeper 會檢查（加上這個屬性之前存下的檔案沒有）。
 - 索引沒有檔案清單：每次執行的 manifest 列出這次寫入的檔案，Step 5 逐一核對，取代 /archive-mail 那種「所有檔案都在索引裡」的核對。
