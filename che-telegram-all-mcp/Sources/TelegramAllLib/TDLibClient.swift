@@ -74,6 +74,15 @@ public final class TDLibClient {
     /// written/cleared by auto-fire paths and the .ready state transition.
     private var lastAutoFireError: TDError?
 
+    /// Where the phone number and the 2FA password come from when the
+    /// environment has none (PsychQuant/che-msg#49).
+    private let credentials: KeychainCredentialSource
+
+    /// The current state's Keychain lookup status. Updated together with
+    /// `authState` under `lock`, so a settle check never sees a new state with
+    /// the previous state's status.
+    private let credentialLookups = CredentialLookupTracker()
+
     /// In-flight task holders for the four authentication methods. Concurrent
     /// callers of the same method coalesce on these holders — see `coalesceTask`.
     private let setParametersTask = TaskFieldHolder()
@@ -113,8 +122,12 @@ public final class TDLibClient {
     /// the unsynced time survives this client being closed and replaced.
     private let syncState: TDLibSyncState?
 
-    public init(logVerbosity: Int = 0, syncState: TDLibSyncState? = nil) async throws {
+    /// `credentials` is where the phone number and the 2FA password are read
+    /// when the environment does not set them; tests inject a fake.
+    public init(logVerbosity: Int = 0, syncState: TDLibSyncState? = nil,
+                credentials: KeychainCredentialSource = SecurityCLICredentialSource()) async throws {
         self.syncState = syncState
+        self.credentials = credentials
         // Silence TDLib's stdout spam BEFORE creating any client.
         // td_execute is synchronous, thread-safe, and doesn't need a client.
         let logRequest = #"{"@type":"setLogVerbosityLevel","new_verbosity_level":\#(logVerbosity)}"#
@@ -165,10 +178,14 @@ public final class TDLibClient {
         let env = ProcessInfo.processInfo.environment
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline, !Task.isCancelled {
+            let (state, keychainLookup, hasError) = lock.withLock {
+                (authState, credentialLookups.current, lastAutoFireError != nil)
+            }
             let settled = authorizationIsSettled(
-                state: getAuthState(), hasAutoFireError: getLastAutoFireError() != nil,
+                state: state, hasAutoFireError: hasError,
                 envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init), envApiHash: env["TELEGRAM_API_HASH"],
-                envPhone: env["TELEGRAM_PHONE"], envPassword: env["TELEGRAM_2FA_PASSWORD"])
+                envPhone: env["TELEGRAM_PHONE"], envPassword: env["TELEGRAM_2FA_PASSWORD"],
+                keychainLookup: keychainLookup)
             if settled { return }
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
@@ -256,29 +273,35 @@ public final class TDLibClient {
     private func handleAuthStateUpdate(_ state: AuthorizationState) {
         switch state {
         case .authorizationStateWaitTdlibParameters:
-            lock.withLock { authState = .waitingForParameters }
+            enterStateWithoutLookup(.waitingForParameters)
             autoSetParametersIfAvailable()
         case .authorizationStateWaitPhoneNumber:
-            lock.withLock { authState = .waitingForPhoneNumber }
-            autoSendPhoneIfAvailable()
+            enterCredentialState(.waitingForPhoneNumber)
         case .authorizationStateWaitCode:
-            lock.withLock { authState = .waitingForCode }
             // Spec requirement: SMS verification code is never auto-fired from
-            // environment. The code MUST be supplied by an explicit caller
-            // invocation (auth_run(code:) or auth_send_code(code:)).
-            // DO NOT add an auto-fire here.
+            // environment or the Keychain. The code MUST be supplied by an
+            // explicit caller invocation (auth_run(code:) or auth_send_code(code:)).
+            // DO NOT add an auto-fire or a lookup here.
+            enterStateWithoutLookup(.waitingForCode)
         case .authorizationStateWaitPassword:
-            lock.withLock { authState = .waitingForPassword }
-            autoSendPasswordIfAvailable()
+            enterCredentialState(.waitingForPassword)
         case .authorizationStateReady:
             lock.withLock {
                 authState = .ready
                 lastAutoFireError = nil
+                _ = credentialLookups.stateChanged(lookingUp: false)
             }
         case .authorizationStateClosed:
-            lock.withLock { authState = .closed }
+            enterStateWithoutLookup(.closed)
         default:
             break
+        }
+    }
+
+    private func enterStateWithoutLookup(_ state: AuthState) {
+        lock.withLock {
+            authState = state
+            _ = credentialLookups.stateChanged(lookingUp: false)
         }
     }
 
@@ -310,50 +333,57 @@ public final class TDLibClient {
         }
     }
 
-    /// Auto-send phone number from environment variable if available.
-    private func autoSendPhoneIfAvailable() {
+    /// Enters the phone-number or 2FA-password state and auto-fires its
+    /// credential: the environment's value if set, otherwise the Keychain's
+    /// (PsychQuant/che-msg#49). Runs on TDLib's callback thread, so the
+    /// Keychain is read inside the Task, never here; the lookup is marked
+    /// pending together with the state change, so a settle check waits for it.
+    private func enterCredentialState(_ state: AuthState) {
         let env = ProcessInfo.processInfo.environment
-        let action = decideAutoFire(
-            state: getAuthState(),
-            envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init),
-            envApiHash: env["TELEGRAM_API_HASH"],
-            envPhone: env["TELEGRAM_PHONE"],
-            envPassword: env["TELEGRAM_2FA_PASSWORD"],
-            envAuthCode: env["TELEGRAM_AUTH_CODE"]
-        )
-        guard case .fireSendPhone(let phone) = action else { return }
-        lock.withLock { lastAutoFireError = nil }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.sendPhoneNumber(phone)
-            } catch {
-                self.recordAutoFireError(error)
+        let plan = credentialPlan(state: state, envPhone: env["TELEGRAM_PHONE"],
+                                  envPassword: env["TELEGRAM_2FA_PASSWORD"])
+        let lookingUp: Bool
+        if case .lookUp = plan { lookingUp = true } else { lookingUp = false }
+        let generation: UInt64 = lock.withLock {
+            authState = state
+            if plan != .nothing { lastAutoFireError = nil }
+            return credentialLookups.stateChanged(lookingUp: lookingUp)
+        }
+        switch plan {
+        case .nothing:
+            return
+        case .fire(let value):
+            Task { [weak self] in await self?.submitCredential(value, for: state) }
+        case .lookUp(let credential):
+            let source = credentials
+            Task { [weak self] in
+                let value = await source.lookup(credential).value
+                guard let self, self.credentialLookups.finish(generation, found: value != nil),
+                      let value else { return }
+                await self.submitCredential(value, for: state)
             }
         }
     }
 
-    /// Auto-send 2FA password from environment variable if available.
-    private func autoSendPasswordIfAvailable() {
-        let env = ProcessInfo.processInfo.environment
-        let action = decideAutoFire(
-            state: getAuthState(),
-            envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init),
-            envApiHash: env["TELEGRAM_API_HASH"],
-            envPhone: env["TELEGRAM_PHONE"],
-            envPassword: env["TELEGRAM_2FA_PASSWORD"],
-            envAuthCode: env["TELEGRAM_AUTH_CODE"]
-        )
-        guard case .fireSendPassword(let password) = action else { return }
-        lock.withLock { lastAutoFireError = nil }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.sendPassword(password)
-            } catch {
-                self.recordAutoFireError(error)
+    /// Sends an auto-fired phone number or 2FA password through the coalesced
+    /// path. A failure is recorded for `auth_status`; the value is not kept.
+    private func submitCredential(_ value: String, for state: AuthState) async {
+        do {
+            switch state {
+            case .waitingForPhoneNumber: try await sendPhoneNumber(value)
+            case .waitingForPassword: try await sendPassword(value)
+            case .waitingForParameters, .waitingForCode, .ready, .closed: return
             }
+        } catch {
+            recordAutoFireError(error)
         }
+    }
+
+    /// Reads the phone number or the 2FA password from the Keychain source, for
+    /// `auth_run` when neither the caller nor the environment supplies it.
+    /// Returns nil when there is no value.
+    public func lookUpKeychainCredential(_ credential: KeychainCredential) async -> String? {
+        await credentials.lookup(credential).value
     }
 
     /// Persist auto-fire failure for surfacing via `auth_status`.
