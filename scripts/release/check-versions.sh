@@ -171,6 +171,12 @@ fi
 # ---------------------------------------------------------------------- tags
 # A version that was released is never released again: wrappers download only
 # when the version changes, so a re-signed v$X would never reach anyone.
+# git ls-remote's stderr goes to a file made by mktemp, not to a name another
+# user of TMPDIR could predict and plant first (#94); it is removed on every
+# way out, an interrupt included.
+LS_REMOTE_ERR=""
+trap '[ -z "$LS_REMOTE_ERR" ] || rm -f "$LS_REMOTE_ERR"' EXIT
+trap 'exit 130' INT TERM
 if [ "$TAG_CHECK" = 1 ]; then
     echo ""
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -179,16 +185,17 @@ if [ "$TAG_CHECK" = 1 ]; then
         bad "tag v$X already exists locally — a released version is never published again; bump the version"
     elif [ "$REMOTE" = 0 ]; then
         ok "tags" "v$X does not exist locally (origin not checked)"
+    elif ! LS_REMOTE_ERR=$(mktemp "${TMPDIR:-/tmp}/check-versions-ls-remote.XXXXXX"); then
+        bad "cannot create a temporary file in ${TMPDIR:-/tmp} for git ls-remote's errors, so origin's tags were not checked"
     # Only stdout lists tags; git writes warnings (a redirected URL, a new SSH
     # host key) to stderr even when the listing succeeds.
-    elif ! remote_tags=$(git ls-remote --tags origin "refs/tags/v$X" 2>"${TMPDIR:-/tmp}/check-versions-ls-remote.$$"); then
-        bad "cannot list origin's tags ($(head -1 "${TMPDIR:-/tmp}/check-versions-ls-remote.$$")) — rerun when origin is reachable, or pass --no-remote to check local tags only"
+    elif ! remote_tags=$(git ls-remote --tags origin "refs/tags/v$X" 2>"$LS_REMOTE_ERR"); then
+        bad "cannot list origin's tags ($(head -1 "$LS_REMOTE_ERR")) — rerun when origin is reachable, or pass --no-remote to check local tags only"
     elif [ -n "$remote_tags" ]; then
         bad "tag v$X already exists on origin — a released version is never published again; bump the version"
     else
         ok "tags" "v$X exists neither locally nor on origin"
     fi
-    rm -f "${TMPDIR:-/tmp}/check-versions-ls-remote.$$"
 fi
 
 echo ""

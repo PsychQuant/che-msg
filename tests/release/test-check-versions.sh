@@ -23,6 +23,9 @@
 #      a second, different pin in one file is reported; the marketplace's
 #      plugin order does not matter; a plugin version that is not x.y.z is
 #      reported; a warning from git ls-remote on stderr is not a tag.
+#   9. git ls-remote's stderr goes to a file made by mktemp (owner-only), not
+#      to a predictable name in TMPDIR, and the file is removed whether the
+#      listing succeeds or fails (#94).
 #
 # Usage:
 #   bash tests/release/test-check-versions.sh
@@ -234,6 +237,26 @@ printf '#!/bin/bash\n[ "$1" = ls-remote ] && echo "warning: redirecting to https
 chmod +x "$SCRATCH/fakegit/git"
 OUT=$(PATH="$SCRATCH/fakegit:$PATH" bash "$CHECK" --root "$D" 2>&1); RC=$?
 if [ "$RC" -eq 0 ]; then pass "the warning is not a tag (exit 0)"; else fail "exit $RC:"$'\n'"$(printf '%s\n' "$OUT" | grep '^✗')"; fi
+
+test_case "git ls-remote's stderr goes to a private temp file (#94)"
+# A fake git records the permissions of the file its stderr is written to: a
+# file made by mktemp is the owner's only, one made by a plain redirection
+# follows the umask (022 here), as a predictable name in TMPDIR would.
+mkdir -p "$SCRATCH/modegit"
+# shellcheck disable=SC2016  # $1 and $@ belong to the fake git script
+printf '#!/bin/bash\n[ "$1" = ls-remote ] && python3 -I -c "import os; print(oct(os.fstat(2).st_mode & 0o777))" > "%s"\nexec "%s" "$@"\n' \
+    "$SCRATCH/stderr-mode" "$REAL_GIT" > "$SCRATCH/modegit/git"
+chmod +x "$SCRATCH/modegit/git"
+before=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
+OUT=$(umask 022; PATH="$SCRATCH/modegit:$PATH" bash "$CHECK" --root "$D" 2>&1); RC=$?
+mode=$(cat "$SCRATCH/stderr-mode" 2>/dev/null)
+if [ "$RC" -eq 0 ] && [ "$mode" = 0o600 ]; then pass "only its owner can read it (mode $mode)"; else fail "exit $RC, mode ${mode:-not recorded}"; fi
+after=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
+if [ "$after" = "$before" ]; then pass "removed after the listing"; else fail "TMPDIR entries $before -> $after"; fi
+D=$(fresh_copy ls-remote-fails); git -C "$D" remote add origin "$SCRATCH/no-such-origin.git"
+OUT=$(PATH="$SCRATCH/modegit:$PATH" bash "$CHECK" --root "$D" 2>&1); RC=$?
+after=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
+if [ "$RC" -eq 1 ] && [ "$after" = "$before" ]; then pass "removed when origin cannot be listed"; else fail "exit $RC, TMPDIR entries $before -> $after"; fi
 
 # ---------------------------------------------------------------------- tags
 test_case "tag v$X exists locally"
