@@ -90,6 +90,18 @@ if [[ -n "$CHANGES" || -n "$UNTRACKED_SOURCES" ]]; then
     fi
     echo "  ⚠ uncommitted changes: this build is not what commit ${COMMIT:0:12} would produce."
 fi
+# Every build uses exactly the dependency versions recorded in the package's
+# tracked Package.resolved (PsychQuant/che-msg#92); swift-sdk and
+# swift-argument-parser are ranges, so without it the build would use whatever
+# this checkout last resolved, and nothing would record it.
+for entry in "${PACKAGES[@]}"; do
+    pkg=${entry%%:*}
+    if ! git -C "$ROOT" ls-files --error-unmatch -- "$pkg/Package.resolved" >/dev/null 2>&1; then
+        echo "Error: $pkg/Package.resolved is not tracked. The release builds only the dependency versions it records;" >&2
+        echo "       resolve the package (swift package resolve), run the tests, and commit the file." >&2
+        exit 1
+    fi
+done
 # The bundles are packed from HEAD's files; a symlink there would pull in
 # whatever it points at, possibly from outside the repository.
 for entry in "${PACKAGES[@]}"; do
@@ -125,8 +137,8 @@ mkdir -p "$OUT"
 # (che-ical-mcp#238).
 build_arch() {
     local pkg=$1 bin=$2 arch=$3 bin_dir archs
-    (cd "$ROOT/$pkg" && swift build -c release --arch "$arch" --product "$bin")
-    bin_dir=$(cd "$ROOT/$pkg" && swift build -c release --arch "$arch" --product "$bin" --show-bin-path)
+    (cd "$ROOT/$pkg" && swift build -c release --force-resolved-versions --arch "$arch" --product "$bin")
+    bin_dir=$(cd "$ROOT/$pkg" && swift build -c release --force-resolved-versions --arch "$arch" --product "$bin" --show-bin-path)
     [[ -f "$bin_dir/$bin" ]] || { echo "Error: no $arch build of $bin at $bin_dir/$bin" >&2; exit 1; }
     cp "$bin_dir/$bin" "$STAGE/$bin-$arch"
     archs=$(lipo -archs "$STAGE/$bin-$arch")
@@ -147,7 +159,7 @@ for entry in "${PACKAGES[@]}"; do
     build_arch "$pkg" "$bin" x86_64
     # The per-arch builds left .build/release holding the last one (x86_64);
     # build once more for this machine so run.sh and source builds still work.
-    (cd "$ROOT/$pkg" && swift build -c release --product "$bin")
+    (cd "$ROOT/$pkg" && swift build -c release --force-resolved-versions --product "$bin")
     UNIVERSAL="$STAGE/$bin"
     rm -f "$UNIVERSAL"
     lipo -create "$STAGE/$bin-arm64" "$STAGE/$bin-x86_64" -output "$UNIVERSAL"

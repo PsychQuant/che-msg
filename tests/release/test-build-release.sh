@@ -113,6 +113,8 @@ PINNED=(
     che-telegram-bot-mcp/mcpb/manifest.json
     che-telegram-bot-mcp/mcpb/PRIVACY.md
     che-telegram-bot-mcp/mcpb/server/.gitkeep
+    che-telegram-all-mcp/Package.resolved
+    che-telegram-bot-mcp/Package.resolved
 )
 
 # make_repo <name> [variant]: a scratch repository with the release scripts
@@ -265,6 +267,8 @@ for pkg in che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTelegr
     if unzip -p "$DIST/$name.mcpb" "server/$bin" 2>/dev/null | cmp -s - "$DIST/$bin"; then pass "$name.mcpb holds the same signed binary as dist"; else fail "$name.mcpb holds a different binary"; fi
 done
 if calls "$R" "mcpb validate" >/dev/null; then pass "manifests validated before packing"; else fail "no mcpb validate"; fi
+unpinned=$(calls "$R" "swift build" | grep -v -- --force-resolved-versions)
+if [ -z "$unpinned" ]; then pass "every swift build uses the versions in Package.resolved (#92)"; else fail "swift build without --force-resolved-versions: $unpinned"; fi
 if ! git -C "$R" status --porcelain -- che-telegram-all-mcp/mcpb che-telegram-bot-mcp/mcpb | grep -qv stale.mcpb; then pass "tracked mcpb directories untouched"; else fail "mcpb directories changed: $(git -C "$R" status --porcelain)"; fi
 if printf '%s' "$OUT" | grep -qF "$(git -C "$R" rev-parse HEAD)"; then pass "prints the commit it was built from"; else fail "commit not printed"; fi
 if ! ls -d "$R"/.build/release-stage* >/dev/null 2>&1; then pass "staging directory removed"; else fail "staging left: $(ls -d "$R"/.build/release-stage*)"; fi
@@ -320,6 +324,15 @@ expect_no_build "$R"
 if printf '%s' "$OUT" | grep -qi 'uncommitted'; then pass "says the tree has uncommitted changes"; else fail "no message: $(printf '%s' "$OUT" | tail -3)"; fi
 build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only
 if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qi 'uncommitted'; then pass "--sign-only builds it with a warning"; else fail "--sign-only: exit $RC"; fi
+
+test_case "a package without a tracked Package.resolved (#92)"
+for mode in full sign-only; do
+    R=$(make_repo "noresolved-$mode")
+    git -C "$R" rm -q che-telegram-bot-mcp/Package.resolved && git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -q -m "drop the lock file"
+    if [ "$mode" = full ]; then build "$R" "${SIGN_ENV[@]}" --; else build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; fi
+    expect_no_build "$R"
+    if printf '%s' "$OUT" | grep -q 'che-telegram-bot-mcp/Package.resolved'; then pass "$mode: names the missing Package.resolved"; else fail "$mode: no message: $(printf '%s' "$OUT" | tail -3)"; fi
+done
 
 test_case "an untracked file in a package's Sources"
 R=$(make_repo untracked); echo "// local" > "$R/che-telegram-all-mcp/Sources/Extra.swift"
