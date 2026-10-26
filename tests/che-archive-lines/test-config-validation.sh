@@ -251,6 +251,10 @@ reset
 printf '\n250\n' | run calibrate; rc=$?
 if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && untouched && grep -q '互動式終端機' "$SCRATCH/out.log"; then ok "calibrate piped, no config yet: none is written"
 else bad "calibrate piped, no config (exit $rc, config written: $([ -e "$CONFIG" ] && echo yes || echo no))"; fi
+# help is pre-approved and is where a user looks first.
+reset; run help
+if grep -- 'calibrate  -' "$SCRATCH/out.log" | grep -q '自己的終端機'; then ok "help: the calibrate line says to run it in your own terminal"
+else bad "help: calibrate line ($(grep -- 'calibrate  -' "$SCRATCH/out.log"))"; fi
 # At a terminal, input can still end (Ctrl-D): each prompt must say so, not
 # end silently under set -e.
 reset; write_config -40 30 240; cp "$CONFIG" "$SCRATCH/before.json"
