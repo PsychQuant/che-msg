@@ -38,8 +38,8 @@
 # whatever the working tree holds or HEAD becomes; a package with no mcpb
 # directory at that commit gets no bundle. Every binary is built and checked
 # before any is signed: otool checks that every library they need at launch
-# comes with macOS, since the release ships no library (it caught Swift's
-# back-deployment library, PsychQuant/che-msg#91), and the --version of
+# has a system library path, not a Swift back-deployment library, since the
+# release ships no library (PsychQuant/che-msg#91), and the --version of
 # telegram-all and of CheSlackMCP is checked (the bot has no --version). In
 # the signing modes that --version is checked once more on the signed binary,
 # so every signed build launches each of those hardened-runtime binaries once.
@@ -210,13 +210,15 @@ build_arch() {
 }
 
 # check_load_commands <binary> <name>: every library the binary needs at
-# launch comes with macOS (its path starts with /usr/lib/ or /System/Library/),
-# because the release ships the binary alone. What went wrong before: with a
-# deployment target older than macOS 26, the toolchain links Swift's
-# back-deployment library @rpath/libswiftCompatibilitySpan.dylib, which macOS
-# 26 has built in and older systems do not, and the binary still starts on the
-# build machine (PsychQuant/che-msg#91). A weak load (LC_LOAD_WEAK_DYLIB) does
-# not stop the binary when the library is missing, and is allowed.
+# launch has a system library path, because the release ships the binary
+# alone. A system library path starts with /usr/lib/ or /System/Library/, has
+# no ".." component, and is not a Swift back-deployment library
+# (/usr/lib/swift/libswiftCompatibility*): macOS 26 has those, older systems
+# do not. What went wrong before: with a deployment target older than macOS 26,
+# the toolchain links @rpath/libswiftCompatibilitySpan.dylib, and the binary
+# still starts on the build machine (PsychQuant/che-msg#91). A weak load
+# (LC_LOAD_WEAK_DYLIB) does not stop the binary when the library is missing,
+# and is allowed.
 check_load_commands() {
     local listing="$STAGE/load-commands-$2" archs slices needed
     # From a file, so a failed otool stops the build instead of reading as
@@ -239,10 +241,11 @@ check_load_commands() {
         $1 == "cmd" { cmd = $2 }
         $1 == "name" && cmd ~ /^LC_(LOAD|REEXPORT|LOAD_UPWARD|LAZY_LOAD)_DYLIB$/ {
             name = $0; sub(/^[ \t]*name /, "", name); sub(/ \(offset [0-9]+\)$/, "", name)
-            if (name !~ /^\/(usr\/lib|System\/Library)\//)
+            if (name !~ /^\/(usr\/lib|System\/Library)\// || name ~ /(^|\/)\.\.(\/|$)/ ||
+                name ~ /^\/usr\/lib\/swift\/libswiftCompatibility/)
                 print "         " name " (" cmd (arch == "" ? "" : ", " arch) ")" }' "$listing")
     [[ -z "$needed" ]] || {
-        echo "Error: $2 loads a library that macOS does not provide and the release does not ship:" >&2
+        echo "Error: $2 loads a library without a system library path, which the release does not ship:" >&2
         printf '%s\n' "$needed" >&2
         echo "       dyld stops it at launch on a Mac without that library, even if it starts on" >&2
         echo "       this one (PsychQuant/che-msg#91)." >&2

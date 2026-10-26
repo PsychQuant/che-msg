@@ -73,15 +73,18 @@
 #      its Package.resolved, its Sources and a symlink in it are checked like
 #      the Telegram packages'; a Slack pin that disagrees with X stops the
 #      build before anything is built.
-#  20. A binary that needs, at launch, a library macOS does not provide (#91):
+#  20. A binary that needs, at launch, a library without a system library path
+#      (#91):
 #      @rpath/libswiftCompatibilitySpan.dylib loaded with LC_LOAD_DYLIB, though
 #      the binary starts on this machine and answers --version, by telegram-all
 #      in the full mode, with --sign-only and unsigned, by the bot binary, and
 #      by the x86_64 slice alone of the bot binary; the same library re-exported
 #      (LC_REEXPORT_DYLIB) by telegram-all; and, in the bot binary,
 #      @rpath/libswiftCompatibility56.dylib, an absolute path outside
-#      /usr/lib and /System/Library (with a space in it) and an @loader_path
-#      library. Each is refused before anything is signed or notarized, also
+#      /usr/lib and /System/Library (with a space in it), an @loader_path
+#      library, /usr/lib/swift/libswiftCompatibilitySpan.dylib (the install
+#      name of the toolchain's copy) and /usr/lib/../../tmp/libclimb.dylib.
+#      Each is refused before anything is signed or notarized, also
 #      when only the bot binary needs one, naming each library with its load
 #      command and architecture, and nothing is in dist. Binaries that load
 #      the library weakly are released. An otool that fails, or lists no load
@@ -140,9 +143,9 @@ printf 'int main(void) { return 0; }\n' > "$PROGS/bot.c"
 # toolchain links (#91). The programs that load it find it through an rpath,
 # as the real binaries find it in /usr/lib/swift on a build machine with
 # macOS 26 or later, so they start here and pass the --version check.
-# The other libraries stand in for what else macOS does not provide: another
-# back-deployment library, an absolute path outside the system (with a space,
-# so the whole name has to be read) and one next to the binary.
+# The other libraries stand in for what else has no system library path:
+# another back-deployment library, an absolute path outside the system (with a
+# space, so the whole name has to be read) and one next to the binary.
 mkdir -p "$PROGS/swiftlib" "$PROGS/other libs"
 printf 'int stand_in(void) { return 1; }\n' > "$PROGS/swiftlib/stand_in.c"
 make_dylib() { cc -arch arm64 -arch x86_64 -dynamiclib -install_name "$1" -o "$2" "$PROGS/swiftlib/stand_in.c" ||
@@ -153,11 +156,16 @@ make_dylib @rpath/libswiftCompatibility56.dylib "$PROGS/swiftlib/libswiftCompati
 OTHER_LIB="$(cd "$PROGS/other libs" && pwd -P)/libextra.dylib"
 make_dylib "$OTHER_LIB" "$OTHER_LIB"
 make_dylib @loader_path/libnext.dylib "$PROGS/swiftlib/libnext.dylib"
+# Under /usr/lib but not a system library: the install name the toolchain's own
+# copy of the back-deployment library has, and a path that climbs out.
+make_dylib /usr/lib/swift/libswiftCompatibilitySpan.dylib "$PROGS/swiftlib/libswiftCompatibilitySpan-abs.dylib"
+make_dylib /usr/lib/../../tmp/libclimb.dylib "$PROGS/swiftlib/libclimb.dylib"
 NEEDS_SPAN=("-Wl,-rpath,$PROGS/swiftlib" "$PROGS/swiftlib/libswiftCompatibilitySpan.dylib")
 REEXPORTS_SPAN=("-Wl,-rpath,$PROGS/swiftlib" "-Wl,-reexport_library,$PROGS/swiftlib/libswiftCompatibilitySpan.dylib")
 WEAK_SPAN=("-Wl,-weak_library,$PROGS/swiftlib/libswiftCompatibilitySpan.dylib")
 NEEDS_OTHERS=("-Wl,-rpath,$PROGS/swiftlib" "$PROGS/swiftlib/libswiftCompatibility56.dylib"
-              "$OTHER_LIB" "$PROGS/swiftlib/libnext.dylib")
+              "$OTHER_LIB" "$PROGS/swiftlib/libnext.dylib"
+              "$PROGS/swiftlib/libswiftCompatibilitySpan-abs.dylib" "$PROGS/swiftlib/libclimb.dylib")
 for arch in arm64 x86_64; do
     ALL=-DNAME='"che-telegram-all-mcp"' SLACK=-DNAME='"che-slack-mcp"'
     if ! { cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/CheTelegramAllMCP-$arch" "$PROGS/all.c" &&
@@ -229,8 +237,9 @@ PINNED=(
 #            all-reexports-span  the telegram-all build re-exports it
 #            bot-needs-others  the bot build loads
 #                           @rpath/libswiftCompatibility56.dylib, a library by an
-#                           absolute path outside the system and an
-#                           @loader_path one
+#                           absolute path outside the system, an @loader_path
+#                           one, /usr/lib/swift/libswiftCompatibilitySpan.dylib
+#                           and /usr/lib/../../tmp/libclimb.dylib
 #            weak-span      both builds load it weakly
 # FAKE_MODE, when set, is passed to the fake signing tools.
 make_repo() {
@@ -500,7 +509,7 @@ build "$R" "${SIGN_ENV[@]}" --
 if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'x86_64'; then pass "refused, naming x86_64"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
 
 # ------------------------------------------ back-deployment libraries (#91)
-test_case "a binary that needs a library macOS does not provide (#91)"
+test_case "a binary that needs a library without a system library path (#91)"
 SPAN=@rpath/libswiftCompatibilitySpan.dylib
 for prog in AllNeedsSpan AllReexportsSpan; do
     if [ "$("$PROGS/$prog-arm64" --version 2>&1)" = "che-telegram-all-mcp $X" ]; then pass "fixture: $prog starts here"; else fail "fixture: $prog does not start: $("$PROGS/$prog-arm64" --version 2>&1 | head -2)"; fi
@@ -518,7 +527,9 @@ for run in all-needs-span:full all-needs-span:sign-only all-needs-span:unsigned 
         bot-needs-others)   bin=CheTelegramBotMCP; clean=""
                             named=("@rpath/libswiftCompatibility56.dylib|LC_LOAD_DYLIB|arm64 x86_64"
                                    "$OTHER_LIB|LC_LOAD_DYLIB|arm64 x86_64"
-                                   "@loader_path/libnext.dylib|LC_LOAD_DYLIB|arm64 x86_64") ;;
+                                   "@loader_path/libnext.dylib|LC_LOAD_DYLIB|arm64 x86_64"
+                                   "/usr/lib/swift/libswiftCompatibilitySpan.dylib|LC_LOAD_DYLIB|arm64 x86_64"
+                                   "/usr/lib/../../tmp/libclimb.dylib|LC_LOAD_DYLIB|arm64 x86_64") ;;
     esac
     R=$(make_repo "$variant-$mode" "$variant")
     case "$mode" in
@@ -526,7 +537,7 @@ for run in all-needs-span:full all-needs-span:sign-only all-needs-span:unsigned 
         sign-only) build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; DIST="$R/.build/dist/v$X-sign-only" ;;
         unsigned)  build "$R" --; DIST="$R/.build/dist/v$X-unsigned" ;;
     esac
-    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF "$bin loads a library that macOS does not provide"; then pass "$variant, $mode: refused, naming $bin"; else fail "$variant, $mode: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF "$bin loads a library without a system library path"; then pass "$variant, $mode: refused, naming $bin"; else fail "$variant, $mode: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
     for entry in "${named[@]}"; do
         lib=${entry%%|*}; rest=${entry#*|}; cmd=${rest%%|*}
         for a in ${rest#*|}; do
