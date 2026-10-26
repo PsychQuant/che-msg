@@ -313,7 +313,7 @@ rm -rf ~/.cache/che-telegram-all-mcp.lock
 
 ## Requirements
 
-- **macOS 26 or later.** The binaries after v0.8.0 are built for macOS 26, and an earlier macOS refuses to start them ([#91](https://github.com/PsychQuant/che-msg/issues/91)). The v0.8.0 binaries say macOS 13, but they load `libswiftCompatibilitySpan.dylib`, which macOS 13–15 do not have, so they most likely do not start there either unless Xcode 26 or later is installed (not tested on those systems).
+- **macOS 26 or later** ([#91](https://github.com/PsychQuant/che-msg/issues/91)). The binaries after v0.8.0 are built for macOS 26 and need parts of the Swift runtime that come with it, such as the `OutputSpan` type in `libswiftCore`; an earlier `libswiftCore` lacks it, so dyld most likely stops them at launch with "Symbol not found". The v0.8.0 binaries say macOS 13, but they load `libswiftCompatibilitySpan.dylib`, which macOS 13–15 do not have, so they most likely do not start there either unless Xcode 26 or later is installed. Neither was tested on those systems.
 
 ## Permissions
 
