@@ -20,7 +20,7 @@ The archive search SHALL read only the day files of the layout that the `telegra
 
 #### Scenario: More chats than open files allowed
 
-- **WHEN** the archive holds 80 chats and the process may open at most 64 files
+- **WHEN** the archive holds 80 chats and the process is limited to 64 open files
 - **THEN** the search reads all 80 chats and skips none
 
 #### Scenario: Comment-like line in the message body
