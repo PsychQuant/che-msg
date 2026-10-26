@@ -105,15 +105,21 @@ final class PendingRequestTransportTests: XCTestCase {
         XCTAssertEqual(count, 0)
     }
 
-    /// The SDK sends no answer to a request the client cancelled.
-    func testACancelledRequestNoLongerCounts() async throws {
+    /// A cancelled request is still waited for: this server's tool handler
+    /// does not stop when it is cancelled, so the SDK still sends its answer,
+    /// and a cancel that arrives before the SDK has started the handler is
+    /// ignored.
+    func testACancelledRequestIsStillWaitedFor() async throws {
         let tracker = await PendingRequestTransport(wrapping: ScriptedTransport([
             request("12"), request("13"),
             #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":12,"reason":"x"}}"#,
             #"[{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":13}}]"#,
         ]))
         try await readAll(tracker)
-        let count = await tracker.unansweredCount
+        var count = await tracker.unansweredCount
+        XCTAssertEqual(count, 2)
+        try await send(tracker, "[\(response("12")),\(response("13"))]")
+        count = await tracker.unansweredCount
         XCTAssertEqual(count, 0)
     }
 

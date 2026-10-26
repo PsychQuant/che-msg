@@ -68,12 +68,16 @@ actor PendingRequestTransport: Transport {
     }
 
     /// Counts the requests in a message the server is about to read that the
-    /// SDK answers later, in a task of its own, and forgets a request that a
-    /// `notifications/cancelled` names, since the SDK may never answer it.
-    /// Follows how swift-sdk 0.12's `Server.start` reads a message: a batch is
-    /// read only when every item is a request or a notification, else it gets
-    /// one error with a random id; a client's response gets no answer; a
-    /// message that is none of these is answered inside the receive loop.
+    /// SDK answers later, in a task of its own. A cancelled request is still
+    /// counted: the tool handler does not stop when cancelled, so the SDK
+    /// still answers it (a cancel that comes before the SDK has started the
+    /// handler is ignored; one that comes after it has started but before the
+    /// handler runs leaves the request unanswered, and `run()` then waits
+    /// for the bound). Follows how swift-sdk 0.12's `Server.start` reads a
+    /// message: a batch is read only when every item is a request or a
+    /// notification, else it gets one error with a random id; a client's
+    /// response gets no answer; a message that is none of these is answered
+    /// inside the receive loop.
     private func read(_ data: Data) {
         let messages: [Envelope]
         if let batch = try? JSONDecoder().decode([Envelope].self, from: data) {
@@ -85,11 +89,7 @@ actor PendingRequestTransport: Transport {
             return
         }
         for message in messages where message.isVersion2 && message.method != nil {
-            if let id = message.id {
-                unanswered[id, default: 0] += 1
-            } else if message.method == CancelledNotification.name, let id = message.cancelledID {
-                remove(id)
-            }
+            if let id = message.id { unanswered[id, default: 0] += 1 }
         }
     }
 
@@ -113,13 +113,11 @@ actor PendingRequestTransport: Transport {
         let id: ID?
         let method: String?
         let isResponse: Bool
-        let cancelledID: ID?
 
         /// Whether the SDK can read this as an item of a batch.
         var isBatchItem: Bool { isVersion2 && method != nil && (!hasID || id != nil) }
 
-        private enum Keys: String, CodingKey { case jsonrpc, id, method, params, result, error }
-        private struct CancelledParams: Decodable { let requestId: ID? }
+        private enum Keys: String, CodingKey { case jsonrpc, id, method, result, error }
 
         init(from decoder: Decoder) throws {
             let object = try decoder.container(keyedBy: Keys.self)
@@ -128,7 +126,6 @@ actor PendingRequestTransport: Transport {
             id = hasID ? try? object.decode(ID.self, forKey: .id) : nil
             method = try? object.decode(String.self, forKey: .method)
             isResponse = object.contains(.result) || object.contains(.error)
-            cancelledID = (try? object.decode(CancelledParams.self, forKey: .params))?.requestId
         }
     }
 }
