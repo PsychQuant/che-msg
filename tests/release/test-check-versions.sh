@@ -258,6 +258,12 @@ OUT=$(PATH="$SCRATCH/modegit:$PATH" bash "$CHECK" --root "$D" 2>&1); RC=$?
 after=$(find "$TMPDIR" -mindepth 1 | wc -l | tr -d ' ')
 if [ "$RC" -eq 1 ] && [ "$after" = "$before" ]; then pass "removed when origin cannot be listed"; else fail "exit $RC, TMPDIR entries $before -> $after"; fi
 
+test_case "no temporary file can be made for git ls-remote's errors (#94 verify)"
+D=$(fresh_copy no-tmpdir)
+git clone -q --bare "$D" "$SCRATCH/no-tmpdir-origin.git" && git -C "$D" remote add origin "$SCRATCH/no-tmpdir-origin.git" || exit 1
+OUT=$(TMPDIR="$SCRATCH/no-such-dir" bash "$CHECK" --root "$D" 2>&1); RC=$?
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -q "cannot create a temporary file"; then pass "the tag check fails instead of being skipped"; else fail "exit $RC:"$'\n'"$(printf '%s\n' "$OUT" | tail -2)"; fi
+
 # ---------------------------------------------------------------------- tags
 test_case "tag v$X exists locally"
 D=$(fresh_copy tag-local); git -C "$D" tag "v$X"

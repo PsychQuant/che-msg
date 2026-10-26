@@ -24,7 +24,7 @@
 # check that tag vX is unused, and requires every tracked file to be committed
 # and no untracked or ignored file in a package's Sources or among its
 # Package*.swift manifests (SwiftPM compiles those whatever git ignores;
-# .DS_Store aside), because the release must be reproducible from the commit
+# a .DS_Store aside), because the release must be reproducible from the commit
 # its tag will point at; the other modes check consistency only and warn about
 # uncommitted changes. Every mode refuses a commit that tracks a symlink
 # anywhere in a package. Signing modes also run sign-and-notarize.sh
@@ -96,15 +96,18 @@ for entry in "${PACKAGES[@]}"; do SOURCE_PATHS+=("${entry%%:*}/Sources" ":(glob)
 # git does not track in a package's Sources or among its Package*.swift
 # manifests, ignored ones included: SwiftPM compiles those whatever git
 # ignores, and reads a Package@swift-6.swift instead of Package.swift.
-# .DS_Store is left out; SwiftPM does not compile it. Nothing when the tree is
+# .DS_Store (untracked or ignored) is left out; SwiftPM does not compile it, and
+# Finder creates it in any folder it shows. Nothing when the tree is
 # what the commit holds. The full mode checks this at the start and again
 # before the release files appear.
 uncommitted_changes() {
-    local ignored
+    local untracked ignored
     git -C "$ROOT" status --porcelain --untracked-files=no || return
-    git -C "$ROOT" ls-files --others --exclude-standard -- "${SOURCE_PATHS[@]}" || return
-    ignored=$(git -C "$ROOT" ls-files --others --ignored --exclude-standard -- "${SOURCE_PATHS[@]}") || return
-    awk '!/(^|\/)\.DS_Store$/' <<<"$ignored"
+    # quotePath=false: a non-ASCII name stays unquoted, so the .DS_Store filter
+    # still matches its end and the list stays readable.
+    untracked=$(git -C "$ROOT" -c core.quotePath=false ls-files --others --exclude-standard -- "${SOURCE_PATHS[@]}") || return
+    ignored=$(git -C "$ROOT" -c core.quotePath=false ls-files --others --ignored --exclude-standard -- "${SOURCE_PATHS[@]}") || return
+    printf '%s\n%s\n' "$untracked" "$ignored" | awk 'NF && !/(^|\/)\.DS_Store$/'
 }
 CHANGES=$(uncommitted_changes)
 if [[ -n "$CHANGES" ]]; then

@@ -463,6 +463,17 @@ rm "$R/che-telegram-all-mcp/Sources/Generated.swift"; : > "$R/che-telegram-all-m
 build "$R" "${SIGN_ENV[@]}" --
 if [ "$RC" -eq 0 ]; then pass "an ignored .DS_Store does not stop the release"; else fail "refused for .DS_Store: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
 
+test_case "an untracked .DS_Store, also under a non-ASCII folder (#94 verify)"
+R=$(make_repo untracked-ds-store)
+mkdir -p "$R/che-telegram-all-mcp/Sources/Ünicode"
+: > "$R/che-telegram-all-mcp/Sources/.DS_Store"; : > "$R/che-telegram-all-mcp/Sources/Ünicode/.DS_Store"
+build "$R" "${SIGN_ENV[@]}" --
+if [ "$RC" -eq 0 ]; then pass "a .DS_Store Finder made does not stop the release"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+R=$(make_repo untracked-unicode)
+mkdir -p "$R/che-telegram-all-mcp/Sources/Ünicode"; echo "// extra" > "$R/che-telegram-all-mcp/Sources/Ünicode/Extra.swift"
+build "$R" "${SIGN_ENV[@]}" --
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF 'che-telegram-all-mcp/Sources/Ünicode/Extra.swift'; then pass "an untracked source under a non-ASCII folder is named as it is"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+
 test_case "a symlink in a package's mcpb directory"
 R=$(make_repo symlink); echo "outside" > "$SCRATCH/symlink/outside.txt"
 ln -s ../../../outside.txt "$R/che-telegram-all-mcp/mcpb/EXTRA.md"
