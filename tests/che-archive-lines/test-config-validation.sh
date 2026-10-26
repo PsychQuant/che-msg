@@ -218,6 +218,25 @@ run_pty $'\n\n' calibrate; rc=$?
 if [ "$rc" -eq 0 ] && grep -q '"menu_offset_y": 240,' "$CONFIG"; then ok "calibrate: an empty menu offset stores the default 240"
 else bad "calibrate empty (exit $rc): $(tr '\n' ' ' < "$CONFIG" 2>/dev/null)"; fi
 
+# ---- calibrate needs an interactive terminal (PsychQuant/che-msg#52) ----
+# Without one, the Enter prompt either hit end of input and ended silently
+# under set -e, or, with two lines piped in, recorded wherever the mouse was
+# and overwrote a good calibration. It must stop before bringing LINE forward.
+unchanged() { cmp -s "$CONFIG" "$SCRATCH/before.json"; }
+untouched() { [ ! -e "$SCRATCH/osascript.log" ] && [ ! -e "$SCRATCH/clicks.log" ]; }
+reset; write_config -40 30 240; cp "$CONFIG" "$SCRATCH/before.json"
+run calibrate < /dev/null; rc=$?
+if [ "$rc" -ne 0 ] && unchanged && untouched && grep -q '互動式終端機' "$SCRATCH/out.log"; then ok "calibrate < /dev/null: says it needs a terminal, LINE not activated, config unchanged"
+else bad "calibrate < /dev/null (exit $rc, config unchanged: $(unchanged && echo yes || echo no), osascript ran: $([ -e "$SCRATCH/osascript.log" ] && echo yes || echo no))"; fi
+reset; write_config -40 30 240; cp "$CONFIG" "$SCRATCH/before.json"
+export STUB_POS="5,5"; printf '\n\n' | run calibrate; rc=$?; unset STUB_POS
+if [ "$rc" -ne 0 ] && unchanged && untouched && grep -q '互動式終端機' "$SCRATCH/out.log"; then ok "calibrate with two lines piped in: same, the calibration is not overwritten"
+else bad "calibrate piped (exit $rc, config unchanged: $(unchanged && echo yes || echo no), osascript ran: $([ -e "$SCRATCH/osascript.log" ] && echo yes || echo no)): $(tr '\n' ' ' < "$CONFIG")"; fi
+reset
+printf '\n250\n' | run calibrate; rc=$?
+if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && untouched && grep -q '互動式終端機' "$SCRATCH/out.log"; then ok "calibrate piped, no config yet: none is written"
+else bad "calibrate piped, no config (exit $rc, config written: $([ -e "$CONFIG" ] && echo yes || echo no))"; fi
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
