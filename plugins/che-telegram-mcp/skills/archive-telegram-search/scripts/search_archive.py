@@ -11,13 +11,14 @@ from __future__ import annotations
 import argparse
 import datetime
 import errno
+import heapq
 import json
 import os
 import re
 import stat
 import subprocess
 import sys
-from typing import Callable, NamedTuple, Optional
+from typing import Callable, Iterator, NamedTuple, Optional
 
 MAX_RESULTS_DEFAULT, MAX_RESULTS_LIMIT = 20, 100
 SNIPPET_DEFAULT, SNIPPET_MIN, SNIPPET_MAX = 80, 20, 200
@@ -43,8 +44,13 @@ OFFSET = re.compile(r"[+-]([0-9]{2}):([0-9]{2})")
 # reaches a terminal or hides in what the model reads: C1 controls and DEL, the soft hyphen,
 # zero-width and joiner characters, bidi marks and controls, line/paragraph separators,
 # invisible operators, the BOM, interlinear annotation controls and the tag characters.
-UNSAFE = re.compile(r"[\x7f-\x9f\xad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069"
-                    r"\ufeff\ufff9-\ufffb\U000e0000-\U000e007f]")
+# Also the variation selectors U+FE00-FE0E and U+E0100-E01EF and the fillers that render as
+# nothing (U+034F, U+115F, U+1160, U+180E, U+3164, U+FFA0, U+FFFC). U+FE0F stays raw: it
+# selects the emoji form after a symbol such as U+2764, and a run of it carries no more than
+# its length.
+UNSAFE = re.compile(r"[\x7f-\x9f\xad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e"
+                    r"\u2060-\u2064\u2066-\u2069\u3164\ufe00-\ufe0e\ufeff\uffa0\ufff9-\ufffc"
+                    r"\U000e0000-\U000e007f\U000e0100-\U000e01ef]")
 # git sees only these, so no GIT_* variable from the caller (GIT_DIR, GIT_CEILING_DIRECTORIES,
 # GIT_CONFIG_COUNT/KEY/VALUE, GIT_CONFIG_PARAMETERS, GIT_CONFIG_GLOBAL, ...) changes the answer:
 # the repository's own rules plus the system and global config, as git reads them in a plain shell.
@@ -147,23 +153,36 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 # ---------------------------------------------------------------- finding day files
-# Every directory is opened once, without following a symbolic link, and everything below
-# it is reached relative to that descriptor (dir_fd), so a directory swapped for a link
-# after it was found is never followed. Paths are kept only for the git check.
-
-class ChatDir(NamedTuple):
-    chat_id: int
-    fd: int
-    path: str   # absolute, below the archive's real path; what the git check sees
-
+# Every directory is opened without following a symbolic link, and everything below it is
+# reached relative to that descriptor (dir_fd). Discovery opens each chat directory briefly,
+# records its identity (device and inode) and its day files, and closes it. After the git
+# check each chat is opened again, accepted only when it is the same directory and its path
+# still names it, read and closed. So a directory swapped for a link or for another directory
+# is never read, and only a few descriptors are open whatever the number of chats.
 
 class DayRef(NamedTuple):
     chat_id: int
-    dir_fd: int
-    name: str   # <YYYY-MM-DD>.md, opened relative to dir_fd
+    name: str   # <YYYY-MM-DD>.md, opened relative to its chat directory
     path: str   # absolute; what the git check sees
     rel: str    # <chat_id>/<YYYY-MM-DD>.md
     date: str
+
+
+class ChatDir(NamedTuple):
+    chat_id: int
+    name: str
+    path: str                    # absolute, below the archive's real path
+    identity: tuple[int, int]    # (st_dev, st_ino) when it was listed
+    days: list[DayRef]
+
+
+def identity(st: os.stat_result) -> tuple[int, int]:
+    return st.st_dev, st.st_ino
+
+
+def open_dir(name: str, dir_fd: Optional[int]) -> int:
+    """A directory descriptor; `name` is relative to `dir_fd`, or absolute when it is None."""
+    return os.open(name, DIR_FLAGS, dir_fd=dir_fd)
 
 
 def open_archive(path: str) -> tuple[str, int]:
@@ -171,28 +190,53 @@ def open_archive(path: str) -> tuple[str, int]:
     if not os.path.isabs(path):
         raise Refusal("archive_missing", "--archive must be an absolute path")
     real = os.path.realpath(path)
-    try:
-        return real, os.open(real, DIR_FLAGS)
-    except OSError:
+    if not os.path.isdir(real):
         raise Refusal("archive_missing", f"{real} is not a directory; nothing has been archived there yet")
-
-
-def still_bound(path: str, fd: int) -> bool:
-    """Whether `path` still names, without a link, the directory open as `fd`."""
     try:
-        st, now = os.stat(path, follow_symlinks=False), os.fstat(fd)
+        return real, open_dir(real, None)
+    except OSError as e:
+        raise Refusal("archive_missing", f"{real} cannot be listed ({errno.errorcode.get(e.errno, e.errno)})")
+
+
+def names_dir(path: str, ident: tuple[int, int]) -> bool:
+    """Whether `path` names, without a link, the directory whose identity is `ident`."""
+    try:
+        st = os.stat(path, follow_symlinks=False)
     except OSError:
         return False
-    return stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == (now.st_dev, now.st_ino)
+    return stat.S_ISDIR(st.st_mode) and identity(st) == ident
 
 
-def chat_dirs(archive: str, archive_fd: int, wanted: set[int]) -> tuple[list[ChatDir], list[dict], list[int]]:
-    """(chat directories to search, skipped, requested chat ids with no directory)."""
+def list_days(chat_id: int, fd: int, path: str, since: Optional[str],
+              until: Optional[str]) -> tuple[list[DayRef], list[dict]]:
+    """(day files of one open chat directory by name, skipped)."""
+    names = sorted(os.listdir(fd))
+    days, skipped = [], []
+    for name in names:
+        m = DAY_FILE.fullmatch(name)
+        if not m or (since and m.group(1) < since) or (until and m.group(1) > until):
+            continue
+        rel = f"{chat_id}/{name}"
+        try:
+            regular = stat.S_ISREG(os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode)
+        except OSError:
+            skipped.append({"file": rel, "reason": "unreadable"})
+            continue
+        if regular:
+            days.append(DayRef(chat_id, name, os.path.join(path, name), rel, m.group(1)))
+        else:
+            skipped.append({"file": rel, "reason": "not-regular-file"})
+    return days, skipped
+
+
+def chat_dirs(archive: str, archive_fd: int, wanted: set[int], since: Optional[str],
+              until: Optional[str]) -> tuple[list[ChatDir], list[dict], list[int]]:
+    """(chat directories with their day files, skipped, requested chat ids with no entry)."""
     try:
         names = sorted(os.listdir(archive_fd))
     except OSError as e:
         raise Refusal("archive_missing", f"{archive} cannot be listed ({errno.errorcode.get(e.errno, e.errno)})")
-    found, skipped, seen = [], [], set()
+    chats, skipped, seen = [], [], set()
     for name in names:
         chat_id = decimal(name) if CHAT_ID.fullmatch(name) else None
         if chat_id is None or (wanted and chat_id not in wanted):
@@ -203,59 +247,73 @@ def chat_dirs(archive: str, archive_fd: int, wanted: set[int]) -> tuple[list[Cha
         except OSError:
             skipped.append({"file": name, "reason": "unreadable"})
             continue
-        if stat.S_ISLNK(mode):
-            skipped.append({"file": name, "reason": "symlinked-chat-directory"})
-            continue
-        if not stat.S_ISDIR(mode):
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            if stat.S_ISLNK(mode) or wanted:
+                skipped.append({"file": name, "reason": "symlinked-chat-directory" if stat.S_ISLNK(mode) else "not-a-directory"})
             continue
         try:
-            found.append(ChatDir(chat_id, os.open(name, DIR_FLAGS, dir_fd=archive_fd), os.path.join(archive, name)))
+            fd = open_dir(name, archive_fd)
         except OSError as e:
             reason = "changed-during-search" if e.errno in (errno.ENOTDIR, errno.ELOOP) else "unreadable"
             skipped.append({"file": name, "reason": reason})
-    return found, skipped, sorted(c for c in wanted if c not in seen)
-
-
-def day_files(chat: ChatDir, since: Optional[str] = None,
-              until: Optional[str] = None) -> tuple[list[DayRef], list[dict]]:
-    """(day files of one chat directory by name, skipped)."""
-    try:
-        names = sorted(os.listdir(chat.fd))
-    except OSError:
-        return [], [{"file": str(chat.chat_id), "reason": "unreadable"}]
-    refs, skipped = [], []
-    for name in names:
-        m = DAY_FILE.fullmatch(name)
-        if not m or (since and m.group(1) < since) or (until and m.group(1) > until):
             continue
-        rel = f"{chat.chat_id}/{name}"
+        path = os.path.join(archive, name)
         try:
-            regular = stat.S_ISREG(os.stat(name, dir_fd=chat.fd, follow_symlinks=False).st_mode)
+            ident = identity(os.fstat(fd))
+            days, more = list_days(chat_id, fd, path, since, until)
         except OSError:
-            skipped.append({"file": rel, "reason": "unreadable"})
+            skipped.append({"file": name, "reason": "unreadable"})
             continue
-        if regular:
-            refs.append(DayRef(chat.chat_id, chat.fd, name, os.path.join(chat.path, name), rel, m.group(1)))
-        else:
-            skipped.append({"file": rel, "reason": "not-regular-file"})
-    return refs, skipped
+        finally:
+            os.close(fd)
+        skipped += more
+        chats.append(ChatDir(chat_id, name, path, ident, days))
+    return chats, skipped, sorted(c for c in wanted if c not in seen)
 
 
 def discover(archive: str, archive_fd: int, wanted: set[int], since: Optional[str] = None,
-             until: Optional[str] = None) -> tuple[list[ChatDir], list[DayRef], list[dict], list[int]]:
-    """Chat directories and their day files, checked by git, with the ones that changed since dropped."""
-    chats, skipped, missing = chat_dirs(archive, archive_fd, wanted)
-    refs = []
-    for chat in chats:
-        found, more = day_files(chat, since, until)
-        refs += found
-        skipped += more
-    guard(archive, refs)
-    if not still_bound(archive, archive_fd):
+             until: Optional[str] = None) -> tuple[list[ChatDir], list[dict], list[int]]:
+    """Chat directories and their day files, all checked by git before any is read."""
+    chats, skipped, missing = chat_dirs(archive, archive_fd, wanted, since, until)
+    guard(archive, [d for c in chats for d in c.days])
+    if not names_dir(archive, identity(os.fstat(archive_fd))):
         raise Refusal("archive_missing", f"{archive} changed during the search; nothing was read")
-    moved = {c.chat_id for c in chats if not still_bound(c.path, c.fd)}
-    skipped += [{"file": str(c), "reason": "changed-during-search"} for c in sorted(moved)]
-    return chats, [r for r in refs if r.chat_id not in moved], skipped, missing
+    return chats, skipped, missing
+
+
+def reopen(archive_fd: int, chat: ChatDir) -> Optional[int]:
+    """The chat directory again, when it is the one that was listed and its path still names it."""
+    try:
+        fd = open_dir(chat.name, archive_fd)
+    except OSError:
+        return None
+    if identity(os.fstat(fd)) == chat.identity and names_dir(chat.path, chat.identity):
+        return fd
+    os.close(fd)
+    return None
+
+
+def each_day(archive_fd: int, chats: list[ChatDir], skipped: list[dict],
+             wants: Callable[[int], bool] = lambda chat_id: True) -> Iterator[tuple[DayRef, str, str]]:
+    """(day file, body, utc_offset) for every readable day file, one chat directory open at a time."""
+    for chat in chats:
+        if not chat.days or not wants(chat.chat_id):
+            continue
+        fd = reopen(archive_fd, chat)
+        if fd is None:
+            skipped.append({"file": str(chat.chat_id), "reason": "changed-during-search"})
+            continue
+        try:
+            for ref in chat.days:
+                if not wants(chat.chat_id):
+                    break
+                body, offset = read_day(ref, fd)
+                if body is None:
+                    skipped.append({"file": ref.rel, "reason": offset})
+                    continue
+                yield ref, body, offset
+        finally:
+            os.close(fd)
 
 
 # ---------------------------------------------------------------- git-ignore guard
@@ -297,10 +355,10 @@ def guard(archive: str, refs: list[DayRef]) -> None:
 
 # ---------------------------------------------------------------- reading a day file
 
-def read_day(ref: DayRef) -> tuple[Optional[str], str]:
+def read_day(ref: DayRef, dir_fd: int) -> tuple[Optional[str], str]:
     """(body text, utc_offset) of a day file, or (None, reason) when it is not searched."""
     try:
-        fd = os.open(ref.name, FILE_FLAGS, dir_fd=ref.dir_fd)
+        fd = os.open(ref.name, FILE_FLAGS, dir_fd=dir_fd)
     except OSError as e:
         return None, "not-regular-file" if e.errno in (errno.ELOOP, errno.ENXIO) else "unreadable"
     with os.fdopen(fd, "rb") as fh:
@@ -342,20 +400,22 @@ def frontmatter(text: str, ref: DayRef) -> tuple[Optional[str], str]:
     return (body[1:] if body.startswith("\n") else body), offset
 
 
-def blocks(body: str) -> list[tuple[int, list[str]]]:
-    """[(message id, block lines after the anchor)] in file order; a repeated id keeps its first block."""
-    out, seen, current = [], set(), None
+def blocks(body: str) -> Iterator[tuple[int, list[str]]]:
+    """(message id, block lines after the anchor) in file order; a repeated id keeps its first block."""
+    seen, mid, current = set(), 0, None
     for line in body.split("\n"):
         m = ANCHOR.fullmatch(line)
-        mid = decimal(m.group(1)) if m else None
-        if mid is not None:
-            current = []
-            if mid not in seen:
-                seen.add(mid)
-                out.append((mid, current))
-        elif current is not None:
-            current.append(line)
-    return out
+        new = decimal(m.group(1)) if m else None
+        if new is None:
+            if current is not None:
+                current.append(line)
+            continue
+        if current is not None:
+            yield mid, current
+        mid, current = (new, []) if new not in seen else (0, None)
+        seen.add(new)
+    if current is not None:
+        yield mid, current
 
 
 def annotations(lines: list[str]) -> tuple[list[str], bool]:
@@ -373,8 +433,8 @@ def message(lines: list[str]) -> tuple[Optional[str], Optional[str], str, list[s
 
     Annotations are the lines beginning with <!-- between the anchor and the header (where
     #72's marker sits) and nowhere else: a body line can begin with <!-- unescaped (the
-    writer's hasPrefix compares grapheme clusters, so <!-- plus a combining mark is not
-    escaped). With no header there are no annotations and every line is text."""
+    writer's hasPrefix compared grapheme clusters before a13427c, so <!-- plus a combining
+    mark was not escaped). With no header there are no annotations and every line is text."""
     k = 0
     while k < len(lines) and lines[k].startswith("<!--"):
         k += 1
@@ -393,7 +453,8 @@ def message(lines: list[str]) -> tuple[Optional[str], Optional[str], str, list[s
 # ---------------------------------------------------------------- output pieces
 
 def cut(text: Optional[str], limit: int) -> Optional[str]:
-    return text if text is None or len(text) <= limit else text[:limit] + ELLIPSIS
+    """`text` in at most `limit` characters, ELLIPSIS included."""
+    return text if text is None or len(text) <= limit else text[:limit - 1] + ELLIPSIS
 
 
 def original_index(text: str, folded_pos: int) -> int:
@@ -426,21 +487,30 @@ def folded_span(text: str, folded: str, needle: str) -> Optional[tuple[int, int]
 
 
 def snippet(text: str, folded: str, first_term: Optional[str], width: int) -> str:
-    """At most `width` characters of the text as shown (line breaks as LINE_MARK), around the
-    first occurrence of `first_term` or from the start, with ELLIPSIS where it was cut. Only
-    the part of the text around the hit is rendered, so a long message is not copied."""
+    """At most `width` characters of the text as shown (line breaks as LINE_MARK), ELLIPSIS
+    included, around the first occurrence of `first_term` or from the start. Positions are in
+    the rendering; only the part of the text around the hit is rendered."""
+    widen = len(LINE_MARK) - 1
+    total = len(text) + widen * text.count("\n")
+    if total <= width:
+        return text.replace("\n", LINE_MARK)
     span = folded_span(text, folded, first_term) if first_term else None
-    lo, hi = (max(0, span[0] - width), min(len(text), span[1] + width)) if span else (0, min(len(text), width + 1))
-    shown = text[lo:hi].replace("\n", LINE_MARK)
-    start = 0
-    if span:
-        widen = len(LINE_MARK) - 1
-        s = span[0] - lo + widen * text.count("\n", lo, span[0])
-        e = span[1] - lo + widen * text.count("\n", lo, span[1])
-        start = s if e - s >= width else max(0, min(s - (width - (e - s)) // 2, len(shown) - width))
-    end = min(start + width, len(shown))
-    before, after = lo > 0 or start > 0, hi < len(text) or end < len(shown)
-    return (ELLIPSIS if before else "") + shown[start:end] + (ELLIPSIS if after else "")
+    if span is None:
+        lo, hi, start, w = 0, min(len(text), width + 1), 0, width - 1
+    else:
+        s = span[0] + widen * text.count("\n", 0, span[0])
+        e = span[1] + widen * text.count("\n", 0, span[1])
+        w = width - 2   # room for an ellipsis on each side
+        start = s if e - s >= w else max(0, min(s - (w - (e - s)) // 2, total - w))
+        if start == 0:
+            w = width - 1
+        elif start + w >= total:
+            w = width - 1
+            start = total - w
+        lo, hi = max(0, span[0] - width), min(len(text), span[1] + width + 1)
+    offset = lo + widen * text.count("\n", 0, lo)
+    shown = text[lo:hi].replace("\n", LINE_MARK)[start - offset:start - offset + w]
+    return (ELLIPSIS if start > 0 else "") + shown + (ELLIPSIS if start + w < total else "")
 
 
 def record(ref: DayRef, offset: str, mid: int, parsed: tuple) -> dict:
@@ -454,68 +524,63 @@ def skipped_part(skipped: list[dict]) -> dict:
     return {"skipped": skipped[:SKIPPED_LISTED], "skipped_count": len(skipped)}
 
 
-def close_all(archive_fd: int, chats: list[ChatDir]) -> None:
-    for fd in [c.fd for c in chats] + [archive_fd]:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-
-
 # ---------------------------------------------------------------- the two modes
 
 def search(archive: str, archive_fd: int, args: argparse.Namespace) -> dict:
-    chats, refs, skipped, missing = [], [], [], []
+    """Only the `max_results` newest matches are kept (a heap), however many match."""
     try:
-        chats, refs, skipped, missing = discover(archive, archive_fd, set(args.chat), args.since, args.until)
+        chats, skipped, missing = discover(archive, archive_fd, set(args.chat), args.since, args.until)
         terms = [t.casefold() for t in args.text]
         sender_term = args.sender.casefold() if args.sender else None
-        hits, searched = [], 0
-        for ref in refs:
-            body, offset = read_day(ref)
-            if body is None:
-                skipped.append({"file": ref.rel, "reason": offset})
-                continue
+        kept, matched, searched, order = [], 0, 0, 0
+        for ref, body, offset in each_day(archive_fd, chats, skipped):
             searched += 1
             for mid, lines in blocks(body):
                 parsed = message(lines)
                 text, sender = parsed[2], parsed[1]
                 folded = text.casefold()
-                if all(t in folded for t in terms) and (sender_term is None or sender_term in (sender or "").casefold()):
-                    hit = record(ref, offset, mid, parsed)
-                    hit["snippet"] = snippet(text, folded, args.text[0] if args.text else None, args.snippet_chars)
-                    hits.append(hit)
+                if not all(t in folded for t in terms) or (sender_term is not None
+                                                            and sender_term not in (sender or "").casefold()):
+                    continue
+                matched += 1
+                key = (ref.date, parsed[0] or "", ref.chat_id, mid)
+                if len(kept) >= args.max_results and key <= kept[0][0]:
+                    continue
+                hit = record(ref, offset, mid, parsed)
+                hit["snippet"] = snippet(text, folded, args.text[0] if args.text else None, args.snippet_chars)
+                item, order = (key, order, hit), order + 1
+                if len(kept) < args.max_results:
+                    heapq.heappush(kept, item)
+                else:
+                    heapq.heapreplace(kept, item)
     finally:
-        close_all(archive_fd, chats)
-    hits.sort(key=lambda h: (h["date"], h["time"] or "", h["chat_id"], h["message_id"]), reverse=True)
-    shown = hits[:args.max_results]
-    return dict({"archive": archive, "searched_files": searched, "matched": len(hits), "shown": len(shown),
-                 "truncated": len(hits) > len(shown), "results": shown, "missing_chats": missing},
+        os.close(archive_fd)
+    shown = [hit for _, _, hit in sorted(kept, reverse=True)]
+    return dict({"archive": archive, "searched_files": searched, "matched": matched, "shown": len(shown),
+                 "truncated": matched > len(shown), "results": shown, "missing_chats": missing},
                 **skipped_part(skipped))
 
 
 def cite(archive: str, archive_fd: int, args: argparse.Namespace) -> dict:
     wanted = list(dict.fromkeys(args.cite))
-    chats, out = [], {}
+    out = {}
     try:
-        chats, refs, skipped, _ = discover(archive, archive_fd, {c for c, _ in wanted})
+        chats, skipped, _ = discover(archive, archive_fd, {c for c, _ in wanted})
         pending = set(wanted)
-        for ref in refs:
-            if not any(c == ref.chat_id for c, _ in pending):
-                continue
-            body, offset = read_day(ref)
-            if body is None:
-                skipped.append({"file": ref.rel, "reason": offset})
-                continue
-            for mid, lines in blocks(body):
-                if (ref.chat_id, mid) in pending:
-                    parsed = message(lines)
-                    text = parsed[2]
-                    out[(ref.chat_id, mid)] = dict(record(ref, offset, mid, parsed),
-                                                   text=text[:TEXT_CAP], text_truncated=len(text) > TEXT_CAP)
-                    pending.discard((ref.chat_id, mid))
+        days = each_day(archive_fd, chats, skipped, lambda chat_id: any(c == chat_id for c, _ in pending))
+        try:
+            for ref, body, offset in days:
+                for mid, lines in blocks(body):
+                    if (ref.chat_id, mid) in pending:
+                        parsed = message(lines)
+                        text = parsed[2]
+                        out[(ref.chat_id, mid)] = dict(record(ref, offset, mid, parsed),
+                                                       text=text[:TEXT_CAP], text_truncated=len(text) > TEXT_CAP)
+                        pending.discard((ref.chat_id, mid))
+        finally:
+            days.close()
     finally:
-        close_all(archive_fd, chats)
+        os.close(archive_fd)
     return dict({"archive": archive, "blocks": [out[k] for k in wanted if k in out],
                  "not_found": [f"telegram:{c}/{m}" for c, m in wanted if (c, m) not in out]},
                 **skipped_part(skipped))
