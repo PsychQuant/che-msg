@@ -49,11 +49,12 @@ public enum ArchiveDayFile {
     /// Seconds east of UTC for `+HH:MM` / `-HH:MM` up to ±18:00 (the range Foundation's
     /// `TimeZone(secondsFromGMT:)` accepts), or nil when malformed or out of range.
     public static func offsetSeconds(_ text: String) -> Int? {
-        let chars = Array(text)
-        let isDigit: (Character) -> Bool = { ("0"..."9").contains($0) }
+        let chars = Array(text.unicodeScalars)   // by scalar: a combining mark is not part of a digit
+        let isDigit: (Unicode.Scalar) -> Bool = { ("0"..."9").contains($0) }
+        let number: (ArraySlice<Unicode.Scalar>) -> Int? = { Int(String(String.UnicodeScalarView($0))) }
         guard chars.count == 6, chars[0] == "+" || chars[0] == "-", chars[3] == ":",
               chars[1...2].allSatisfy(isDigit), chars[4...5].allSatisfy(isDigit),
-              let hours = Int(String(chars[1...2])), let minutes = Int(String(chars[4...5])),
+              let hours = number(chars[1...2]), let minutes = number(chars[4...5]),
               minutes <= 59, hours * 3600 + minutes * 60 <= 18 * 3600 else { return nil }
         let seconds = hours * 3600 + minutes * 60
         return chars[0] == "-" ? -seconds : seconds
@@ -91,10 +92,13 @@ public enum ArchiveDayFile {
     /// block start at its unchanged anchor line.
     public static let provisionalMarker = "<!-- provisional: local-cache -->"
 
-    /// True when `blockText` (a block as `parseBlocks` returns it) has the marker as its second line.
+    /// True when `blockText` (a block as `parseBlocks` returns it) has as its second line exactly
+    /// the scalars of the marker.
     static func isProvisional(_ blockText: String) -> Bool {
-        let lines = blockText.split(separator: "\n", maxSplits: 2, omittingEmptySubsequences: false)
-        return lines.count >= 2 && lines[1] == provisionalMarker
+        let scalars = blockText.unicodeScalars
+        guard let firstEnd = scalars.firstIndex(of: "\n") else { return false }
+        let second = scalars[scalars.index(after: firstEnd)...].prefix { $0 != "\n" }
+        return second.elementsEqual(provisionalMarker.unicodeScalars)
     }
 
     /// One message block: anchor, the provisional marker when `provisional`, `**HH:mm sender**：`,
@@ -103,16 +107,11 @@ public enum ArchiveDayFile {
     public static func block(_ message: ArchiveMessage, offsetSeconds: Int, provisional: Bool = false) -> String {
         let time = formatter("HH:mm", offsetSeconds).string(from: message.date)
         // The sender sits on the header line: a line break in it would start a new line that
-        // the parser could read as an anchor, so line breaks become spaces.
-        let sender = message.sender
-            .replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-        let body = message.body
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { isAnchorOrHeaderShaped($0) ? "\\" + $0 : String($0) }
+        // the parser could read as an anchor, so line breaks become spaces. Line breaks and line
+        // starts are found by scalar, as every reader of the file finds them.
+        let sender = ScalarText.replacingLineBreaks(in: message.sender, with: " ")
+        let body = ScalarText.lines(ScalarText.replacingLineBreaks(in: message.body, with: "\n"))
+            .map { isAnchorOrHeaderShaped($0) ? "\\" + $0 : $0 }
             .joined(separator: "\n")
         let marker = provisional ? provisionalMarker + "\n" : ""
         return "\(anchor(message.id))\n\(marker)**\(time) \(sender)**：\n\(body)\n\n"
@@ -121,9 +120,8 @@ public enum ArchiveDayFile {
     /// A body line that starts like an anchor, or begins like a block header (`**` and a time,
     /// as in `**HH:mm name**：`), is escaped with a leading backslash so it cannot pass for the
     /// start of another message to the parser or to a reader.
-    private static func isAnchorOrHeaderShaped(_ line: Substring) -> Bool {
-        line.hasPrefix("<!--")
-            || line.range(of: #"^\*\*[0-9]{1,2}:[0-9]{2}"#, options: .regularExpression) != nil
+    private static func isAnchorOrHeaderShaped(_ line: String) -> Bool {
+        ScalarText.starts(line, with: "<!--") || ScalarText.startsLikeHeader(line)
     }
 
     /// Refuses when a day file in `directory` was written at another offset, or has no readable one.
@@ -189,12 +187,13 @@ public enum ArchiveDayFile {
     /// Lines are split on LF only, as the tool writes them: a file with CRLF frontmatter was edited
     /// elsewhere and the merge parser would not read its blocks, so it reads as unreadable.
     static func recordedOffset(_ text: String) -> String? {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        guard lines.first == "---" else { return nil }
+        let lines = ScalarText.lines(text)
+        guard let first = lines.first, ScalarText.equals(first, "---") else { return nil }
         for line in lines.dropFirst().prefix(8) {
-            if line == "---" { break }
-            guard line.hasPrefix("utc_offset: ") else { continue }
-            let value = line.dropFirst("utc_offset: ".count).trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
+            if ScalarText.equals(line, "---") { break }
+            guard ScalarText.starts(line, with: "utc_offset: ") else { continue }
+            let value = String(String.UnicodeScalarView(line.unicodeScalars.dropFirst("utc_offset: ".unicodeScalars.count)))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
             return offsetSeconds(value) == nil ? nil : value
         }
         return nil
@@ -231,7 +230,7 @@ public enum ArchiveDayFile {
         let parts = split(existing ?? "")
         var blocks: [Int64: String] = [:]
         for block in parts.blocks where blocks[block.id] == nil {
-            blocks[block.id] = block.text.hasSuffix("\n") ? block.text : block.text + "\n"
+            blocks[block.id] = block.text.unicodeScalars.last == "\n" ? block.text : block.text + "\n"
         }
         var added: [Int64] = []
         var upgraded: [Int64] = []
@@ -277,7 +276,7 @@ public enum ArchiveDayFile {
         // stays inside its line, so it cannot make text pass for either); a file it would rewrite —
         // to add a message, or to upgrade a provisional block (#72) — is refused (#76).
         if let existing, existing.unicodeScalars.contains("\r") {
-            let wouldWrite = merged(existing: existing.replacingOccurrences(of: "\r\n", with: "\n"), chatId: chatId,
+            let wouldWrite = merged(existing: ScalarText.replacingCRLF(in: existing), chatId: chatId,
                                     day: day, utcOffset: utcOffset, messages: messages, provisional: provisional)
             guard wouldWrite.added.isEmpty, wouldWrite.upgraded.isEmpty else { throw WriteError.carriageReturn(day: day) }
             return ([], [])
@@ -302,19 +301,19 @@ public enum ArchiveDayFile {
         return (added, upgraded)
     }
 
-    /// Frontmatter dropped; text between it and the first anchor kept as `preamble`.
+    /// Frontmatter dropped; text between it and the first anchor kept as `preamble`. Lines are
+    /// found by LF scalar; every index used to cut the text sits right after an LF, which always
+    /// ends a `Character`.
     private static func split(_ content: String) -> (preamble: String, blocks: [(id: Int64, text: String)]) {
         var rest = Substring(content)
-        if rest.hasPrefix("---\n"), let end = rest.dropFirst(4).range(of: "\n---\n") {
-            rest = rest[end.upperBound...]
-            if rest.hasPrefix("\n") { rest = rest.dropFirst() }
-        }
+        if let body = afterFrontmatter(rest) { rest = body }
+        let scalars = rest.unicodeScalars
         var starts: [(id: Int64, index: Substring.Index)] = []
-        var lineStart = rest.startIndex
-        while lineStart < rest.endIndex {
-            let lineEnd = rest[lineStart...].firstIndex(of: "\n") ?? rest.endIndex
-            if let id = anchorId(rest[lineStart..<lineEnd]) { starts.append((id, lineStart)) }
-            lineStart = lineEnd < rest.endIndex ? rest.index(after: lineEnd) : rest.endIndex
+        var lineStart = scalars.startIndex
+        while lineStart < scalars.endIndex {
+            let lineEnd = scalars[lineStart...].firstIndex(of: "\n") ?? scalars.endIndex
+            if let id = anchorId(scalars[lineStart..<lineEnd]) { starts.append((id, lineStart)) }
+            lineStart = lineEnd < scalars.endIndex ? scalars.index(after: lineEnd) : scalars.endIndex
         }
         guard let first = starts.first else { return (String(rest), []) }
         var blocks: [(id: Int64, text: String)] = []
@@ -325,11 +324,31 @@ public enum ArchiveDayFile {
         return (String(rest[rest.startIndex..<first.index]), blocks)
     }
 
-    private static func anchorId(_ line: Substring) -> Int64? {
-        guard line.hasPrefix("<!-- msg:"), line.hasSuffix(" -->") else { return nil }
-        let digits = line.dropFirst("<!-- msg:".count).dropLast(" -->".count)
-        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
-        return Int64(digits)
+    /// The text after a leading frontmatter block (`---` lines) and one blank line, or nil when
+    /// `content` does not start with frontmatter.
+    private static func afterFrontmatter(_ content: Substring) -> Substring? {
+        let scalars = content.unicodeScalars
+        guard scalars.starts(with: "---\n".unicodeScalars) else { return nil }
+        let close = Array("\n---\n".unicodeScalars)
+        var i = scalars.index(scalars.startIndex, offsetBy: 4)   // after the opening line
+        while i < scalars.endIndex {
+            guard scalars[i...].starts(with: close) else { i = scalars.index(after: i); continue }
+            var after = scalars.index(i, offsetBy: close.count)
+            if after < scalars.endIndex, scalars[after] == "\n" { after = scalars.index(after: after) }
+            return content[after...]
+        }
+        return nil
+    }
+
+    /// The id of an anchor line: exactly the scalars `<!-- msg:`, ASCII digits, ` -->`.
+    private static func anchorId(_ line: Substring.UnicodeScalarView.SubSequence) -> Int64? {
+        let scalars = Array(line)
+        let head = Array("<!-- msg:".unicodeScalars), tail = Array(" -->".unicodeScalars)
+        guard scalars.count > head.count + tail.count, scalars.starts(with: head),
+              scalars.suffix(tail.count).elementsEqual(tail) else { return nil }
+        let digits = scalars[head.count..<(scalars.count - tail.count)]
+        guard digits.allSatisfy({ ("0"..."9").contains($0) }) else { return nil }
+        return Int64(String(String.UnicodeScalarView(digits)))
     }
 
     private static func formatter(_ format: String, _ offsetSeconds: Int) -> DateFormatter {

@@ -631,4 +631,80 @@ final class ArchiveDayFileTests: XCTestCase {
         XCTAssertEqual(again.added + again.upgraded, [])
         XCTAssertEqual(try Data(contentsOf: file), afterUpgrade)
     }
+
+    // MARK: - Lines compared by Unicode scalar (#72, #76)
+
+    /// Marks that fuse into the character before them: a Swift `Character` comparison then misses
+    /// a `<!--` or a line break that every reader comparing code points sees.
+    private let fusingMarks: [String] = ["\u{301}", "\u{200D}", "\u{FE0F}", "\u{34F}"]
+
+    /// The lines of `text` split at LF scalars, as a reader comparing code points splits them.
+    private func scalarLines(_ text: String) -> [String] {
+        text.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String(String.UnicodeScalarView($0)) }
+    }
+
+    private func startsWithComment(_ line: String) -> Bool { line.unicodeScalars.starts(with: "<!--".unicodeScalars) }
+
+    func testABodyLineStartingWithACommentIsEscapedWhateverMarkFollows() {
+        for mark in fusingMarks {
+            let lines = ["<!--" + mark + " msg:9 -->", "<!--" + mark, "<!-- msg:9 -->" + mark,
+                         "<!-- provisional: local-cache -->" + mark, "**09:00" + mark + " Manager**："]
+            let out = ArchiveDayFile.render(chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+                                            messages: [message(10, minute: 0, body: lines.joined(separator: "\n"))])
+            let comments = scalarLines(out).filter(startsWithComment)
+            XCTAssertEqual(comments, ["<!-- msg:10 -->"], "only the tool's anchor starts with <!-- (\(mark.unicodeScalars.first!.value))")
+            for line in lines {
+                XCTAssertTrue(scalarLines(out).contains("\\" + line), "escaped: \(line.unicodeScalars.map { $0.value })")
+            }
+            XCTAssertEqual(ArchiveDayFile.parseBlocks(out).map(\.id), [10])
+        }
+    }
+
+    func testALineBreakFollowedByAMarkIsStillALineBreak() {
+        for mark in fusingMarks {
+            let m = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "Alex\n" + mark + "<!-- msg:9 -->",
+                                   body: "a\r" + mark + "b\r\n" + mark + "c\n" + mark + "d")
+            let out = ArchiveDayFile.render(chatId: 7, day: "2026-10-11", utcOffset: "+08:00", messages: [m])
+            XCTAssertFalse(out.unicodeScalars.contains("\r"), "the tool's own output has no carriage return")
+            let lines = scalarLines(out)
+            let anchor = lines.firstIndex(of: "<!-- msg:10 -->")!
+            XCTAssertEqual(Array(lines[(anchor + 1)...]), ["**09:00 Alex " + mark + "<!-- msg:9 -->**：",
+                                                           "a", mark + "b", mark + "c", mark + "d", "", ""])
+            XCTAssertEqual(ArchiveDayFile.parseBlocks(out).map(\.id), [10])
+        }
+    }
+
+    /// An anchor or marker with a mark fused into it, or in it, is not one: only those exact scalars count.
+    func testFusedAnchorsAndMarkersAreNotRecognised() {
+        for mark in fusingMarks {
+            let fakes = ["<!-- msg:5 -->" + mark, "<!-- msg:5" + mark + " -->", "<!--" + mark + " msg:5 -->", mark + "<!-- msg:5 -->"]
+            let content = head + "<!-- msg:4 -->\n**09:00 Alex**：\nx\n" + fakes.joined(separator: "\n") + "\n\n"
+            XCTAssertEqual(ArchiveDayFile.parseBlocks(content).map(\.id), [4], "\(mark.unicodeScalars.first!.value)")
+            for fake in ["<!-- provisional: local-cache -->" + mark, "<!-- provisional:" + mark + " local-cache -->",
+                         mark + "<!-- provisional: local-cache -->"] {
+                let block = "<!-- msg:5 -->\n" + fake + "\n**09:00 User 1001**：\nx\n\n"
+                XCTAssertFalse(ArchiveDayFile.isProvisional(block))
+                let (_, _, upgraded) = ArchiveDayFile.merged(existing: head + block, chatId: 7, day: "2026-10-11",
+                                                             utcOffset: "+08:00", messages: [message(5, minute: 0)])
+                XCTAssertEqual(upgraded, [], "a near-marker does not make a block the tool's")
+            }
+        }
+    }
+
+    /// In a day file with carriage returns, a CRLF ends the anchor line even when a mark starts the
+    /// next line, so a file that holds the call's message is still left as it is (#76).
+    func testACRLFBeforeAMarkStillEndsTheAnchorLine() throws {
+        for mark in fusingMarks {
+            let dir = try scratchDir()
+            let file = dir.appendingPathComponent("2026-10-11.md")
+            try Data((validHead + "<!-- msg:5 -->\r\n" + mark + "**09:00 Alex**：\r\na\r\n\r\n").utf8).write(to: file)
+            let before = try Data(contentsOf: file)
+            let five = ArchiveMessage(id: 5, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: "a")
+            let written = try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                   messages: [five])
+            XCTAssertEqual(written.added + written.upgraded, [])
+            XCTAssertEqual(try Data(contentsOf: file), before)
+        }
+    }
 }

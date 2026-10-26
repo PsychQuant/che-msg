@@ -58,6 +58,16 @@ Diagnosis 第 1 點：issue 原本提議把標記放進錨點（`<!-- msg:<id> p
 - 來源是 TDLib 的呼叫，若這個日檔有它讀到的訊息的暫時區塊，就會被拒絕；使用者把檔案改成 LF 之後重跑，升級照常發生。
 - 標記行和錨點一樣以 CRLF 當行尾來讀；單獨的 CR 留在行內，讓那一行不等於標記，所以不會被當成暫時區塊（也就不會因此被拒絕）。
 
+### 日檔的行一律以 Unicode scalar 比對
+
+#80 的 verify 發現：寫入端用 Swift 的 `hasPrefix("<!--")` 判斷要不要加反斜線，而 `hasPrefix`、`==` 與 `String.range(of:options:)` 比的是 `Character`。`<!--` 後面接 U+0301、U+200D、U+FE0F 或 U+034F 時，這個記號和最後一個 `-` 合成同一個 `Character`，判斷就漏掉了；但以 code point 比對的讀者（#80 的搜尋、grep、任何工具）看到的就是以 `<!--` 開頭的行。同一類問題還有三處，一起修：
+
+- 像區塊標頭的行（`**09:00`）：時間的最後一位和記號合在一起時，`range(of:options: .regularExpression)` 也找不到。
+- 換行：Foundation 預設的 `replacingOccurrences` 比的是 composed sequence，CR 或 LF 後面接這類記號時不會被換掉。寄件人名稱裡的換行因此留在標頭行裡；內文的 CR 則留在工具自己寫的日檔裡，下一次合併就會被當成含 CR 的檔案拒絕。
+- 含 CR 的日檔在判斷「會不會改寫」時，先把 CRLF 換成 LF；後面接記號的 CRLF 不會被換掉，錨點行就讀不到。
+
+做法是新的 `ScalarText`：前綴、整行相等、標頭形狀、換行的取代與切行都逐一比 Unicode scalar。錨點與標記只在整行恰為那些 scalar 時才算；判斷的方向和以 code point 比對的讀者一致。這幾處的逃脫與解析都早於 #72（#69 寫的），所以 commit 標 #72、#76。
+
 ### manifest：`upgraded_messages`，`files` 含升級的日檔
 
 Diagnosis 第 3 點：`new_messages`、`media_messages`、`newest_message_file` 與書籤的意義不能因為升級而改變。所以升級另外計數，`upgraded_messages` 一律出現（0 也寫，和 `undated_messages_skipped` 一樣）。`files` 的定義從「加了訊息的日檔」改成「加了訊息或升級了區塊的日檔」：skill 的結尾核對檢查 `files` 裡每個檔案存在、frontmatter 是這個聊天的，被重寫過的日檔正是需要這項檢查的檔案。舊 skill 配新 binary 時，多出來的檔案一樣會通過核對（它們本來就是有效的日檔）。

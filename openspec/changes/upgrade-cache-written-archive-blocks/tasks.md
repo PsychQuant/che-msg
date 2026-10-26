@@ -15,3 +15,7 @@
 ## 4. 與 #76 的 CR 規則合併
 
 - [x] 4.1 先寫失敗的測試（Requirement: Merge and idempotent rewrite 的 Scenario: Carriage return in a day file with a provisional block 與 Example: day files the call refuses）：CRLF 日檔有訊息 5 的暫時區塊時，快取寫入 5、6 原樣保留；TDLib 只寫 6 原樣保留；TDLib 寫 5、6 丟 `carriageReturn` 且位元組不變；改成 LF 後同一個寫入把 5 升級。依設計「含 CR 的日檔：會被升級就算寫入，一樣拒絕」，`write` 對含 CR 的日檔用 CRLF 換成 LF 後的 `merged` 判斷會不會寫。驗證：只看 `added` 的 #76 規則下這個測試失敗（沒有丟錯誤），合併後的實作下 `swift test --filter ArchiveDayFileTests` 通過 [after: 3.1]
+
+## 5. 以 Unicode scalar 比對日檔的行
+
+- [x] 5.1 先寫失敗的測試（Requirement: Day file format 的 Scenario: Comment followed by a combining mark、Line break followed by a combining mark、Anchor with a mark fused into it）：U+0301、U+200D、U+FE0F、U+034F 接在 `<!--`、`<!-- msg:9 -->`、標記、`**09:00` 之後的內文行都被加上反斜線，以 LF scalar 切開輸出後，以 `<!--` 開頭的只有工具寫的錨點；寄件人與內文裡「換行＋記號」仍是換行、輸出沒有 CR；混了記號的錨點與標記不算；含 CR 的日檔裡「CRLF＋記號」仍結束錨點行。依設計「日檔的行一律以 Unicode scalar 比對」以 `ScalarText` 取代 `hasPrefix`、`==`、正規表示式與 `replacingOccurrences`。驗證：修改前 `swift test --filter ArchiveDayFileTests` 有 22 個 assertion 失敗、CRLF 那一項被誤拒；修改後通過 [after: 4.1]
