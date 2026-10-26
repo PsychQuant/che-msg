@@ -38,12 +38,28 @@ SHA256_PIN="d27480f9ebfc06119df091199555f8ee247363a477e54f70af4bb9786c8edadd"
 DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME"
 RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIRED_VERSION"
 
+# When a first install cannot start the server yet, the wrapper answers the
+# pending initialize request with a JSON-RPC 2.0 error, as the telegram-all
+# wrapper does, so /mcp shows the reason (PsychQuant/che-msg#67). $1 MUST NOT
+# contain double quotes or backslashes (callers build it from fixed literals,
+# version numbers and download_failure's phrases), so the JSON needs no
+# escaping.
+fail_startup() {
+    local message="$1"
+    local request_id=null
+    declare -F read_initialize_id >/dev/null && request_id=$(read_initialize_id)
+    printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"%s","data":{"docsUrl":"https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/README.md#when-telegram-bot-does-not-start"}}}\n' \
+        "$request_id" "$message"
+    exit 1
+}
+
+# lib/startup-error.sh reads the initialize request's id for fail_startup;
 # lib/download.sh downloads and installs the binary for both wrappers, and
 # holds version_at_least and read_version_record (PsychQuant/che-msg#56).
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
-if [[ -z "$PLUGIN_ROOT" ]] || ! source "$PLUGIN_ROOT/lib/download.sh"; then
-    echo "$BINARY_NAME: ERROR — the plugin's lib/download.sh cannot be read; reinstall the che-telegram-mcp plugin" >&2
-    exit 1
+if [[ -z "$PLUGIN_ROOT" ]] || ! source "$PLUGIN_ROOT/lib/startup-error.sh" || ! source "$PLUGIN_ROOT/lib/download.sh"; then
+    echo "$BINARY_NAME: ERROR — the plugin's lib/ files cannot be read; reinstall the che-telegram-mcp plugin" >&2
+    fail_startup "The che-telegram-mcp plugin is incomplete: its lib/startup-error.sh or lib/download.sh cannot be read. Reinstall the plugin, then reconnect with /mcp."
 fi
 
 # Find binary
@@ -76,7 +92,8 @@ fi
 # runs on the startup path (lib/download.sh). An installed binary is started at
 # once; the version downloaded is used from the first start after it is
 # installed. With none, the wrapper waits FIRST_INSTALL_WAIT seconds for the
-# download, then says what is happening and exits; the download goes on.
+# download, then answers initialize with what is happening; the download goes
+# on.
 DOWNLOAD_SIZE="about 18 MB"   # told to the user on a first install
 FIRST_INSTALL_WAIT=$(install_wait_seconds 3)   # CHE_TELEGRAM_MCP_INSTALL_WAIT overrides
 if $NEED_DOWNLOAD; then
@@ -91,14 +108,14 @@ if $NEED_DOWNLOAD; then
             installed)
                 BINARY="$INSTALLED_BINARY" ;;
             running)
-                echo "$BINARY_NAME: v$DESIRED_VERSION is not installed yet: it is downloading in the background ($DOWNLOAD_SIZE$(download_progress "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR"))." >&2
-                echo "  Reconnect with /mcp in a minute, once it has finished; the download goes on and resumes if it is interrupted." >&2
-                exit 1 ;;
+                PROBLEM="it is downloading in the background ($DOWNLOAD_SIZE$(download_progress "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR"))"
+                echo "$BINARY_NAME: v$DESIRED_VERSION is not installed yet: $PROBLEM." >&2
+                fail_startup "CheTelegramBotMCP v$DESIRED_VERSION is not installed yet: $PROBLEM. Reconnect with /mcp in a minute, once it has finished; the download goes on after this message and resumes if it is interrupted." ;;
             *)
-                echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $(download_failure "$DOWNLOAD_STATUS")." >&2
-                echo "  Reconnect with /mcp to try again." >&2
+                PROBLEM=$(download_failure "$DOWNLOAD_STATUS")
+                echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $PROBLEM." >&2
                 download_manual_hint "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$SHA256_PIN_VERSION" "$SHA256_PIN"
-                exit 1 ;;
+                fail_startup "CheTelegramBotMCP v$DESIRED_VERSION could not be installed: $PROBLEM. Reconnect with /mcp to try again, or install it by hand as the che-telegram-mcp README describes." ;;
         esac
     fi
 fi

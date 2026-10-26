@@ -163,12 +163,10 @@ asset_calls() { if [ -f "$1/curl.calls" ]; then grep -c '/releases/download/' "$
 nth_asset_call() { grep '/releases/download/' "$1/curl.calls" 2>/dev/null | sed -n "${2}p"; }
 partials() { find "$1/bin" -name '*.part' 2>/dev/null | sort; }
 
-# reason <home> <all|bot>: what the wrapper said when it stopped: telegram-all's
-# JSON-RPC error message, the bot wrapper's stderr.
-reason() {
-    if [ "$2" = all ]; then head -1 "$1/out" | jq -r '.error.message' 2>/dev/null
-    else cat "$1/err"; fi
-}
+# reason <home> <all|bot>: what the wrapper said when it stopped: the message
+# of the JSON-RPC error it answered initialize with (both wrappers answer;
+# telegram-bot from PsychQuant/che-msg#67 on).
+reason() { head -1 "$1/out" | jq -r '.error.message' 2>/dev/null; }
 
 expect_not_installed() {
     local home=$1 name=$2
@@ -307,12 +305,11 @@ for which in all bot; do
         *interrupted*) pass "the reason says the transfer was interrupted" ;;
         *) fail "the reason does not say interrupted: $(reason "$H" "$which" | head -3 | tr '\n' ' ')" ;;
     esac
-    if [ "$which" = all ]; then
-        if head -1 "$H/out" | jq -e '.id == 21 and .error.code == -32000' >/dev/null 2>&1; then
-            pass "telegram-all answers the initialize request"
-        else
-            fail "no JSON-RPC error for id 21: $(head -c 200 "$H/out")"
-        fi
+    DOCS="https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/README.md#when-telegram-$which-does-not-start"
+    if head -1 "$H/out" | jq -e --arg url "$DOCS" '.jsonrpc == "2.0" and .id == 21 and .error.code == -32000 and .error.data.docsUrl == $url' >/dev/null 2>&1; then
+        pass "it answers the initialize request with an error linking its README section"
+    else
+        fail "no JSON-RPC error for id 21 linking $DOCS: $(head -c 300 "$H/out")"
     fi
 done
 

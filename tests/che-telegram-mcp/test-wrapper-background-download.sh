@@ -11,8 +11,7 @@
 #     version is used from the next start;
 #   - with none, it waits a few seconds for the download, then answers
 #     initialize with an error that says the download goes on in the
-#     background (telegram-bot, which has no such error yet, says it on stderr
-#     and exits 1); the download goes on after the wrapper exits;
+#     background; the download goes on after the wrapper exits;
 #   - a complete partial file whose sha256 matches is installed without
 #     downloading again.
 # Acceptance (the #67 Diagnosis, open question 3): the wrapper answers
@@ -30,10 +29,10 @@
 #      started within 5 s, before the download finishes; after the wrapper's
 #      process group is stopped the download completes and installs the asset
 #      with its version record.
-#   2. Nothing installed and a slow download: the start ends within 5 s
-#      (telegram-all with a JSON-RPC error answering initialize), saying the
-#      download continues in the background; after the wrapper's group is
-#      stopped the download completes and installs the asset.
+#   2. Nothing installed and a slow download: the start ends within 5 s with
+#      a JSON-RPC error answering initialize, saying the download continues in
+#      the background; after the wrapper's group is stopped the download
+#      completes and installs the asset.
 #   3. A complete partial file of the pinned version whose sha256 matches:
 #      installed without downloading the asset again.
 #   4. The download writes what it did to its log,
@@ -143,10 +142,9 @@ expect_installed() {   # <home> <name> <version>
     if cmp -s "$1/bin/$2" "$ASSETS/$2"; then pass "~/bin/$2 is now the release asset"; else fail "~/bin/$2 is not the release asset"; fi
     if [ "$(cat "$1/bin/.$2.version" 2>/dev/null)" = "$3" ]; then pass "version record says $3"; else fail "version record: '$(cat "$1/bin/.$2.version" 2>/dev/null)'"; fi
 }
-reason() {
-    if [ "$2" = all ]; then head -1 "$1/out" | jq -r '.error.message' 2>/dev/null
-    else cat "$1/err"; fi
-}
+# reason <home> <all|bot>: the message of the JSON-RPC error the wrapper
+# answered initialize with.
+reason() { head -1 "$1/out" | jq -r '.error.message' 2>/dev/null; }
 
 for which in all bot; do
     NAME=$(asset_name "$which"); PIN=$(pin_of "$which")
@@ -176,9 +174,7 @@ for which in all bot; do
         *"in the background"*) pass "the reason says the download goes on in the background" ;;
         *) fail "the reason does not say so: $(reason "$H" "$which" | head -4 | tr '\n' ' ')" ;;
     esac
-    if [ "$which" = all ]; then
-        if head -1 "$H/out" | jq -e '.id == 4 and .error.code == -32000' >/dev/null 2>&1; then pass "the error answers initialize"; else fail "no JSON-RPC error for id 4: $(head -c 200 "$H/out")"; fi
-    fi
+    if head -1 "$H/out" | jq -e '.id == 4 and .error.code == -32000' >/dev/null 2>&1; then pass "the error answers initialize"; else fail "no JSON-RPC error for id 4: $(head -c 200 "$H/out")"; fi
     if [ ! -e "$H/bin/$NAME" ]; then pass "nothing installed yet"; else fail "already installed (the download should still be running)"; fi
     stop_group "$W"
     if wait_no_fetch "$H" $((SLOW + 15)); then pass "the download ended after the wrapper's group was stopped"; else fail "the download is still running"; fi

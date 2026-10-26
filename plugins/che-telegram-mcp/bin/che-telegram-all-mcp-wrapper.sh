@@ -46,50 +46,9 @@ RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIR
 # another session running telegram-all never stops it (the server decides
 # who opens TDLib).
 #
-# PR-1b (empirical-driven, 2026-05-22): Claude Code drops a response whose id
-# is null as unmatched transport noise, so the error carries the id of the
-# initialize request, read briefly from stdin.
-
-# Read first line of stdin (expected: JSON-RPC initialize request) with a
-# short timeout, extract the request id. Falls back to "null" if stdin is
-# empty, times out, or doesn't contain valid JSON.
-#
-# Output format mirrors JSON literal: numeric id printed unquoted (e.g.
-# `42`), string id wrapped in JSON quotes (e.g. `"abc"`), missing/invalid
-# id returns `null`. Caller substitutes this directly into the JSON
-# envelope's `"id":<x>` slot.
-#
-# Timeout is 2s — Claude Code MCP transport typically sends initialize
-# within milliseconds of spawning the child process. Longer timeout
-# would delay wrapper exit and could push Claude Code into its own
-# transport timeout.
-read_initialize_id() {
-    local line=""
-    local id="null"
-
-    if IFS= read -r -t 2 line 2>/dev/null && [ -n "$line" ]; then
-        if command -v jq >/dev/null 2>&1; then
-            # jq -c outputs JSON-compact form: number unquoted, string with
-            # quotes, null as literal `null`. Perfect for direct substitution.
-            local extracted
-            extracted=$(printf '%s' "$line" | jq -c '.id' 2>/dev/null || true)
-            if [ -n "$extracted" ]; then
-                id="$extracted"
-            fi
-        else
-            # Fallback for environments without jq. Handles integer ids
-            # and quoted string ids — covers MCP 1.0 spec (id is string,
-            # number, or null per JSON-RPC 2.0).
-            if [[ "$line" =~ \"id\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
-                id="${BASH_REMATCH[1]}"
-            elif [[ "$line" =~ \"id\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
-                id="\"${BASH_REMATCH[1]}\""
-            fi
-        fi
-    fi
-
-    printf '%s' "$id"
-}
+# The error carries the id of the initialize request, which
+# lib/startup-error.sh's read_initialize_id reads briefly from stdin (Claude
+# Code drops an error whose id is null).
 
 # Emit a JSON-RPC 2.0 error answering the pending initialize request, then
 # exit 1. $1 is the message and MUST NOT contain double quotes or backslashes
@@ -97,21 +56,22 @@ read_initialize_id() {
 # $HOME shown as ~), so the JSON needs no escaping.
 fail_startup() {
     local message="$1"
-    local request_id
-    request_id=$(read_initialize_id)
+    local request_id=null
+    declare -F read_initialize_id >/dev/null && request_id=$(read_initialize_id)
     printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"%s","data":{"docsUrl":"https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/README.md#when-telegram-all-does-not-start"}}}\n' \
         "$request_id" "$message"
     exit 1
 }
 
-# --- Downloading the binary (PsychQuant/che-msg#56) ---
+# --- Shared code (PsychQuant/che-msg#56, #67) ---
+# lib/startup-error.sh reads the initialize request's id for fail_startup;
 # lib/download.sh downloads and installs the binary for both wrappers, and
 # holds version_at_least and read_version_record, which the decision below
 # uses.
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
-if [[ -z "$PLUGIN_ROOT" ]] || ! source "$PLUGIN_ROOT/lib/download.sh"; then
-    echo "$BINARY_NAME: ERROR — the plugin's lib/download.sh cannot be read; reinstall the che-telegram-mcp plugin" >&2
-    fail_startup "The che-telegram-mcp plugin is incomplete: its lib/download.sh cannot be read. Reinstall the plugin, then reconnect with /mcp."
+if [[ -z "$PLUGIN_ROOT" ]] || ! source "$PLUGIN_ROOT/lib/startup-error.sh" || ! source "$PLUGIN_ROOT/lib/download.sh"; then
+    echo "$BINARY_NAME: ERROR — the plugin's lib/ files cannot be read; reinstall the che-telegram-mcp plugin" >&2
+    fail_startup "The che-telegram-mcp plugin is incomplete: its lib/startup-error.sh or lib/download.sh cannot be read. Reinstall the plugin, then reconnect with /mcp."
 fi
 
 # Find binary — prefer $HOME/bin (installed from release) > source builds

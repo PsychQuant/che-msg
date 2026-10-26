@@ -117,10 +117,9 @@ run() {
     else wait "$w"; RC=$?; fi
 }
 
-reason() {
-    if [ "$2" = all ]; then head -1 "$1/out" | jq -r '.error.message' 2>/dev/null
-    else cat "$1/err"; fi
-}
+# reason <home> <all|bot>: the message of the JSON-RPC error the wrapper
+# answered initialize with.
+reason() { head -1 "$1/out" | jq -r '.error.message' 2>/dev/null; }
 partials() { find "$1/bin" -name '*.part' 2>/dev/null | sort; }
 
 expect_reason() {   # <home> <which> <substring> <what>

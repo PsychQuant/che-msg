@@ -13,7 +13,8 @@
 #        (PsychQuant/che-msg#54, mirroring tests/che-archive-lines): the root
 #        holds exactly .claude-plugin, .mcp.json, CHANGELOG.md, README.md, bin,
 #        hooks, lib and skills; .claude-plugin/ only plugin.json; lib/ only
-#        the files the wrappers source (download.sh, #56); hooks/ only
+#        the files the wrappers source (download.sh, #56; startup-error.sh,
+#        #67); hooks/ only
 #        check-mcp.sh and hooks.json, whose only hook is the SessionStart
 #        command; skills/ exactly the six skills, each with only SKILL.md (a new
 #        skill must be added here and to (h) on purpose). plugin.json and the
@@ -188,7 +189,7 @@ expected = {
     ".claude-plugin": ["plugin.json"],
     "bin": ["che-telegram-all-mcp-wrapper.sh", "che-telegram-bot-mcp-wrapper.sh"],
     "hooks": ["check-mcp.sh", "hooks.json"],
-    "lib": ["download.sh"],
+    "lib": ["download.sh", "startup-error.sh"],
     "skills": SKILLS,
 }
 for name in SKILLS:
