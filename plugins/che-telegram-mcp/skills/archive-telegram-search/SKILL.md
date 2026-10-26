@@ -62,7 +62,7 @@ python3 -I '${CLAUDE_SKILL_DIR}/scripts/search_archive.py' --archive='<OUTPUT_AB
 
 ## Step 5：呈現結果
 
-搜尋的輸出有 `matched`（符合的則數）、`shown`、`truncated`、`searched_files`、`results`、`skipped`（`skipped_count` 是總數）、`missing_chats`。`results` 由新到舊，每筆有 `citation`、`chat_id`、`message_id`、`date`、`time`、`utc_offset`、`sender`、`snippet`、`file`、`annotations`。
+搜尋的輸出有 `matched`（符合的則數）、`shown`、`truncated`、`searched_files`、`results`、`skipped`（`skipped_count` 是總數）、`missing_chats`。`results` 由新到舊，每筆有 `citation`、`chat_id`、`message_id`、`date`、`time`、`utc_offset`、`sender`、`snippet`、`file`、`annotations`、`annotations_truncated`。
 
 每筆一行，用設定檔的 `label`（沒有就用 `chat_id`）：
 
@@ -70,11 +70,11 @@ python3 -I '${CLAUDE_SKILL_DIR}/scripts/search_archive.py' --archive='<OUTPUT_AB
 1. 專案群組（777）2026-10-11 09:05（UTC+08:00）Alex：hello — telegram:777/5242880
 ```
 
-- 摘錄裡的 ` ⏎ ` 是原文的換行，`…` 是被截掉的地方。JSON 裡以 `\uXXXX` 寫的控制字元與雙向格式字元（例如 `\u202e`），顯示時照樣寫成跳脫，不要還原成實際字元。
-- `annotations` 裡有以 `provisional` 開頭的項目時，在那一行註明「本機快取寫入，寄件人名稱與說明文字可能缺漏」。
+- 摘錄裡的 ` ⏎ ` 是原文的換行，`…` 是被截掉的地方。JSON 裡以 `\uXXXX` 寫的控制字元、雙向格式字元與看不見的字元（零寬字元、軟連字號、tag 字元等）（例如 `\u202e`），顯示時照樣寫成跳脫，不要還原成實際字元。
+- `annotations` 裡有以 `provisional` 開頭的項目時，在那一行註明「本機快取寫入，寄件人名稱與說明文字可能缺漏」。`annotations_truncated` 是 true 時，註記被截短或省略了（最多 5 個、每個 48 字元）。
 - `truncated` 是 true：寫出共 `matched` 則、顯示了最新的 `shown` 則，建議加上日期範圍、聊天或更多字詞縮小範圍。
 - `matched` 是 0：寫出搜尋了幾個日檔（`searched_files`）與用的條件。
-- `skipped` 不是空的：列出檔名與原因（`not-regular-file`：symlink、FIFO 或目錄；`carriage-return`：被別的編輯器存成 CRLF；`not-utf8`；`too-large`：超過 32 MiB；`bad-frontmatter`、`chat-id-mismatch`、`date-mismatch`：frontmatter 讀不到或不屬於這個位置；`symlinked-chat-directory`；`unreadable`）。這些檔案沒有被搜尋。
+- `skipped` 不是空的：列出檔名與原因（`not-regular-file`：symlink、FIFO 或目錄；`carriage-return`：被別的編輯器存成 CRLF；`not-utf8`；`too-large`：超過 32 MiB；`bad-frontmatter`、`chat-id-mismatch`、`date-mismatch`：frontmatter 讀不到或不屬於這個位置；`symlinked-chat-directory`；`changed-during-search`：搜尋途中這個聊天目錄被換掉（例如換成 symlink），沒有讀；`unreadable`）。這些檔案沒有被搜尋。
 - `missing_chats` 不是空的：這些 `chat_id` 在歸檔裡沒有目錄（還沒歸檔，或 id 寫錯）。
 
 錯誤（`error.type`）：
@@ -113,4 +113,4 @@ Bash 回報找不到 `python3` 或 `xcrun` 錯誤時，說明需要 Command Line
 
 - 日期與時間是日檔 `utc_offset` 的本地時間；同一個聊天的所有日檔用同一個 offset，不同聊天可以不同，所以跨聊天的「由新到舊」是近似的。
 - 只讀 `<chat_id>/YYYY-MM-DD.md`；媒體檔（`media/`）、索引與其他檔案都不讀。媒體的位置在摘錄裡的連結 `media/<message_id>/`（相對於日檔）。
-- 錨點下一行若有 HTML 註解（例如 `<!-- provisional: local-cache -->`），那是註記，不是訊息內文；內文中以 `<!--` 開頭的行在寫入時已加了反斜線，讀回時會還原。
+- 錨點與標頭之間的 HTML 註解行（例如 `<!-- provisional: local-cache -->`）是註記，不是訊息內文；標頭之後以 `<!--` 開頭的行一律是內文（寫入時加的反斜線，讀回時會還原）。
