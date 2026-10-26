@@ -1,7 +1,7 @@
 ## 1. 參數解析的三條規則
 
-- [ ] 1.1 先寫失敗的測試（Requirement: Output path validation and error reporting 的 Relative path refused、Traversal component refused、Non-Markdown target refused、Upper-case extension accepted）：`testDumpRejectsRelativePath`（`chat.md`、`./chat.md`、`~/chat.md`、空字串）、`testDumpRejectsTraversalPath`（`..` 在中間與結尾；`..md` 檔名接受）、`testDumpRejectsNonMarkdownExtension`（`.zshrc`、`.txt`、`.mdx`、`.md.sh`、結尾 `/`；`.MD`、`.Md` 接受），比對錯誤訊息全文。驗證：`swift test --filter ParseDumpArgsTests` 先失敗
-- [ ] 1.2 依設計「三條規則放在參數解析」在 `parseDumpChatToMarkdownArgs` 實作，錯誤為 `HandlerArgError`。驗證：1.1 的測試通過，`ParseDateInArgsTests`、`ParseMaxMessagesTests` 等既有 dump 測試仍過 [after: 1.1]
+- [x] 1.1 先寫失敗的測試（Requirement: Output path validation and error reporting 的 Relative path refused、Traversal component refused、Non-Markdown target refused、Upper-case extension accepted）：`testDumpRejectsRelativePath`（`chat.md`、`./chat.md`、`~/chat.md`、空字串）、`testDumpRejectsTraversalPath`（`..` 在中間與結尾；`..md` 檔名接受）、`testDumpRejectsNonMarkdownExtension`（`.zshrc`、`.txt`、`.mdx`、`.md.sh`、結尾 `/`；`.MD`、`.Md` 接受），比對錯誤訊息全文。驗證：`swift test --filter ParseDumpArgsTests` 先失敗
+- [x] 1.2 依設計「三條規則放在參數解析」在 `parseDumpChatToMarkdownArgs` 實作，錯誤為 `HandlerArgError`。驗證：1.1 的測試通過，`ParseDateInArgsTests`、`ParseMaxMessagesTests` 等既有 dump 測試仍過 [after: 1.1]
 
 ## 2. 選用的根目錄
 

@@ -139,7 +139,8 @@ internal struct DumpChatToMarkdownArgs {
 ///
 /// Rules encoded here:
 /// - `chat_id` is required
-/// - `output_path` is required
+/// - `output_path` is required, absolute, without a `..` component, and
+///   ends in `.md` in any letter case (#21; see `validateDumpOutputPath`)
 /// - `max_messages` defaults to 5000 (different from `get_chat_history`
 ///   which auto-derives from `limit` via the #3 fromMsgId==0 rule)
 /// - `max_messages` must be > 0 and <= 10_000 (shared with
@@ -155,6 +156,7 @@ internal func parseDumpChatToMarkdownArgs(_ args: [String: Value], timeZone: Tim
     guard let outputPath = args["output_path"]?.stringValue else {
         throw HandlerArgError(message: "output_path is required")
     }
+    try validateDumpOutputPath(outputPath)
     // #23: closure of the default-5000 cap-bypass invariant.
     // `parseMaxMessages(args)` (no-default form) only validates explicit args.
     // `parseMaxMessagesWithDefault(args, default:)` flows the default through
@@ -178,6 +180,29 @@ internal func parseDumpChatToMarkdownArgs(_ args: [String: Value], timeZone: Tim
         untilDate: untilDate,
         selfLabel: selfLabel
     )
+}
+
+/// The three `output_path` rules that need no filesystem (#21), checked in
+/// this order:
+/// - absolute: begins with `/` (`~` is not expanded; the server's working
+///   directory is not the caller's)
+/// - no component that is exactly `..`
+/// - ends in `.md` in any letter case: the tool writes only Markdown, and the
+///   shell or system files it must not replace (`~/.zshrc`,
+///   `authorized_keys`, LaunchAgent plists) never end in `.md`
+///
+/// The export root (`CHE_TELEGRAM_ALL_EXPORT_ROOT`) is checked later, at the
+/// write path, by `validateOutputPath` in TelegramAllLib.
+internal func validateDumpOutputPath(_ path: String) throws {
+    guard path.hasPrefix("/") else {
+        throw HandlerArgError(message: "output_path must be an absolute path; got \"\(path)\"")
+    }
+    guard !path.split(separator: "/", omittingEmptySubsequences: false).contains("..") else {
+        throw HandlerArgError(message: "output_path must not contain '..' components; got \"\(path)\"")
+    }
+    guard path.lowercased().hasSuffix(".md") else {
+        throw HandlerArgError(message: "output_path must end in .md; got \"\(path)\"")
+    }
 }
 
 /// Parse and validate the optional `max_messages` arg.

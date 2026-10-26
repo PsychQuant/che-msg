@@ -87,6 +87,66 @@ final class ParseDumpArgsTests: XCTestCase {
         XCTAssertEqual(parsed.maxMessages, 9_999)
     }
 
+    // MARK: - #21: output_path guards
+
+    private func dumpError(_ outputPath: String) -> String? {
+        do {
+            _ = try parseDumpChatToMarkdownArgs(["chat_id": .int(100), "output_path": .string(outputPath)])
+            return nil
+        } catch {
+            return (error as? HandlerArgError)?.description ?? "unexpected error: \(error)"
+        }
+    }
+
+    /// Scenario "Relative path refused": the server's working directory is
+    /// not the caller's, and `~` is not expanded.
+    func testDumpRejectsRelativePath() {
+        for path in ["chat.md", "./chat.md", "~/chat.md", "exports/chat.md", ""] {
+            XCTAssertEqual(dumpError(path), "output_path must be an absolute path; got \"\(path)\"", path)
+        }
+    }
+
+    /// Scenario "Traversal component refused". Only a component that is
+    /// exactly `..` counts.
+    func testDumpRejectsTraversalPath() {
+        for path in ["/tmp/exports/../../Users/me/notes.md", "/tmp/../x.md", "/../tmp/x.md", "/tmp/a/../b/..//c.md"] {
+            XCTAssertEqual(dumpError(path), "output_path must not contain '..' components; got \"\(path)\"", path)
+        }
+        for path in ["/tmp/..md", "/tmp/a..b/x.md", "/tmp/./x.md", "/tmp/...md"] {
+            XCTAssertNil(dumpError(path), path)
+        }
+    }
+
+    /// Scenarios "Non-Markdown target refused" and "Upper-case extension accepted".
+    func testDumpRejectsNonMarkdownExtension() {
+        for path in ["/Users/me/.zshrc", "/Users/me/.ssh/authorized_keys", "/Users/me/Library/LaunchAgents/x.plist",
+                     "/tmp/x.txt", "/tmp/x.mdx", "/tmp/x.md.sh", "/tmp/x.md/", "/tmp/x.md ", "/tmp/xmd", "/tmp/x.m d"] {
+            XCTAssertEqual(dumpError(path), "output_path must end in .md; got \"\(path)\"", path)
+        }
+        for path in ["/tmp/x.md", "/tmp/CHAT.MD", "/tmp/x.Md", "/tmp/x.mD", "/tmp/dir.md/x.md"] {
+            XCTAssertNil(dumpError(path), path)
+        }
+    }
+
+    /// The rules are checked in order: absolute, then `..`, then `.md`.
+    func testDumpOutputPathRulesAreCheckedInOrder() {
+        XCTAssertEqual(dumpError("../x.txt"), "output_path must be an absolute path; got \"../x.txt\"")
+        XCTAssertEqual(dumpError("/tmp/../x.txt"), "output_path must not contain '..' components; got \"/tmp/../x.txt\"")
+    }
+
+    /// Through the handler's catch: the result is an error naming the rule.
+    func testDumpOutputPathGuardSurfacesAsErrorResult() {
+        do {
+            _ = try parseDumpChatToMarkdownArgs(["chat_id": .int(100), "output_path": .string("/Users/me/.zshrc")])
+            XCTFail("parser should have thrown")
+        } catch {
+            let result = errorResultFromParse(error)
+            XCTAssertEqual(result.isError, true)
+            guard case .text(let text, _, _)? = result.content.first else { return XCTFail("no text content") }
+            XCTAssertEqual(text, "Error: output_path must end in .md; got \"/Users/me/.zshrc\"")
+        }
+    }
+
     func testDumpMaxMessagesRejectsZeroOrNegative() {
         XCTAssertThrowsError(try parseDumpChatToMarkdownArgs([
             "chat_id": .int(100),
