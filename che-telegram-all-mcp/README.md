@@ -318,9 +318,17 @@ Output Markdown format (excerpt):
 
 **14:36 小明 王**：
 [photo] 今天的菜單
+
+**14:37 小明 王**：
+[poll] 晚餐吃什麼？
+- 麵
+- 飯
+
+**14:38 小明 王**：
+[location] 25.0478,121.5319
 ```
 
-A media message renders as its placeholder, followed by its caption when it has one. A dump answered from the local cache (while another process holds TDLib) has no captions, and audio there reads `[other]`.
+A media message renders as its placeholder, followed by its caption when it has one. A poll renders its question and then one `- <option>` line per answer option, a sticker its emoji, and a location `<latitude>,<longitude>` exactly as TDLib reports them — not rounded, never in exponent form ([#82](https://github.com/PsychQuant/che-msg/issues/82)). In TDLib mode the message JSON (`get_chat_history`, `search_messages`) carries the same details: `question` and `options` for a poll, `emoji` for a sticker, `latitude` and `longitude` for a location. A dump answered from the local cache (while another process holds TDLib) has no captions and none of these details, and audio there reads `[other]`.
 
 ### Archive a chat incrementally
 
@@ -341,7 +349,7 @@ archive_chat_to_markdown({
 It writes:
 
 - `<output_dir>/<chat_id>/YYYY-MM-DD.md` — frontmatter `chat_id`, `date`, `utc_offset`, then one block per message: an anchor `<!-- msg:<message_id> -->` and `**HH:mm sender**：` followed by the text. Re-runs merge into the existing file: blocks already there are kept as they are, new ones are added in message-id order, and the file is replaced atomically, so running twice changes nothing.
-- `<output_dir>/<chat_id>/media/<message_id>/` — the message's photo (`photo.jpg`), video, document (original file name), audio, voice note, video note, animation or sticker, downloaded completely through TDLib and copied there. A media block reads `[photo](media/<message_id>/) caption`, so the link is right before the file arrives. A directory that already holds a file is not downloaded again.
+- `<output_dir>/<chat_id>/media/<message_id>/` — the message's photo (`photo.jpg`), video, document (original file name), audio, voice note, video note, animation or sticker, downloaded completely through TDLib and copied there. A media block reads `[photo](media/<message_id>/) caption`, so the link is right before the file arrives. A directory that already holds a file is not downloaded again. Polls, stickers and locations keep their details as in the dump — `[poll] <question>` followed by `- <option>` lines, `[sticker](media/<message_id>/) <emoji>`, `[location] <latitude>,<longitude>` ([#82](https://github.com/PsychQuant/che-msg/issues/82)); a block written before that keeps its bare `[poll]`, `[sticker](…)` or `[location]`, because blocks already in a day file are never rewritten.
 
 The result is a manifest only — `files` (day files this call added messages to), `new_messages`, `media_messages` (new messages whose type carries a file), `newest_message_id` and `newest_message_file` (the day file holding it, written this time or not — check the newest anchor there), `source`, `complete`, `bookmark_safe` (with `bookmark_unsafe_reason`), `media_downloaded`, `media_skipped` (`message_id` and `size`), `media_failed_ids`, `media_pending_local_cache`, `undated_messages_skipped` (messages from the local cache that had no date and were not written; a later TDLib run adds them), `media_retried_ids` and `media_gone_ids` when ids were retried, and `stopped_reason` / `retry_after_seconds` when it stopped early. It never contains message text.
 
