@@ -506,8 +506,9 @@ final class ChatArchiverTests: XCTestCase {
             + "<!-- msg:10 -->\r\n**22:00 User 1001**：\r\nm10\r\n\r\n"
         try Data(crlf.utf8).write(to: file)
         let before = try Data(contentsOf: file)
-        // Newest first, one message per page: 40 (2026-10-11) is written before 10 (2026-10-10) is reached.
-        let source = FakeSource([Self.msg(40, 3), Self.msg(10, -600)])
+        // Newest first, one message per page: 40 (2026-10-11) is written before 11 (2026-10-10, not in
+        // the file yet) is reached.
+        let source = FakeSource([Self.msg(40, 3), Self.msg(11, -590), Self.msg(10, -600)])
         do {
             _ = try await archiver(source, pageSize: 1).archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
             XCTFail("expected the day file with a carriage return to be refused")
@@ -516,5 +517,24 @@ final class ChatArchiverTests: XCTestCase {
         }
         XCTAssertEqual(try Data(contentsOf: file), before)
         XCTAssertEqual(try ids(in: dir, "777/2026-10-11.md"), [40])
+    }
+
+    /// A re-run over a day file with a CRLF body that already holds every message of that day is not
+    /// stopped by it: the file is left as it is (#76 verify round 1).
+    func testDayFileWithACRLFBodyDoesNotStopARunThatAddsNothingToIt() async throws {
+        let dir = try outputDir()
+        let chatDir = dir.appendingPathComponent("777")
+        try FileManager.default.createDirectory(at: chatDir, withIntermediateDirectories: true)
+        let file = chatDir.appendingPathComponent("2026-10-10.md")
+        let crlf = "---\nchat_id: 777\ndate: 2026-10-10\nutc_offset: \"+08:00\"\n---\n\n"
+            + "<!-- msg:10 -->\r\n**22:00 User 1001**：\r\nm10\r\n\r\n"
+        try Data(crlf.utf8).write(to: file)
+        let before = try Data(contentsOf: file)
+        let result = try await archiver(FakeSource([Self.msg(40, 3), Self.msg(10, -600)]), pageSize: 1)
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertTrue(result.complete)
+        XCTAssertEqual(result.newMessages, 1)
+        XCTAssertEqual(result.files, ["777/2026-10-11.md"])
+        XCTAssertEqual(try Data(contentsOf: file), before)
     }
 }

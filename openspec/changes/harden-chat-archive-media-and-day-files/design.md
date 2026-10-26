@@ -50,7 +50,7 @@ Diagnosis 的 Strategy 寫「用既有錯誤、延長文字」。實作改成在
 
 ### 含 CR 的日檔在合併時拒絕（#76 Q1 預設）
 
-`write` 讀到舊檔後先看 `unicodeScalars` 有沒有 `\r`，有就丟 `carriageReturn`，在 offset 比對之前。用 scalar 而不是 `Character`，因為 `"\r\n"` 是一個 `Character`。這個檢查只對這次會寫到的日檔做；拒絕可能發生在同一次呼叫已經寫好別的日檔之後，那些日檔都是完整、有效的，保留不動。工具自己寫的日檔不會含 `\r`（`block` 把內文的 CR 換成 LF、寄件人的換成空白），所以這個拒絕不會因為工具自己的輸出觸發。
+`write` 讀到舊檔、比對 offset 之後，看 `unicodeScalars` 有沒有 `\r`。用 scalar 而不是 `Character`，因為 `"\r\n"` 是一個 `Character`。有 `\r` 時，先把 CRLF 當成換行讀出錨點：這次要寫的訊息都已經在檔案裡，就什麼都不做、不拒絕（verify round 1：否則第一次歸檔或用 `since_date` 重跑會卡在一個早就寫好的 CRLF 日檔）；缺任何一則才丟 `carriageReturn`。只把 CRLF 換成 LF，不把單獨的 CR 當換行：單獨的 CR 留在原來那一行裡，不可能讓一段文字變成錨點，否則一則還沒寫的訊息可能被當成已經在檔案裡而被略過。這個檢查只對這次會寫到的日檔做；拒絕可能發生在同一次呼叫已經寫好別的日檔之後，那些日檔都是完整、有效的，保留不動。工具自己寫的日檔不會含 `\r`（`block` 把內文的 CR 換成 LF、寄件人的換成空白），所以這個拒絕不會因為工具自己的輸出觸發。
 
 ### 重試的分類：404，或 400 且文字恰為 `Message not found`
 
@@ -93,7 +93,7 @@ Diagnosis 的 Strategy 寫「用既有錯誤、延長文字」。實作改成在
 
 - **行為**：
   - 日檔（`<chat_id>/YYYY-MM-DD.md`）不是一般檔案（symlink、懸空 symlink、FIFO、device、目錄）時，呼叫在讀任何訊息之前失敗，錯誤是 `WriteError.notRegularFile(day:)`，不寫任何檔案；開 FIFO 不會等待。
-  - 要合併的日檔含 `\r` 時，該次 `ArchiveDayFile.write` 丟 `WriteError.carriageReturn(day:)`，該檔位元組不變；同一次呼叫先前寫好的日檔保留。
+  - 要合併的日檔含 `\r`、而且缺少這次要寫的任一則訊息時，該次 `ArchiveDayFile.write` 丟 `WriteError.carriageReturn(day:)`，該檔位元組不變；同一次呼叫先前寫好的日檔保留。檔案已經有每一則時回 `[]`，不改檔、不丟錯。
   - 重試時取得訊息的錯誤是 404，或 400 且文字恰為 `Message not found`，該 id 列在 `media_gone_ids`、不在 `media_failed_ids`；其他錯誤照舊列在 `media_failed_ids`。
   - `ArchiveMedia.ensure` 新存的檔案有 `com.apple.quarantine`；設不上時回 `.failed`，暫存檔移除，目標不存在。
   - manifest 一律有 `undated_messages_skipped`；TDLib 路徑且 `retry_media_message_ids` 至少一個 id 時有 `media_gone_ids`。

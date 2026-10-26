@@ -249,7 +249,8 @@ public enum ArchiveDayFile {
     /// Writes the day file for `day` under `directory` (created when missing), merging with
     /// the file already there as `merged` does, by writing a temporary file in the same directory
     /// and renaming it over the original. Leaves an existing file untouched when nothing is added
-    /// or upgraded, and refuses one that is not a regular file or contains a carriage return.
+    /// or upgraded, and refuses one that is not a regular file, or that contains a carriage return
+    /// and would be rewritten (a message it lacks, or a provisional block to upgrade).
     /// Returns the ids of the messages added and of the provisional blocks upgraded.
     @discardableResult
     public static func write(directory: URL, chatId: Int64, day: String, utcOffset: String,
@@ -262,13 +263,21 @@ public enum ArchiveDayFile {
         // lock only keeps other archives out), and a dangling link must not read as "no file".
         let existing = try readDayFile(file, day: day).map { data -> String in
             guard let text = String(data: data, encoding: .utf8) else { throw WriteError.unreadableOffset(day: day) }
-            // The parser splits lines on LF, and "\r\n" is one Character: a CRLF body would yield no
-            // anchors and every message would be added again. Checked by scalar, for the touched
-            // day only, so the check before reading stays a 512-byte read per file (#76).
-            if text.unicodeScalars.contains("\r") { throw WriteError.carriageReturn(day: day) }
             return text
         }
         if let existing { try checkOffset(recordedIn: existing, day: day, utcOffset: utcOffset) }
+        // The parser splits lines on LF, and "\r\n" is one Character: merging into a CRLF body would
+        // find no anchors and add every message again. Checked by scalar, for the touched day only,
+        // so the check before reading stays a 512-byte read per file. A file this call would not
+        // change is left as it is (its anchors and markers read with CRLF as a line end; a lone CR
+        // stays inside its line, so it cannot make text pass for either); a file it would rewrite —
+        // to add a message, or to upgrade a provisional block (#72) — is refused (#76).
+        if let existing, existing.unicodeScalars.contains("\r") {
+            let wouldWrite = merged(existing: existing.replacingOccurrences(of: "\r\n", with: "\n"), chatId: chatId,
+                                    day: day, utcOffset: utcOffset, messages: messages, provisional: provisional)
+            guard wouldWrite.added.isEmpty, wouldWrite.upgraded.isEmpty else { throw WriteError.carriageReturn(day: day) }
+            return ([], [])
+        }
         let (content, added, upgraded) = merged(existing: existing, chatId: chatId, day: day, utcOffset: utcOffset,
                                                 messages: messages, provisional: provisional)
         if added.isEmpty && upgraded.isEmpty && existing != nil { return ([], []) }

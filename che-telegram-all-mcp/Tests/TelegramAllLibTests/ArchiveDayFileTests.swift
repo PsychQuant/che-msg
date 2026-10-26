@@ -427,6 +427,29 @@ final class ArchiveDayFileTests: XCTestCase {
         }
     }
 
+    /// A day file with a carriage return that already holds every message of the call is left as it
+    /// is, so a first archive or a since_date re-run does not stop on an old CRLF file. Anchors are
+    /// read with CRLF as a line end only: a lone CR cannot make text look like an anchor.
+    func testDayFileWithACarriageReturnIsLeftAloneWhenNothingIsAdded() throws {
+        let dir = try scratchDir()
+        let file = dir.appendingPathComponent("2026-10-11.md")
+        let text = validHead + "<!-- msg:5 -->\r\n**09:00 Alex**：\r\na\r\n\r\n"
+            + "<!-- msg:6 -->\n**09:01 Alex**：\nb\r<!-- msg:9 -->\n\n"
+        try Data(text.utf8).write(to: file)
+        let before = try Data(contentsOf: file)
+        func message(_ id: Int64) -> ArchiveMessage {
+            ArchiveMessage(id: id, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: "x")
+        }
+        XCTAssertEqual(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                messages: [message(5), message(6)]).added, [])
+        XCTAssertEqual(try Data(contentsOf: file), before)
+        XCTAssertThrowsError(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                      messages: [message(6), message(9)])) { error in
+            XCTAssertEqual(error as? ArchiveDayFile.WriteError, .carriageReturn(day: "2026-10-11"))
+        }
+        XCTAssertEqual(try Data(contentsOf: file), before)
+    }
+
     /// The refusal cannot hit a file the tool wrote: its output never contains a carriage return.
     func testRenderedDayFilesHaveNoCarriageReturn() {
         let m = ArchiveMessage(id: 10, date: utc(2026, 10, 11, 1, 0), sender: "A\r\nB\rC", body: "x\r\ny\rz\r")
