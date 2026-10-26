@@ -70,7 +70,7 @@ python3 -I '${CLAUDE_SKILL_DIR}/scripts/search_archive.py' --archive='<OUTPUT_AB
 1. 專案群組（777）2026-10-11 09:05（UTC+08:00）Alex：hello — telegram:777/5242880
 ```
 
-- 摘錄裡的 ` ⏎ ` 是原文的換行，`…` 是被截掉的地方。JSON 裡以 `\uXXXX` 寫的控制字元與雙向格式字元（例如 `‮`），顯示時照樣寫成跳脫，不要還原成實際字元。
+- 摘錄裡的 ` ⏎ ` 是原文的換行，`…` 是被截掉的地方。JSON 裡以 `\uXXXX` 寫的控制字元與雙向格式字元（例如 `\u202e`），顯示時照樣寫成跳脫，不要還原成實際字元。
 - `annotations` 裡有以 `provisional` 開頭的項目時，在那一行註明「本機快取寫入，寄件人名稱與說明文字可能缺漏」。
 - `truncated` 是 true：寫出共 `matched` 則、顯示了最新的 `shown` 則，建議加上日期範圍、聊天或更多字詞縮小範圍。
 - `matched` 是 0：寫出搜尋了幾個日檔（`searched_files`）與用的條件。

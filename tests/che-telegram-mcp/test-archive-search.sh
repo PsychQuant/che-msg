@@ -444,14 +444,14 @@ def _case_20():
 def _case_21():
     case("output escapes control and bidirectional characters")
     A = archive()
-    day(A, 777, "2026-07-05", blk(430, "09:00", "Eve‮", "pay ‮gnp.exe now \x1b[31m red \u0085   ⁦x⁩ ‏"))
+    day(A, 777, "2026-07-05", blk(430, "09:00", "Eve\u202e", "pay \u202egnp.exe now \x1b[31m red \u0085 \u2028 \u2066x\u2069 \u200f"))
     rc, raw, d, err = run(["--archive", A, "--text", "pay"])
     check(rc == 0 and d and d["results"], f"found: rc={rc}")
-    for ch in ("‮", "\x1b", "\u0085", " ", "⁦", "⁩", "‏"):
+    for ch in ("\u202e", "\x1b", "\u0085", "\u2028", "\u2066", "\u2069", "\u200f"):
         check(d is not None and ch.encode("utf-8") not in raw, f"U+{ord(ch):04X} not raw in output")
     if d and d["results"]:
-        check("‮gnp.exe" in d["results"][0]["snippet"] and "\x1b[31m" in d["results"][0]["snippet"], "decoded text keeps them")
-        check(d["results"][0]["sender"] == "Eve‮", "sender keeps them")
+        check("\u202egnp.exe" in d["results"][0]["snippet"] and "\x1b[31m" in d["results"][0]["snippet"], "decoded text keeps them")
+        check(d["results"][0]["sender"] == "Eve\u202e", "sender keeps them")
 
 # ---------------------------------------------------------------- guard and read-only
 def _case_22():
