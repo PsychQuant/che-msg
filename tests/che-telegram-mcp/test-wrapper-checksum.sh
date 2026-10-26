@@ -27,7 +27,7 @@
 #   4. The same with a usable binary installed: it is kept, unchanged, with
 #      its version record, and started.
 #   5. A pin for another version is not used: the download is checked against
-#      GitHub's digest instead, and the wrapper says so.
+#      GitHub's digest instead, and the download log says so.
 #   6. No pin: GitHub's digest matching installs; not matching installs
 #      nothing; no digest (null) installs nothing and says no sha256 is known;
 #      the API unreachable installs nothing.
@@ -182,6 +182,7 @@ for which in all bot; do
     pinned "$which" "$PIN" "$GOOD" "$SCRATCH/$which-mismatch-keep-plugin"
     run "$H" "$C"
     if [ "$RC" = started ]; then pass "the installed binary was started"; else fail "not started (exit $RC): $(reason "$H" "$which" | tr '\n' ' ')"; fi
+    wait_no_fetch "$H" || fail "the background download did not end"
     if cmp -s "$H/bin/$NAME" "$SCRATCH/kept-$which"; then pass "the installed binary is unchanged"; else fail "the installed binary was replaced"; fi
     if [ "$(cat "$H/bin/.$NAME.version")" = "$KEPT" ]; then pass "its version record still says $KEPT"; else fail "record now $(cat "$H/bin/.$NAME.version")"; fi
     if [ -z "$(partials "$H")" ]; then pass "no partial file left"; else fail "left: $(partials "$H")"; fi
@@ -193,7 +194,8 @@ for which in all bot; do
     pinned "$which" "$OLDER" "$BAD" "$SCRATCH/$which-stale-plugin"
     run "$H" "$C"
     expect_installed "$H" "$NAME" "$PIN"
-    if grep -q "is for v$OLDER" "$H/err"; then pass "stderr says the pin is for v$OLDER"; else fail "stderr does not say the pin is for v$OLDER: $(head -3 "$H/err" | tr '\n' ' ')"; fi
+    LOG="$H/bin/.$NAME.download.log"
+    if grep -q "is for v$OLDER" "$LOG" 2>/dev/null; then pass "the download log says the pin is for v$OLDER"; else fail "the download log does not say the pin is for v$OLDER: $(head -3 "$LOG" 2>/dev/null | tr '\n' ' ')"; fi
 
     # ------------------------------------------------------ 6. no pin
     test_case "$which: with no pin, GitHub's digest decides"

@@ -14,7 +14,8 @@
 #   refuses an HTTP error, and lets one process at a time write
 #   (PsychQuant/che-msg#56). It installs nothing whose sha256 does not match
 #   (PsychQuant/che-msg#50). This wrapper has no --version probe, so what the
-#   download refuses is all that keeps a bad file from being run.
+#   download refuses is all that keeps a bad file from being run. It runs in
+#   the background, never on the startup path (PsychQuant/che-msg#67).
 # - Source builds in $HOME/Developer/... are NEVER auto-replaced.
 
 BINARY_NAME="CheTelegramBotMCP"
@@ -70,21 +71,34 @@ elif [[ "$BINARY" == "$INSTALLED_BINARY" ]] && ! version_at_least "$INSTALLED_VE
     fi
 fi
 
+# Downloading in the background (PsychQuant/che-msg#67): the download never
+# runs on the startup path (lib/download.sh). An installed binary is started at
+# once; the version downloaded is used from the first start after it is
+# installed. With none, the wrapper waits FIRST_INSTALL_WAIT seconds for the
+# download, then says what is happening and exits; the download goes on.
+DOWNLOAD_SIZE="about 18 MB"   # told to the user on a first install
+FIRST_INSTALL_WAIT=$(install_wait_seconds 3)   # CHE_TELEGRAM_MCP_INSTALL_WAIT overrides
 if $NEED_DOWNLOAD; then
-    echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO..." >&2
-    download_install "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$INSTALL_DIR" \
+    echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO in the background (log: ~/bin/.$BINARY_NAME.download.log)" >&2
+    download_start "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$INSTALL_DIR" \
         "$SHA256_PIN_VERSION" "$SHA256_PIN" "$RELEASE_API_URL"
-    DOWNLOAD_STATUS=$?
-    if [[ "$DOWNLOAD_STATUS" -eq 0 ]]; then
-        BINARY="$INSTALLED_BINARY"
-    elif [[ -x "$INSTALLED_BINARY" ]]; then
-        echo "$BINARY_NAME: WARNING — v$DESIRED_VERSION not installed: $(download_failure "$DOWNLOAD_STATUS"). Keeping the existing binary." >&2
-        BINARY="$INSTALLED_BINARY"
+    if [[ -n "$BINARY" ]]; then
+        echo "$BINARY_NAME: running the installed binary meanwhile; the first start after the download uses v$DESIRED_VERSION" >&2
     else
-        echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $(download_failure "$DOWNLOAD_STATUS")." >&2
-        echo "  Reconnect with /mcp to try again." >&2
-        download_manual_hint "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$SHA256_PIN_VERSION" "$SHA256_PIN"
-        exit 1
+        download_wait "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR" "$FIRST_INSTALL_WAIT"
+        case "$DOWNLOAD_STATE" in
+            installed)
+                BINARY="$INSTALLED_BINARY" ;;
+            running)
+                echo "$BINARY_NAME: v$DESIRED_VERSION is not installed yet: it is downloading in the background ($DOWNLOAD_SIZE$(download_progress "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR"))." >&2
+                echo "  Reconnect with /mcp in a minute, once it has finished; the download goes on and resumes if it is interrupted." >&2
+                exit 1 ;;
+            *)
+                echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $(download_failure "$DOWNLOAD_STATUS")." >&2
+                echo "  Reconnect with /mcp to try again." >&2
+                download_manual_hint "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$SHA256_PIN_VERSION" "$SHA256_PIN"
+                exit 1 ;;
+        esac
     fi
 fi
 

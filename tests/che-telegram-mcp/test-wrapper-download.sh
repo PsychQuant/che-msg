@@ -244,6 +244,7 @@ for which in all bot; do
     serve "$H" "$which"; printf '0\n0\n0\n0\n' > "$H/fake-curl/asset.cuts"
     run "$H" "$which"
     if [ "$RC" = started ]; then pass "the installed binary was started"; else fail "not started (exit $RC): $(reason "$H" "$which" | tr '\n' ' ')"; fi
+    wait_no_fetch "$H" || fail "the background download did not end"   # it runs on after the hand-over (#67)
     if cmp -s "$H/bin/$NAME" "$SCRATCH/kept-$which"; then pass "the installed binary is unchanged"; else fail "the installed binary was replaced"; fi
     if [ "$(cat "$H/bin/.$NAME.version")" = "$KEPT_RECORD" ]; then pass "its version record still says $KEPT_RECORD"; else fail "record now says $(cat "$H/bin/.$NAME.version")"; fi
     if [ "$(asset_calls "$H")" -ge 1 ]; then pass "a download was attempted"; else fail "no download attempt"; fi
@@ -271,7 +272,7 @@ done
 # ------------------------------------------------- 8. two wrappers at once
 test_case "telegram-all: two wrappers started together download once"
 H="$SCRATCH/all-two"; empty_home "$H" all; serve "$H" all
-echo 2 > "$H/fake-curl/asset.delay"
+echo 1 > "$H/fake-curl/asset.delay"
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' > "$H/in"
 W1=$(HOME="$H" PATH="$H/fakebin:$PATH" /bin/bash "$WRAPPER" < "$H/in" > "$H/out1" 2> "$H/err1" & echo $!); STARTED+=("$W1")
 W2=$(HOME="$H" PATH="$H/fakebin:$PATH" /bin/bash "$WRAPPER" < "$H/in" > "$H/out2" 2> "$H/err2" & echo $!); STARTED+=("$W2")

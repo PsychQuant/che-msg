@@ -68,7 +68,9 @@ finish() {
 }
 trap finish EXIT
 
-downloaded() { [ -s "$1/curl.calls" ]; }
+# A wrapper that hands over to the installed binary leaves its download running
+# (PsychQuant/che-msg#67), so both checks wait for it first.
+downloaded() { wait_no_fetch "$1"; [ -s "$1/curl.calls" ]; }
 expect_download() {
     if downloaded "$1"; then pass "$2: a download was attempted"; else fail "$2: no download attempt"; fi
 }

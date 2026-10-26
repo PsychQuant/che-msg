@@ -13,6 +13,8 @@
 #   resumes a cut-off transfer from a version-named partial file, refuses an
 #   HTTP error, and lets one process at a time write (PsychQuant/che-msg#56).
 #   It installs nothing whose sha256 does not match (PsychQuant/che-msg#50).
+#   It runs in the background, never on the startup path: an installed binary
+#   of 0.7.0 or later runs meanwhile (PsychQuant/che-msg#67).
 # - Source builds in $HOME/Developer/... are NEVER auto-replaced.
 
 BINARY_NAME="CheTelegramAllMCP"
@@ -140,32 +142,11 @@ elif [[ "$BINARY" == "$INSTALLED_BINARY" ]] && ! version_at_least "$INSTALLED_VE
     fi
 fi
 
-if $NEED_DOWNLOAD; then
-    echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO..." >&2
-    download_install "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$INSTALL_DIR" \
-        "$SHA256_PIN_VERSION" "$SHA256_PIN" "$RELEASE_API_URL"
-    DOWNLOAD_STATUS=$?
-    if [[ "$DOWNLOAD_STATUS" -eq 0 ]]; then
-        BINARY="$INSTALLED_BINARY"
-    else
-        DOWNLOAD_PROBLEM=$(download_failure "$DOWNLOAD_STATUS")
-        if [[ -x "$INSTALLED_BINARY" ]]; then
-            echo "$BINARY_NAME: WARNING — v$DESIRED_VERSION not installed: $DOWNLOAD_PROBLEM. Keeping the existing binary." >&2
-            BINARY="$INSTALLED_BINARY"
-            KEPT_AFTER_FAILED_DOWNLOAD=true
-        else
-            echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $DOWNLOAD_PROBLEM." >&2
-            download_manual_hint "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$SHA256_PIN_VERSION" "$SHA256_PIN"
-            fail_startup "CheTelegramAllMCP v$DESIRED_VERSION could not be installed: $DOWNLOAD_PROBLEM. Reconnect with /mcp to try again, or install it by hand as the che-telegram-mcp README describes."
-        fi
-    fi
-fi
-
-# --- Refuse a binary older than the server-side lock (PsychQuant/che-msg#58) ---
+# --- The oldest binary this wrapper runs (PsychQuant/che-msg#58, #63) ---
 # From 0.6.0 the server decides which session opens TDLib, and this wrapper
 # takes no lock of its own. An older binary opens TDLib at startup without
 # coordinating, so running one — for example the previous version, kept
-# because the download above failed — could let two sessions open the same
+# because the download did not succeed — could let two sessions open the same
 # TDLib database. 0.6.0 and later answer --version before touching TDLib;
 # older binaries print nothing (they start as a server and stop at the empty
 # stdin). The probe runs without Telegram credentials, so even an old binary
@@ -176,18 +157,71 @@ fi
 # local database, while this plugin's skill tells the user that nothing is
 # deleted — so 0.6.x is refused too.
 MIN_BINARY_VERSION="0.7.0"
-VERSION_OUT=$(mktemp "${TMPDIR:-/tmp}/che-telegram-all-version-XXXXXX")
-env -u TELEGRAM_API_ID -u TELEGRAM_API_HASH -u TELEGRAM_PHONE -u TELEGRAM_2FA_PASSWORD \
-    "$BINARY" --version </dev/null >"$VERSION_OUT" 2>/dev/null &
-VERSION_PID=$!
-for _ in $(seq 1 50); do
-    kill -0 "$VERSION_PID" 2>/dev/null || break
-    sleep 0.1
-done
-kill -KILL "$VERSION_PID" 2>/dev/null
-wait "$VERSION_PID" 2>/dev/null
-BINARY_VERSION=$(sed -n 's/^che-telegram-all-mcp \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' "$VERSION_OUT" | head -1)
-rm -f "$VERSION_OUT"
+
+# probe_version <binary>: the x.y.z the binary reports for --version, or nothing.
+probe_version() {
+    local out pid
+    out=$(mktemp "${TMPDIR:-/tmp}/che-telegram-all-version-XXXXXX") || return 0
+    env -u TELEGRAM_API_ID -u TELEGRAM_API_HASH -u TELEGRAM_PHONE -u TELEGRAM_2FA_PASSWORD \
+        "$1" --version </dev/null >"$out" 2>/dev/null &
+    pid=$!
+    for _ in $(seq 1 50); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    kill -KILL "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    sed -n 's/^che-telegram-all-mcp \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' "$out" | head -1
+    rm -f "$out"
+}
+
+# --- Downloading in the background (PsychQuant/che-msg#67) ---
+# Claude Code waits about 30 seconds for initialize, and this binary is about
+# 240 MB, so the download never runs on the startup path (lib/download.sh). A
+# binary this wrapper can run (0.7.0 or later) is started at once; the version
+# downloaded is used from the first start after it is installed. With none,
+# the wrapper waits FIRST_INSTALL_WAIT seconds for the download, then answers
+# initialize with what is happening; the download goes on either way.
+DOWNLOAD_SIZE="about 240 MB"   # told to the user on a first install
+FIRST_INSTALL_WAIT=$(install_wait_seconds 3)   # CHE_TELEGRAM_MCP_INSTALL_WAIT overrides
+DOWNLOAD_RUNNING=false
+BINARY_VERSION=""
+PROBED=""
+if $NEED_DOWNLOAD; then
+    echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO in the background (log: ~/bin/.$BINARY_NAME.download.log)" >&2
+    download_start "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$INSTALL_DIR" \
+        "$SHA256_PIN_VERSION" "$SHA256_PIN" "$RELEASE_API_URL"
+    if [[ -n "$BINARY" ]]; then
+        BINARY_VERSION=$(probe_version "$BINARY"); PROBED=$BINARY
+    fi
+    if [[ -n "$BINARY_VERSION" ]] && version_at_least "$BINARY_VERSION" "$MIN_BINARY_VERSION"; then
+        echo "$BINARY_NAME: running the installed v$BINARY_VERSION meanwhile; the first start after the download uses v$DESIRED_VERSION" >&2
+    else
+        download_wait "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR" "$FIRST_INSTALL_WAIT"
+        case "$DOWNLOAD_STATE" in
+            installed)
+                BINARY="$INSTALLED_BINARY"; PROBED="" ;;
+            failed)
+                DOWNLOAD_PROBLEM=$(download_failure "$DOWNLOAD_STATUS") ;;
+            running)
+                DOWNLOAD_RUNNING=true
+                DOWNLOAD_PROBLEM="it is downloading in the background ($DOWNLOAD_SIZE$(download_progress "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR"))" ;;
+        esac
+        if [[ "$DOWNLOAD_STATE" != installed && -z "$BINARY" ]]; then
+            if $DOWNLOAD_RUNNING; then
+                echo "$BINARY_NAME: v$DESIRED_VERSION is not installed yet: $DOWNLOAD_PROBLEM." >&2
+                fail_startup "CheTelegramAllMCP v$DESIRED_VERSION is not installed yet: $DOWNLOAD_PROBLEM. Reconnect with /mcp in a few minutes, once it has finished; the download goes on after this message and resumes if it is interrupted."
+            fi
+            echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $DOWNLOAD_PROBLEM." >&2
+            download_manual_hint "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$SHA256_PIN_VERSION" "$SHA256_PIN"
+            fail_startup "CheTelegramAllMCP v$DESIRED_VERSION could not be installed: $DOWNLOAD_PROBLEM. Reconnect with /mcp to try again, or install it by hand as the che-telegram-mcp README describes."
+        fi
+        [[ "$DOWNLOAD_STATE" != installed ]] && KEPT_AFTER_FAILED_DOWNLOAD=true
+    fi
+fi
+
+# --- Refuse a binary older than MIN_BINARY_VERSION ---
+[[ "$PROBED" == "$BINARY" && -n "$PROBED" ]] || BINARY_VERSION=$(probe_version "$BINARY")
 if [[ -z "$BINARY_VERSION" ]] || \
    [[ "$(printf '%s\n%s\n' "$MIN_BINARY_VERSION" "$BINARY_VERSION" | sort -V | head -1)" != "$MIN_BINARY_VERSION" ]]; then
     echo "$BINARY_NAME: $BINARY reports version ${BINARY_VERSION:-unknown}; this wrapper needs $MIN_BINARY_VERSION or later" >&2
@@ -202,7 +236,11 @@ if [[ -z "$BINARY_VERSION" ]] || \
     else
         FOUND="does not report a version (binaries before 0.6.0 do not)"
     fi
-    if $KEPT_AFTER_FAILED_DOWNLOAD; then
+    NEXT="Install the current version by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
+    if $KEPT_AFTER_FAILED_DOWNLOAD && $DOWNLOAD_RUNNING; then
+        WHY="v$DESIRED_VERSION is not installed yet: $DOWNLOAD_PROBLEM."
+        NEXT="Reconnect with /mcp in a few minutes, once the download has finished, or install it by hand as the che-telegram-mcp README describes."
+    elif $KEPT_AFTER_FAILED_DOWNLOAD; then
         WHY="The download of v$DESIRED_VERSION did not succeed ($DOWNLOAD_PROBLEM), so the previous binary was kept."
     elif $NEED_DOWNLOAD; then
         WHY="The release that was downloaded is older than $MIN_BINARY_VERSION."
@@ -221,7 +259,7 @@ if [[ -z "$BINARY_VERSION" ]] || \
     else
         RISK="it would open TDLib without coordinating with other sessions"
     fi
-    fail_startup "CheTelegramAllMCP $MIN_BINARY_VERSION or later is required. The binary at $SHOWN_BINARY $FOUND, and $RISK. $WHY Install the current version by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
+    fail_startup "CheTelegramAllMCP $MIN_BINARY_VERSION or later is required. The binary at $SHOWN_BINARY $FOUND, and $RISK. $WHY $NEXT"
 fi
 
 # Read credentials from macOS Keychain

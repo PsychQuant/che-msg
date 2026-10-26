@@ -8,6 +8,13 @@
 # (tests/lib/fake_curl.sh) records every call and, unless the test gives it
 # something to serve, fails, so a test can never reach the network. Nothing
 # outside the private HOME is read or written.
+#
+# A wrapper with no binary it can run waits a few seconds for its background
+# download (PsychQuant/che-msg#67) before answering. On a loaded machine the
+# download may not even have started by then, so the harness lets wrappers wait
+# up to 30 seconds (CHE_TELEGRAM_MCP_INSTALL_WAIT): a download that fails, as
+# the fake curl's do, still ends the wait at once, and the test sees what the
+# failure is reported as. test-wrapper-background-download.sh checks the default.
 
 HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # WRAPPER_UNDER_TEST runs the tests against another copy, e.g. an earlier version.
@@ -15,6 +22,7 @@ WRAPPER="${WRAPPER_UNDER_TEST:-$HARNESS_ROOT/plugins/che-telegram-mcp/bin/che-te
 DESIRED_VERSION=$(sed -n 's/^DESIRED_VERSION="\(.*\)"$/\1/p' "$WRAPPER")
 BOT_WRAPPER="${BOT_WRAPPER_UNDER_TEST:-$HARNESS_ROOT/plugins/che-telegram-mcp/bin/che-telegram-bot-mcp-wrapper.sh}"
 BOT_DESIRED=$(sed -n 's/^DESIRED_VERSION="\(.*\)"$/\1/p' "$BOT_WRAPPER")
+export CHE_TELEGRAM_MCP_INSTALL_WAIT=30
 
 # make_home <dir> [credentials: yes|no] [binary version | "silent"]
 # The fake binary answers --version with the given version (default: the
@@ -148,6 +156,13 @@ start_wrapper() {
     local home=$1 input=$2 output=$3
     HOME="$home" PATH="$home/fakebin:$PATH" bash "$WRAPPER" < "$input" > "$output" 2>> "$home/wrapper.stderr" &
     echo $!
+}
+
+# wait_no_fetch <home> [seconds]: waits (default 10 s) until no download
+# process (`download.sh fetch …`) for that HOME's ~/bin is running. From #67 a
+# wrapper that hands over to an installed binary leaves its download running.
+wait_no_fetch() {
+    wait_until "${2:-10}" bash -c "! pgrep -f 'download\\.sh fetch .* $1/bin( |\$)' >/dev/null"
 }
 
 # alive <pid>: true while the process exists and is not a zombie.

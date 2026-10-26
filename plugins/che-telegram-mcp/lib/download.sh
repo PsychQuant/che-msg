@@ -4,6 +4,15 @@
 # itself runs in a process of its own, `/bin/bash download.sh fetch …`, so that
 # the lock below names that process and nothing else.
 #
+# It runs in the background, off the startup path (PsychQuant/che-msg#67).
+# Claude Code waits about 30 seconds for a server to answer initialize, and
+# the telegram-all binary is about 240 MB: a download on the startup path was
+# stopped with the wrapper before it could be moved into place, and the next
+# start began again. download_start runs it in a session of its own, so it
+# outlives the wrapper and a signal to the wrapper's process group; its output
+# goes to ~/bin/.<Binary>.download.log. The wrappers wait for it a few seconds
+# (download_wait) only when there is no binary they can run meanwhile.
+#
 # What a download does, and why:
 # - It fails on an HTTP error (curl -f). `curl -sL` exits 0 with the error
 #   page, which the wrappers installed as the binary and recorded as the
@@ -51,11 +60,66 @@ read_version_record() {
     printf '%s' "$v"
 }
 
-# download_install <binary name> <version> <url> <install dir> <pin version>
-# <pin> <release API url>: downloads and installs that version, waiting for the
-# result; returns download_fetch's status.
-download_install() {
-    /bin/bash "$DOWNLOAD_LIB" fetch "$@"
+# download_start <binary name> <version> <url> <install dir> <pin version>
+# <pin> <release API url>: starts downloading and installing that version in
+# the background and returns at once; sets DOWNLOAD_PID. perl's setsid puts it
+# in a session of its own (macOS has no setsid command); without perl it still
+# runs under nohup, in the wrapper's process group.
+download_start() {
+    local log="$4/.$1.download.log"
+    mkdir -p "$4" 2>/dev/null
+    if command -v perl >/dev/null 2>&1; then
+        nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' \
+            /bin/bash "$DOWNLOAD_LIB" fetch "$@" </dev/null >>"$log" 2>&1 &
+    else
+        nohup /bin/bash "$DOWNLOAD_LIB" fetch "$@" </dev/null >>"$log" 2>&1 &
+    fi
+    DOWNLOAD_PID=$!
+}
+
+# download_wait <binary name> <version> <install dir> <seconds>: waits up to
+# <seconds> for that version to be installed, by the download download_start
+# started or, when that found another one running (status 10), by the other.
+# Sets DOWNLOAD_STATE to installed, failed or running, and DOWNLOAD_STATUS to
+# the download's exit status once it has ended.
+download_wait() {
+    local name=$1 version=$2 dir=$3 deadline=$((SECONDS + $4))
+    DOWNLOAD_STATE=running
+    DOWNLOAD_STATUS=""
+    while :; do
+        if [[ -z "$DOWNLOAD_STATUS" ]] && ! kill -0 "$DOWNLOAD_PID" 2>/dev/null; then
+            wait "$DOWNLOAD_PID" 2>/dev/null
+            DOWNLOAD_STATUS=$?
+        fi
+        if [[ -x "$dir/$name" ]] && version_at_least "$(read_version_record "$dir/.$name.version")" "$version"; then
+            DOWNLOAD_STATE=installed
+            return 0
+        fi
+        if [[ -n "$DOWNLOAD_STATUS" && "$DOWNLOAD_STATUS" != 10 ]]; then
+            DOWNLOAD_STATE=failed
+            return 0
+        fi
+        [[ "$SECONDS" -ge "$deadline" ]] && return 0
+        sleep 0.1
+    done
+}
+
+# install_wait_seconds <default>: how long a wrapper with no binary to run
+# waits for its download before answering: CHE_TELEGRAM_MCP_INSTALL_WAIT when
+# it is a whole number of seconds up to 600, otherwise <default>. A longer wait
+# helps only if Claude Code waits longer too (its MCP_TIMEOUT).
+install_wait_seconds() {
+    local v=${CHE_TELEGRAM_MCP_INSTALL_WAIT:-}
+    if [[ "$v" =~ ^[0-9]{1,3}$ ]] && [[ $((10#$v)) -le 600 ]]; then echo $((10#$v)); else echo "$1"; fi
+}
+
+# download_progress <binary name> <version> <install dir>: ", N MB so far" for
+# the partial file of that version, or nothing when there is none yet.
+download_progress() {
+    local bytes
+    bytes=$(stat -f %z "$3/.$1.$2.part" 2>/dev/null) || return 0
+    [[ "$bytes" =~ ^[0-9]+$ ]] && [[ "$bytes" -gt 0 ]] && echo ", $((bytes / 1048576)) MB so far"
+    return 0
 }
 
 # download_failure <status>: why a download installed nothing, as a phrase for
@@ -169,6 +233,10 @@ download_fetch() {
         DL_LOCK=""
         return 10
     fi
+    # The log collects every session's downloads; keep it short.
+    f="$dir/.$name.download.log"
+    [[ -f "$f" ]] && [[ "$(wc -c < "$f" 2>/dev/null)" -gt 262144 ]] && : > "$f"
+    echo "$(date '+%Y-%m-%d %H:%M:%S %z') $name: downloading v$version (process $$)" >&2
     # The lock goes when this process does, also when it is stopped; curl is
     # stopped with it, so no transfer outlives the lock it was started under.
     DL_CURL=""
@@ -213,28 +281,34 @@ download_fetch() {
         checked_against="the sha256 digest GitHub reports for the asset"
     fi
 
-    # In the background with wait, so that a TERM stops the transfer at once
-    # instead of after curl finishes.
-    curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 30 \
-        --speed-limit 4096 --speed-time 60 -C - -o "$part" "$url" &
-    DL_CURL=$!
-    wait "$DL_CURL"; rc=$?
-    DL_CURL=""
-    case "$rc" in
-        0) ;;
-        22)
-            rm -f "$part"
-            echo "$name: the server answered $url with an HTTP error; nothing was installed" >&2
-            return 21 ;;
-        33)
-            # The server would not resume: start from zero next time.
-            rm -f "$part"
-            echo "$name: the download of v$version could not be resumed (curl exit status 33); the next start downloads it again" >&2
-            return 20 ;;
-        *)
-            echo "$name: the download of v$version was interrupted (curl exit status $rc); the next start resumes it" >&2
-            return 20 ;;
-    esac
+    if [[ -f "$part" ]] && [[ "$(_dl_sha256 "$part")" == "$expected" ]]; then
+        # Complete already: an earlier download finished but was stopped
+        # before its move (#67).
+        echo "$name: the partial file of v$version is complete and matches; installing it without downloading again" >&2
+    else
+        # In the background with wait, so that a TERM stops the transfer at
+        # once instead of after curl finishes.
+        curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 30 \
+            --speed-limit 4096 --speed-time 60 -C - -o "$part" "$url" &
+        DL_CURL=$!
+        wait "$DL_CURL"; rc=$?
+        DL_CURL=""
+        case "$rc" in
+            0) ;;
+            22)
+                rm -f "$part"
+                echo "$name: the server answered $url with an HTTP error; nothing was installed" >&2
+                return 21 ;;
+            33)
+                # The server would not resume: start from zero next time.
+                rm -f "$part"
+                echo "$name: the download of v$version could not be resumed (curl exit status 33); the next start downloads it again" >&2
+                return 20 ;;
+            *)
+                echo "$name: the download of v$version was interrupted (curl exit status $rc); the next start resumes it" >&2
+                return 20 ;;
+        esac
+    fi
 
     f=$(_dl_sha256 "$part")
     if [[ "$f" != "$expected" ]]; then
