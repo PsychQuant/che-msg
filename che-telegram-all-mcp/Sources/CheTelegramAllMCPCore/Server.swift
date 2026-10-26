@@ -415,7 +415,8 @@ public final class CheTelegramAllMCPServer {
                  manifest (files, counts, newest_message_id and newest_message_file, complete, bookmark_safe, media results) and never \
                  message text. Advance a stored bookmark to newest_message_id only when bookmark_safe is true. \
                  While another session holds TDLib it archives from the local cache without media, sender \
-                 names or captions; those blocks carry the line <!-- provisional: local-cache --> after their \
+                 names, captions, poll, sticker and location details, or the audio type (audio reads [other]); \
+                 those blocks carry the line <!-- provisional: local-cache --> after their \
                  anchor, and a later call through TDLib over the same range replaces them (upgraded_messages). \
                  Other existing blocks are never rewritten. Day files are owner-only; one \
                  archive per chat directory runs at a time; a day file that is not a regular file (a symbolic \
