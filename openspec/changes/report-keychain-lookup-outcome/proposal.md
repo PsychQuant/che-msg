@@ -24,10 +24,11 @@
 ### Modified Capabilities
 
 - `telegram-auth-error-reporting`: 新增「Keychain 查詢沒有拿到值時，`auth_status`／`auth_run` 說明原因分類並把 Keychain 放在提示的第一順位」的要求。
+- `telegram-auth-coordination`: `auth_status` 回應的欄位清單加上 `keychain_lookup`（「`auth_status` response includes structured next-step hint」），完整回應的 scenario 隨之更新。
 
 ## Impact
 
-- 受影響的 spec：`telegram-auth-error-reporting`
+- 受影響的 spec：`telegram-auth-error-reporting`、`telegram-auth-coordination`
 - 程式：`che-telegram-all-mcp/Sources/TelegramAllLib/KeychainCredentials.swift`、`che-telegram-all-mcp/Sources/TelegramAllLib/AutoFire.swift`、`che-telegram-all-mcp/Sources/TelegramAllLib/TDLibClient.swift`、`che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/AuthResponses.swift`、`che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Server.swift`
 - 測試：`che-telegram-all-mcp/Tests/TelegramAllLibTests/`、`che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/`
 - 文件：`che-telegram-all-mcp/README.md`（`auth_status` 欄位）、`che-telegram-all-mcp/CHANGELOG.md`
