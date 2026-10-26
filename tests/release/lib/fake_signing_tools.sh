@@ -11,6 +11,7 @@
 #           extra-entitlement  a signed binary carries an entitlement
 #           not-notarized      spctl does not accept the binary as notarized
 #           rejected-notarized spctl says "rejected" but names a notarized source
+#           notarize-fails-second  the second notarytool submit fails
 #
 # "Signing" appends the line FAKE_SIGNED_MARK to the file, so a test can tell a
 # signed file from an unsigned copy of it.
@@ -59,7 +60,12 @@ EOF
 #!/bin/bash
 echo "xcrun \$*" >> "$log"
 case "\$1 \$2" in
-    "notarytool submit") echo "  id: 11111111-2222-3333-4444-555555555555"; echo "  status: Accepted" ;;
+    "notarytool submit")
+        echo x >> "$log.submits"
+        if [ "$mode" = notarize-fails-second ] && [ "\$(wc -l < "$log.submits")" -ge 2 ]; then
+            echo "  id: 22222222-3333-4444-5555-666666666666"; echo "  status: Invalid"; exit 1
+        fi
+        echo "  id: 11111111-2222-3333-4444-555555555555"; echo "  status: Accepted" ;;
 esac
 exit 0
 EOF
