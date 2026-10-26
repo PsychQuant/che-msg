@@ -144,10 +144,18 @@ On a link too slow for the first download to finish in a few seconds, you can le
 
 ### Manual install (if auto-download fails)
 
+Download both binaries next to their final place, then check them:
+
 ```bash
 mkdir -p ~/bin
 curl -fL -C - https://github.com/PsychQuant/che-msg/releases/download/v0.9.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP.new
 curl -fL -C - https://github.com/PsychQuant/che-msg/releases/download/v0.9.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP.new
+shasum -a 256 ~/bin/CheTelegramAllMCP.new ~/bin/CheTelegramBotMCP.new
+```
+
+If a `curl` stops part-way, run the same line again: `-C -` continues where it stopped, and `-f` makes an HTTP error fail instead of saving the error page. Each value `shasum` prints must equal the wrapper's `SHA256_PIN` (in `bin/che-telegram-all-mcp-wrapper.sh` and `bin/che-telegram-bot-mcp-wrapper.sh`), which is also the sha256 the release page shows for that asset; from 0.9.0 on it is in the `.sha256` file attached to the release too. If one does not match, delete that `.new` file and download it again. Only when both match, move them into place and record the version:
+
+```bash
 chmod +x ~/bin/CheTelegramAllMCP.new ~/bin/CheTelegramBotMCP.new
 mv ~/bin/CheTelegramAllMCP.new ~/bin/CheTelegramAllMCP
 mv ~/bin/CheTelegramBotMCP.new ~/bin/CheTelegramBotMCP
@@ -155,13 +163,7 @@ echo 0.9.0 > ~/bin/.CheTelegramAllMCP.version
 echo 0.9.0 > ~/bin/.CheTelegramBotMCP.version
 ```
 
-Run the `mv` lines only after both `curl` lines finished without an error and both files have the right sha256:
-
-```bash
-shasum -a 256 ~/bin/CheTelegramAllMCP.new ~/bin/CheTelegramBotMCP.new
-```
-
-Each value must equal the wrapper's `SHA256_PIN` (in `bin/che-telegram-all-mcp-wrapper.sh` and `bin/che-telegram-bot-mcp-wrapper.sh`), which is also the sha256 the release page shows for that asset; from 0.9.0 on it is in the `.sha256` file attached to the release too. If a `curl` stops part-way, run the same line again: `-C -` continues where it stopped, and `-f` makes an HTTP error fail instead of saving the error page. The download goes to `.new` and is moved into place in one step, so a session that is running the old binary keeps running it; writing over `~/bin/CheTelegramAllMCP` directly would change the file under that session. The last two lines record the installed version. Without them the wrapper keeps reading the old record, which no longer describes the binary: an older record makes it download again on the next start, and a newer one hides the version you installed.
+Each file is moved into place in one step, so a session that is running the old binary keeps running it; writing over `~/bin/CheTelegramAllMCP` directly would change the file under that session. The last two lines record the installed version. Without them the wrapper keeps reading the old record, which no longer describes the binary: an older record makes it download again on the next start, and a newer one hides the version you installed.
 
 > **Universal binary**: prebuilt binaries are Mach-O universal (arm64 + x86_64), so they run on both Apple Silicon and Intel Macs. Building from source: `git clone https://github.com/PsychQuant/che-msg.git && cd che-msg/che-telegram-all-mcp && swift build -c release`.
 
