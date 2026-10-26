@@ -8,15 +8,15 @@ import TelegramAllLib
 /// path (PsychQuant/che-msg#69). Synthetic messages only; TDLib is held by a fake process so no
 /// TDLib client is ever created.
 final class ArchiveToolTests: XCTestCase {
-    /// Pages like LocalTDLibReader (newest first, inclusive cursor, no file info).
+    /// Pages like LocalTDLibReader (newest first, strictly below the cursor as TDLib does, no file info; #73).
     private final class PagingReader: LocalCacheReading {
         var messages: [[String: Any]] = []
         var historyCalls = 0
         func getChatHistory(chatId: Int64, limit: Int, fromMessageId: Int64, maxMessages: Int?,
                             sinceDate: Date?, untilDate: Date?) throws -> LocalTDLibReader.Result {
             historyCalls += 1
-            let upTo = fromMessageId == 0 ? Int64.max : fromMessageId
-            let page = messages.filter { (($0["id"] as? NSNumber)?.int64Value ?? 0) <= upTo }.prefix(limit)
+            let below = fromMessageId == 0 ? Int64.max : fromMessageId
+            let page = messages.filter { (($0["id"] as? NSNumber)?.int64Value ?? 0) < below }.prefix(limit)
             let json = String(decoding: try JSONSerialization.data(withJSONObject: Array(page)), as: UTF8.self)
             return .init(json: json, undecodableCount: 0, freshness: [.init(chatId: chatId, newest: .date(1_791_676_800))])
         }

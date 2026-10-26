@@ -156,12 +156,12 @@ public struct LocalTDLibReader {
 
     private func history(in cache: TDLibCacheDatabase, chatId: Int64, limit: Int, fromMessageId: Int64,
                          maxMessages: Int?, sinceDate: Date?, untilDate: Date?) throws -> [LocalMessage] {
-        let upTo = fromMessageId == 0 ? Int64.max : fromMessageId
+        let below = fromMessageId == 0 ? Int64.max : fromMessageId
         guard let maxMessages else {
             var page: [LocalMessage] = []
             let pageSize = max(limit, 0)
             if pageSize > 0 {
-                try cache.forEachMessage(chatId: chatId, maxMessageId: upTo) { page.append($0); return page.count < pageSize }
+                try cache.forEachMessage(chatId: chatId, belowMessageId: below) { page.append($0); return page.count < pageSize }
             }
             return page.filter { Self.isWithin($0, since: sinceDate, until: untilDate) }
         }
@@ -171,7 +171,7 @@ public struct LocalTDLibReader {
         }
         var accumulated: [LocalMessage] = []
         if cap > 0 {
-            try cache.forEachMessage(chatId: chatId, maxMessageId: upTo) { message in
+            try cache.forEachMessage(chatId: chatId, belowMessageId: below) { message in
                 if let date = message.date, let sinceDate, Self.date(date) < sinceDate { return false }
                 if Self.isWithin(message, since: sinceDate, until: untilDate) { accumulated.append(message) }
                 return accumulated.count < cap

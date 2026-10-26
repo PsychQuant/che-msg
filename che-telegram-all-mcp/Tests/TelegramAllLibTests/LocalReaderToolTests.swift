@@ -110,10 +110,38 @@ final class LocalReaderToolTests: XCTestCase {
         XCTAssertEqual(result.freshness, [.init(chatId: 777, newest: .date(1_760_172_800))])
     }
 
-    func testChatHistoryLimitAndInclusiveFromMessageId() throws {
+    func testChatHistoryLimit() throws {
         let reader = try reader()
         XCTAssertEqual(try ids(reader.getChatHistory(chatId: 777, limit: 2).json), [forwarded, helloThere])
-        XCTAssertEqual(try ids(reader.getChatHistory(chatId: 777, fromMessageId: helloThere).json), [helloThere, hello])
+    }
+
+    /// Like TDLib's getChatHistory at offset 0 (OrderedMessages::get_history), the page
+    /// starts strictly below from_message_id (#73).
+    func testChatHistoryPagesStrictlyBelowFromMessageId() throws {
+        let reader = try reader()
+        XCTAssertEqual(try ids(reader.getChatHistory(chatId: 777, fromMessageId: helloThere).json), [hello])
+        XCTAssertEqual(try ids(reader.getChatHistory(chatId: 777, fromMessageId: hello).json), [],
+                       "nothing is older than the oldest message")
+        XCTAssertEqual(try ids(reader.getChatHistory(chatId: 777, fromMessageId: forwarded + 1).json),
+                       [forwarded, helloThere, hello], "a cursor above the newest starts at the newest")
+    }
+
+    func testPagingWithTheLowestIdReturnsEachMessageOnce() throws {
+        let reader = try reader()
+        var seen: [Int64] = [], cursor: Int64 = 0
+        for _ in 0..<5 {
+            let page = try ids(reader.getChatHistory(chatId: 777, limit: 1, fromMessageId: cursor).json)
+            guard let lowest = page.min() else { break }
+            seen += page
+            cursor = lowest
+        }
+        XCTAssertEqual(seen, [forwarded, helloThere, hello])
+    }
+
+    func testBulkHistoryAlsoStartsStrictlyBelowFromMessageId() throws {
+        let reader = try reader()
+        XCTAssertEqual(try ids(reader.getChatHistory(chatId: 777, fromMessageId: forwarded, maxMessages: 10).json),
+                       [helloThere, hello])
     }
 
     func testChatHistoryDateFiltersOnOnePage() throws {

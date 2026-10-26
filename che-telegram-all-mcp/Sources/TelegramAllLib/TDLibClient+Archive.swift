@@ -53,11 +53,10 @@ public final class LocalCacheHistorySource: ArchiveHistorySource {
 
     public init(reader: LocalCacheReading) { self.reader = reader }
 
-    /// The reader's cursor includes `fromMessageId` itself (`message_id <= from`), while the
-    /// protocol pages strictly below it like TDLib; ask for one more and drop the cursor
-    /// message, or the end of the history would look like a source that repeats.
+    /// The reader pages strictly below `fromMessageId`, like TDLib (#73); the filter below
+    /// keeps the protocol's "strictly below" true even if that ever changes.
     public func page(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [[String: Any]] {
-        let result = try reader.getChatHistory(chatId: chatId, limit: fromMessageId == 0 ? limit : limit + 1,
+        let result = try reader.getChatHistory(chatId: chatId, limit: limit,
                                                fromMessageId: fromMessageId, maxMessages: nil,
                                                sinceDate: nil, untilDate: nil)
         undecodableCount += result.undecodableCount

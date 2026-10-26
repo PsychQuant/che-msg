@@ -486,6 +486,17 @@ The local reader SHALL answer `get_chats`, `search_chats`, `get_chat_history`, `
 - **WHEN** `get_chat_history` is called with `chat_id` 777
 - **THEN** the array contains `{"id":5242880,"chat_id":777,"date":1760000000,"sender":{"type":"user","user_id":1001},"is_outgoing":false,"type":"text","text":"hello"}`
 
+#### Scenario: History pages strictly below from_message_id, like TDLib
+
+- **WHEN** `get_chat_history` is called with a non-zero `from_message_id`, with or without `max_messages`
+- **THEN** the result starts at the newest cached message whose id is below `from_message_id`, and does not include the message `from_message_id` itself, as TDLib's `getChatHistory` at offset 0 does
+
+##### Example: paging with the lowest id returned
+
+- **GIVEN** chat 777 holds messages 5242880, 6291456 and 7340032 in the cache
+- **WHEN** `get_chat_history` is called with `chat_id` 777, `limit` 1, and `from_message_id` set each time to the lowest id of the previous page (0 at first)
+- **THEN** the pages are `[7340032]`, `[6291456]`, `[5242880]`, then `[]`, and no message appears twice
+
 #### Scenario: Unread count omitted
 
 - **WHEN** `get_chats` is answered by the reader and the unread count is not decodable from the cache

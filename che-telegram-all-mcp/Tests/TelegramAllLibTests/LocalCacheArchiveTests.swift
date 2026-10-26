@@ -4,17 +4,19 @@ import XCTest
 /// Archiving from TDLib's local cache (telegram-chat-archive, "Archive from the local cache";
 /// PsychQuant/che-msg#69). Synthetic messages only.
 final class LocalCacheArchiveTests: XCTestCase {
-    /// Pages like LocalTDLibReader: newest first, cursor INCLUSIVE (`message_id <= from`),
-    /// messages carry a type but no file or caption.
-    final class InclusiveReader: LocalCacheReading {
+    /// Pages like LocalTDLibReader: newest first, strictly below the cursor (`message_id < from`,
+    /// as TDLib; #73), messages carry a type but no file or caption.
+    final class StrictReader: LocalCacheReading {
         var messages: [[String: Any]]
         var cursors: [Int64] = []
+        var limits: [Int] = []
         init(_ messages: [[String: Any]]) { self.messages = messages }
         func getChatHistory(chatId: Int64, limit: Int, fromMessageId: Int64, maxMessages: Int?,
                             sinceDate: Date?, untilDate: Date?) throws -> LocalTDLibReader.Result {
             cursors.append(fromMessageId)
-            let upTo = fromMessageId == 0 ? Int64.max : fromMessageId
-            let page = messages.filter { (($0["id"] as? NSNumber)?.int64Value ?? 0) <= upTo }.prefix(limit)
+            limits.append(limit)
+            let below = fromMessageId == 0 ? Int64.max : fromMessageId
+            let page = messages.filter { (($0["id"] as? NSNumber)?.int64Value ?? 0) < below }.prefix(limit)
             let json = String(decoding: try JSONSerialization.data(withJSONObject: Array(page)), as: UTF8.self)
             return .init(json: json, undecodableCount: 1,
                          freshness: [.init(chatId: chatId, newest: .date(1_791_676_800))])
@@ -43,13 +45,14 @@ final class LocalCacheArchiveTests: XCTestCase {
         return dir
     }
 
-    func testWholeHistoryFromAnInclusiveCursorIsComplete() async throws {
-        let reader = InclusiveReader([local(30, 3), local(20, 2, type: "photo"), local(10, 1)])
+    func testWholeHistoryFromTheLocalCacheIsComplete() async throws {
+        let reader = StrictReader([local(30, 3), local(20, 2, type: "photo"), local(10, 1)])
         let source = LocalCacheHistorySource(reader: reader)
         let archiver = ChatArchiver(source: source, sourceKind: .localCache, isSynced: { false }, pageSize: 2)
         let result = try await archiver.archive(.init(chatId: 777, outputDir: outputDir(), utcOffset: "+08:00"))
         XCTAssertEqual(result.newMessages, 3)
-        XCTAssertTrue(result.complete, "the cursor message coming back must not read as a stuck source")
+        XCTAssertTrue(result.complete, "a source that pages strictly below the cursor does not read as stuck")
+        XCTAssertEqual(Set(reader.limits), [2], "every page asks for the page size, no extra row for the cursor (#73)")
         XCTAssertNil(result.stoppedReason)
         XCTAssertEqual(result.source, .localCache)
         XCTAssertFalse(result.bookmarkSafe)
@@ -60,7 +63,7 @@ final class LocalCacheArchiveTests: XCTestCase {
     }
 
     func testFactoryArchivesWithoutNamesOrDownloads() async throws {
-        let reader = InclusiveReader([local(30, 3), local(20, 2)])
+        let reader = StrictReader([local(30, 3), local(20, 2)])
         let dir = outputDir()
         let result = try await ChatArchiver.localCache(LocalCacheHistorySource(reader: reader))
             .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
