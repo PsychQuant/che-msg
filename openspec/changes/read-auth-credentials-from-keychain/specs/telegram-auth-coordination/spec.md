@@ -100,6 +100,11 @@ The MCP server SHALL expose an `auth_run` tool that advances the authentication 
 - **WHEN** `auth_run` is called with no arguments at `waitingForPassword`, starts a Keychain lookup, and the background auto-fire submits the password and the state becomes `ready` before the lookup returns
 - **THEN** `auth_run` does not send the password again and answers from the `ready` state
 
+#### Scenario: auth_run waits for a 2FA password the Keychain is about to send
+
+- **WHEN** `auth_run(code:)` sends the login code, TDLib moves to `waitingForPassword`, the environment has no `TELEGRAM_2FA_PASSWORD`, and the background auto-fire is still looking the item up or sending it
+- **THEN** `auth_run` waits, for at most 15 seconds, until authorization settles and answers with the state after the password was sent, instead of a `next_step` hint asking for `password`
+
 #### Scenario: auth_run uses the Keychain when neither argument nor environment has the value
 
 - **WHEN** `authState == waitingForPassword` AND caller invokes `auth_run()` AND no `TELEGRAM_2FA_PASSWORD` is set AND the Keychain item `TELEGRAM_2FA_PASSWORD` holds a value
@@ -118,7 +123,7 @@ The MCP server SHALL expose an `auth_run` tool that advances the authentication 
 
 ### Requirement: Keychain credential lookup is bounded and keeps no copy
 
-The client SHALL read a Keychain credential by running `/usr/bin/security find-generic-password` at that absolute path with the account `che-telegram-all-mcp`, the credential's service name and `-g`, and with no argument derived from caller input. With `-g`, `security` writes the item's attributes to standard output and its value to standard error as one `password:` line. The client SHALL read only that line: `password: "<text>"` gives the text between the outer quotes, and `password: 0x<hex>  "<escaped>"` gives the hex digits decoded as UTF-8. (`-w` is not used: it prints a value that contains any non-ASCII or control byte as bare hex, which cannot be told apart from an ASCII value made of hex digits, so a 2FA password such as `密碼` would be submitted as its hex.) The child process SHALL have its standard input connected to the null device, so it can never read the MCP server's standard input, and its standard output SHALL be discarded. A lookup SHALL finish within 10 seconds: when the child has not exited by then, the client SHALL terminate it and treat the credential as absent. Exit status 44 (item not found), any other non-zero exit status, an empty value, standard error with no `password:` line or with one in neither form, hex that is not valid UTF-8, and standard error longer than 64 KiB SHALL each be treated as absent. The value SHALL be used only for the submission it was read for: the client SHALL NOT keep it in a stored property, cache it, write it to a log or to standard error, or include it in an error message or a tool response. When a lookup times out, fails with an exit status other than 44, or exits 0 without a value it can read, the client SHALL write one line to standard error naming the credential and the reason, without the value.
+The client SHALL read a Keychain credential by running `/usr/bin/security find-generic-password` at that absolute path with the account `che-telegram-all-mcp`, the credential's service name and `-g`, and with no argument derived from caller input. With `-g`, `security` writes the item's attributes to standard output and its value to standard error as one `password:` line. The client SHALL read only that line: `password: "<text>"` gives the text between the outer quotes, and `password: 0x<hex>  "<escaped>"` gives the hex digits decoded as UTF-8. (`-w` is not used: it prints a value that contains any non-ASCII or control byte as bare hex, which cannot be told apart from an ASCII value made of hex digits, so a 2FA password such as `密碼` would be submitted as its hex.) The child process SHALL have its standard input connected to the null device, so it can never read the MCP server's standard input, and its standard output SHALL be discarded. A lookup SHALL finish within 10 seconds: when the child has not exited by then, the client SHALL terminate it and treat the credential as absent. Exit status 44 (item not found), any other non-zero exit status, an empty value, standard error with no `password:` line, with one in neither form, or with one not ended by a newline (the output may have been cut short), hex that is not valid UTF-8, and standard error longer than 64 KiB SHALL each be treated as absent. The value SHALL be used only for the submission it was read for: the client SHALL NOT keep it in a stored property, cache it, write it to a log or to standard error, or include it in an error message or a tool response. When a lookup times out, fails with an exit status other than 44, or exits 0 without a value it can read, the client SHALL write one line to standard error naming the credential and the reason, without the value.
 
 #### Scenario: an item that does not exist is absent
 
@@ -137,10 +142,13 @@ The client SHALL read a Keychain credential by running `/usr/bin/security find-g
 | `password: "secret"`, exit 0 | found `secret` | nothing |
 | `password: "end""`, exit 0 | found `end"` | nothing |
 | `password: 0x636166C3A9  "caf\303\251"`, exit 0 | found `café` | nothing |
+| `password: 0xE5AF86E7A2BC ` (no quoted tail: the value has no printable ASCII character), exit 0 | found `密碼` | nothing |
 | `password: 0x610A62  "a\012b"`, exit 0 | found `a` newline `b` | nothing |
 | `password: "6361"`, exit 0 | found `6361` (quoted text is never decoded) | nothing |
 | `password: ` with nothing after it, exit 0 | absent | nothing |
 | no `password:` line, exit 0 | absent (unavailable) | one line naming the credential and the reason |
+| `password: 0x636166` with no newline after it (output cut short), exit 0 | absent (unavailable) | one line naming the credential and the reason |
+| `password: 0x61ZZ  "aZZ"` or `password: secret` (neither form), exit 0 | absent (unavailable) | one line naming the credential and the reason |
 | `password: 0xFF  "\377"`, exit 0 | absent (unavailable, not UTF-8) | one line naming the credential and the reason, not the value |
 | exit 44 | absent | nothing |
 | exit 51 | absent (unavailable) | one line naming the credential and exit status 51 |

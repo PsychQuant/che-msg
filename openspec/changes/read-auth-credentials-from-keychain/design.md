@@ -131,20 +131,27 @@ public protocol KeychainCredentialSource: Sendable {
 }
 public struct SecurityCLICredentialSource: KeychainCredentialSource {
     public init(executable: URL = URL(fileURLWithPath: "/usr/bin/security"),
-                keychainPath: String? = nil, timeout: TimeInterval = 10)
+                keychainPath: String? = nil, timeout: TimeInterval = 10,
+                diagnostics: @escaping @Sendable (String) -> Void = /* 寫 stderr */)
+    static func parsePasswordLine(_ stderr: Data) -> PasswordLine   // 讀 `-g` 的 password: 行
 }
 
 // TelegramAllLib/AutoFire.swift
 internal enum CredentialLookupStatus: Equatable { case notNeeded, pending, found, absent }
 internal func authorizationIsSettled(state:hasAutoFireError:envApiId:envApiHash:envPhone:envPassword:keychainLookup:) -> Bool
+internal final class CredentialLookupTracker   // stateChanged(lookingUp:) / finish / isCurrent / isInFlight / submissionFailed
+internal func runCredentialPlan(_:generation:tracker:lookup:submit:recordFailure:) async
 
 // TelegramAllLib/TDLibClient.swift
 public init(logVerbosity: Int = 0, syncState: TDLibSyncState? = nil,
             credentials: KeychainCredentialSource = SecurityCLICredentialSource()) async throws
 public func lookUpKeychainCredential(_ credential: KeychainCredential) async -> String?
+public var isSubmittingKeychainCredential: Bool { get }   // auth_run 等背景送值
 
 // CheTelegramAllMCPCore/AuthResponses.swift
 internal func decideAuthRunAction(state:phone:code:password:envApiId:envApiHash:envPhone:envPassword:keychainPhone:keychainPassword:) -> AuthRunAction
+internal func authRunKeychainValues(lookedUp:value:stateNow:phone:password:envPhone:envPassword:) -> (phone: String?, password: String?)
+internal func decideAuthRunActionAfterLookup(lookedUp:value:stateNow:phone:code:password:envApiId:envApiHash:envPhone:envPassword:) -> AuthRunAction
 ```
 
 `decideAutoFire` 的簽章不變；`envAuthCode` 參數由 #87 處理，不在這個 change 裡。

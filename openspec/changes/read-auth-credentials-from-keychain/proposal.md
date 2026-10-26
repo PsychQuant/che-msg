@@ -41,7 +41,7 @@ plugin README 的 Track A 叫使用者把電話號碼（`TELEGRAM_PHONE`）與 2
 
 ## Impact
 
-- Affected specs: `telegram-auth-coordination`（修改）
+- Affected specs: `telegram-auth-coordination`（修改）、`telegram-tdlib-lifecycle`（修改：settle 的說法）、`telegram-auth-error-reporting`（修改：auto-fire 失敗的回報）
 - Affected code:
   - Modified: che-telegram-all-mcp/Sources/TelegramAllLib/AutoFire.swift, che-telegram-all-mcp/Sources/TelegramAllLib/TDLibClient.swift, che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/AuthResponses.swift, che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Server.swift, che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/CLIBootstrap.swift, che-telegram-all-mcp/README.md, che-telegram-all-mcp/CHANGELOG.md, plugins/che-telegram-mcp/README.md, plugins/che-telegram-mcp/CHANGELOG.md, che-telegram-all-mcp/Tests/TelegramAllLibTests/AutoFireChainTests.swift, che-telegram-all-mcp/Tests/CheTelegramAllMCPTests/AuthRunHandlerTests.swift
   - New: che-telegram-all-mcp/Sources/TelegramAllLib/KeychainCredentials.swift, che-telegram-all-mcp/Tests/TelegramAllLibTests/KeychainCredentialsTests.swift, tests/che-telegram-mcp/test-wrapper-no-auth-secrets.sh
