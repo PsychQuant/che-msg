@@ -147,6 +147,15 @@ final class AuthStatusNextStepTests: XCTestCase {
         }
     }
 
+    /// The closed-session error (#64) is a client error, not a TDLib one.
+    func testAClosedSessionErrorIsAClientError() throws {
+        let err = TDLibClient.TDError.sessionClosed
+        let payload = try parsePayload(authStatusResult(state: .closed, lastError: err))
+        let lastError = try XCTUnwrap(payload["last_error"] as? [String: Any])
+        XCTAssertEqual(lastError["type"] as? String, "client_error")
+        XCTAssertEqual(lastError["message"] as? String, err.errorDescription)
+    }
+
     // MARK: - Helper
 
     /// Extracts the JSON payload from an MCP CallTool.Result.

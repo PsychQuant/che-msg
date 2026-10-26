@@ -107,6 +107,18 @@ final class HandlerGlueTests: XCTestCase {
                       "should reflect localizedDescription")
     }
 
+    /// A request refused on a closed client reaches the caller through this
+    /// catch-all (#64); its next step is at the end of the message, so it must
+    /// fit under the cap.
+    func testAClosedSessionErrorIsReportedWhole() throws {
+        let error = TDLibClient.TDError.sessionClosed
+        let result = errorResultFromParse(error)
+        XCTAssertEqual(result.isError, true)
+        guard case let .text(text, _, _) = result.content[0] else { return XCTFail("expected .text content") }
+        XCTAssertEqual(text, "Error: " + (try XCTUnwrap(error.errorDescription)))
+        XCTAssertTrue(text.hasSuffix("/mcp."), text)
+    }
+
     // MARK: - End-to-end glue: parser-throws → errorResultFromParse path
 
     /// Models the actual handler glue: `do { try parse... } catch { return errorResultFromParse(error) }`.

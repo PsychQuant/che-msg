@@ -78,8 +78,10 @@ public final class TDLibClient {
     /// reopened after an idle close must not bring a second manager
     /// (PsychQuant/che-msg#58).
     private static let manager = TDLibClientManager()
-    /// Internal so the archive adapters in TDLibClient+Archive.swift can reach it.
-    let client: TDLibKit.TDLibClient
+    /// Private so that every request goes through `openClient`, which checks
+    /// first that TDLib has not closed this client (#64); used directly only
+    /// to close it.
+    private let client: TDLibKit.TDLibClient
     private let dbPath: String
 
     /// The authorization state, the auto-fire error, the Keychain lookup
@@ -117,12 +119,22 @@ public final class TDLibClient {
         case notAuthenticated
         case missingCredentials(String)
         case tdlibError(code: Int, message: String)
+        /// TDLib is closing or has closed this client, so the request was not
+        /// sent (#64). The server goes on handing out a client TDLib has
+        /// closed until a logout succeeds, the idle close runs or the server
+        /// restarts, and the message says so. It must stay within
+        /// `errorResultFromParse`'s 256-character cap.
+        case sessionClosed
 
         public var errorDescription: String? {
             switch self {
             case .notAuthenticated: return "Not authenticated. Use auth_set_parameters, auth_send_phone, and auth_send_code first."
             case .missingCredentials(let msg): return "Missing: \(msg)"
             case .tdlibError(let code, let message): return "TDLib error \(code): \(message)"
+            case .sessionClosed:
+                return "TDLib is closing or has closed this session; no further request was sent. "
+                    + "A new session opens on the first call after a successful logout, after the idle close "
+                    + "(\(IdleTimeout.environmentVariable) s with no call), or after you reconnect telegram-all with /mcp."
             }
         }
     }
@@ -386,12 +398,49 @@ public final class TDLibClient {
         auth.recordAutoFireError(error)
     }
 
+    // MARK: - Requests
+
+    /// Why a request may not be sent in `state`, or nil when it may (#64).
+    /// TDLibKit drops a client from its table on `authorizationStateClosed`
+    /// and routes no answer to it, so a request sent after that never returns
+    /// and its call never ends; while TDLib logs out or closes nothing sent can
+    /// do any good either. With `authorized`, the request also needs
+    /// authorization to be ready.
+    static func requestRefusal(state: AuthState, authorized: Bool) -> TDError? {
+        switch state {
+        case .closing, .closed: return .sessionClosed
+        case .ready: return nil
+        case .waitingForParameters, .waitingForPhoneNumber, .waitingForCode, .waitingForPassword:
+            return authorized ? .notAuthenticated : nil
+        }
+    }
+
+    /// Throws `requestRefusal` for the state read under the coordinator's
+    /// lock. The phone number and the 2FA password are checked by
+    /// `AuthCoordinator` instead, under the lock their request is handed to
+    /// TDLib under. A request already sent when TDLib closes is not covered;
+    /// that stays with the lifecycle findings (1 to 3) of #64.
+    func requireOpen(authorized: Bool = false) throws {
+        if let refusal = Self.requestRefusal(state: auth.state, authorized: authorized) {
+            throw refusal
+        }
+    }
+
+    /// The TDLibKit client for one request, after `requireOpen` (#64): every
+    /// request, including each page of a paging loop, goes through this.
+    var openClient: TDLibKit.TDLibClient {
+        get throws {
+            try requireOpen()
+            return client
+        }
+    }
+
     // MARK: - Authentication
 
     public func setParameters(apiId: Int, apiHash: String) async throws {
         try await coalesceTask(holder: setParametersTask) { [self] in
             do {
-                _ = try await client.setTdlibParameters(
+                _ = try await openClient.setTdlibParameters(
                     apiHash: apiHash,
                     apiId: apiId,
                     applicationVersion: "0.1.0",
@@ -422,7 +471,7 @@ public final class TDLibClient {
     public func sendAuthCode(_ code: String) async throws {
         try await coalesceTask(holder: sendCodeTask) { [self] in
             do {
-                _ = try await client.checkAuthenticationCode(code: code)
+                _ = try await openClient.checkAuthenticationCode(code: code)
             } catch {
                 try mapTDLibError(error)
             }
@@ -458,19 +507,19 @@ public final class TDLibClient {
     // MARK: - Chat Operations
 
     public func getChats(limit: Int = 50) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let result = try await client.getChats(chatList: nil, limit: limit)
+        try requireOpen(authorized: true)
+        let result = try await openClient.getChats(chatList: nil, limit: limit)
         var chats: [[String: Any]] = []
         for chatId in result.chatIds {
-            let chat = try await client.getChat(chatId: chatId)
+            let chat = try await openClient.getChat(chatId: chatId)
             chats.append(chatToDict(chat))
         }
         return toJSON(chats)
     }
 
     public func getChat(chatId: Int64) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let chat = try await client.getChat(chatId: chatId)
+        try requireOpen(authorized: true)
+        let chat = try await openClient.getChat(chatId: chatId)
         return toJSON(chatToDict(chat))
     }
 
@@ -482,12 +531,12 @@ public final class TDLibClient {
         sinceDate: Foundation.Date? = nil,
         untilDate: Foundation.Date? = nil
     ) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
+        try requireOpen(authorized: true)
 
         // Backward-compatible single-page path: when no bulk/filter params are given,
         // behave exactly as the prior implementation (one TDLib call, raw batch, no filtering).
         if maxMessages == nil && sinceDate == nil && untilDate == nil {
-            let result = try await client.getChatHistory(
+            let result = try await openClient.getChatHistory(
                 chatId: chatId,
                 fromMessageId: fromMessageId,
                 limit: limit,
@@ -500,7 +549,7 @@ public final class TDLibClient {
 
         // Single-page + date-filter path: one TDLib call, client-side date filter applied.
         if maxMessages == nil {
-            let result = try await client.getChatHistory(
+            let result = try await openClient.getChatHistory(
                 chatId: chatId,
                 fromMessageId: fromMessageId,
                 limit: limit,
@@ -530,7 +579,7 @@ public final class TDLibClient {
         var nextFromId: Int64 = fromMessageId
 
         while accumulated.count < cap {
-            let result = try await client.getChatHistory(
+            let result = try await openClient.getChatHistory(
                 chatId: chatId,
                 fromMessageId: nextFromId,
                 limit: pageSize,
@@ -556,11 +605,11 @@ public final class TDLibClient {
     }
 
     public func searchChats(query: String, limit: Int = 20) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let result = try await client.searchChats(limit: limit, query: query)
+        try requireOpen(authorized: true)
+        let result = try await openClient.searchChats(limit: limit, query: query)
         var chats: [[String: Any]] = []
         for chatId in result.chatIds {
-            let chat = try await client.getChat(chatId: chatId)
+            let chat = try await openClient.getChat(chatId: chatId)
             chats.append(chatToDict(chat))
         }
         return toJSON(chats)
@@ -569,7 +618,7 @@ public final class TDLibClient {
     // MARK: - Message Operations
 
     public func sendMessage(chatId: Int64, text: String, replyToMessageId: Int64? = nil) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
+        try requireOpen(authorized: true)
         let content = InputMessageContent.inputMessageText(
             InputMessageText(
                 clearDraft: true,
@@ -583,7 +632,7 @@ public final class TDLibClient {
                 InputMessageReplyToMessage(checklistTaskId: 0, messageId: replyId, quote: nil)
             )
         }
-        let result = try await client.sendMessage(
+        let result = try await openClient.sendMessage(
             chatId: chatId,
             inputMessageContent: content,
             options: nil,
@@ -595,7 +644,7 @@ public final class TDLibClient {
     }
 
     public func editMessage(chatId: Int64, messageId: Int64, text: String) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
+        try requireOpen(authorized: true)
         let content = InputMessageContent.inputMessageText(
             InputMessageText(
                 clearDraft: true,
@@ -603,7 +652,7 @@ public final class TDLibClient {
                 text: FormattedText(entities: [], text: text)
             )
         )
-        let result = try await client.editMessageText(
+        let result = try await openClient.editMessageText(
             chatId: chatId,
             inputMessageContent: content,
             messageId: messageId,
@@ -613,14 +662,14 @@ public final class TDLibClient {
     }
 
     public func deleteMessages(chatId: Int64, messageIds: [Int64], revoke: Bool = true) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        _ = try await client.deleteMessages(chatId: chatId, messageIds: messageIds, revoke: revoke)
+        try requireOpen(authorized: true)
+        _ = try await openClient.deleteMessages(chatId: chatId, messageIds: messageIds, revoke: revoke)
         return "{\"ok\": true}"
     }
 
     public func forwardMessages(chatId: Int64, fromChatId: Int64, messageIds: [Int64]) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let result = try await client.forwardMessages(
+        try requireOpen(authorized: true)
+        let result = try await openClient.forwardMessages(
             chatId: chatId,
             fromChatId: fromChatId,
             messageIds: messageIds,
@@ -634,8 +683,8 @@ public final class TDLibClient {
     }
 
     public func searchMessages(chatId: Int64, query: String, limit: Int = 50) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let result = try await client.searchChatMessages(
+        try requireOpen(authorized: true)
+        let result = try await openClient.searchChatMessages(
             chatId: chatId,
             filter: nil,
             fromMessageId: 0,
@@ -652,23 +701,23 @@ public final class TDLibClient {
     // MARK: - Contact / User Operations
 
     public func getMe() async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let me = try await client.getMe()
+        try requireOpen(authorized: true)
+        let me = try await openClient.getMe()
         return toJSON(userToDict(me))
     }
 
     public func getUser(userId: Int64) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let user = try await client.getUser(userId: userId)
+        try requireOpen(authorized: true)
+        let user = try await openClient.getUser(userId: userId)
         return toJSON(userToDict(user))
     }
 
     public func getContacts() async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let result = try await client.getContacts()
+        try requireOpen(authorized: true)
+        let result = try await openClient.getContacts()
         var users: [[String: Any]] = []
         for userId in result.userIds {
-            let user = try await client.getUser(userId: userId)
+            let user = try await openClient.getUser(userId: userId)
             users.append(userToDict(user))
         }
         return toJSON(users)
@@ -677,11 +726,11 @@ public final class TDLibClient {
     // MARK: - Group Management
 
     public func getChatMembers(chatId: Int64, limit: Int = 200) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let chat = try await client.getChat(chatId: chatId)
+        try requireOpen(authorized: true)
+        let chat = try await openClient.getChat(chatId: chatId)
         switch chat.type {
         case .chatTypeSupergroup(let sg):
-            let result = try await client.getSupergroupMembers(
+            let result = try await openClient.getSupergroupMembers(
                 filter: nil,
                 limit: limit,
                 offset: 0,
@@ -690,7 +739,7 @@ public final class TDLibClient {
             let members = result.members.map { memberToDict($0) }
             return toJSON(members)
         case .chatTypeBasicGroup(let bg):
-            let info = try await client.getBasicGroupFullInfo(basicGroupId: bg.basicGroupId)
+            let info = try await openClient.getBasicGroupFullInfo(basicGroupId: bg.basicGroupId)
             let members = info.members.map { memberToDict($0) }
             return toJSON(members)
         default:
@@ -699,8 +748,8 @@ public final class TDLibClient {
     }
 
     public func pinMessage(chatId: Int64, messageId: Int64, disableNotification: Bool = false) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        _ = try await client.pinChatMessage(
+        try requireOpen(authorized: true)
+        _ = try await openClient.pinChatMessage(
             chatId: chatId,
             disableNotification: disableNotification,
             messageId: messageId,
@@ -710,47 +759,47 @@ public final class TDLibClient {
     }
 
     public func unpinMessage(chatId: Int64, messageId: Int64) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        _ = try await client.unpinChatMessage(chatId: chatId, messageId: messageId)
+        try requireOpen(authorized: true)
+        _ = try await openClient.unpinChatMessage(chatId: chatId, messageId: messageId)
         return "{\"ok\": true}"
     }
 
     public func setChatTitle(chatId: Int64, title: String) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        _ = try await client.setChatTitle(chatId: chatId, title: title)
+        try requireOpen(authorized: true)
+        _ = try await openClient.setChatTitle(chatId: chatId, title: title)
         return "{\"ok\": true}"
     }
 
     public func setChatDescription(chatId: Int64, description: String) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        _ = try await client.setChatDescription(chatId: chatId, description: description)
+        try requireOpen(authorized: true)
+        _ = try await openClient.setChatDescription(chatId: chatId, description: description)
         return "{\"ok\": true}"
     }
 
     // MARK: - Group Creation
 
     public func createGroup(title: String, userIds: [Int64]) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        let created = try await client.createNewBasicGroupChat(
+        try requireOpen(authorized: true)
+        let created = try await openClient.createNewBasicGroupChat(
             messageAutoDeleteTime: 0,
             title: title,
             userIds: userIds
         )
-        let chat = try await client.getChat(chatId: created.chatId)
+        let chat = try await openClient.getChat(chatId: created.chatId)
         return toJSON(chatToDict(chat))
     }
 
     public func addChatMember(chatId: Int64, userId: Int64) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        _ = try await client.addChatMember(chatId: chatId, forwardLimit: 0, userId: userId)
+        try requireOpen(authorized: true)
+        _ = try await openClient.addChatMember(chatId: chatId, forwardLimit: 0, userId: userId)
         return "{\"ok\": true}"
     }
 
     // MARK: - Read State
 
     public func markAsRead(chatId: Int64, messageIds: [Int64]) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
-        _ = try await client.viewMessages(
+        try requireOpen(authorized: true)
+        _ = try await openClient.viewMessages(
             chatId: chatId,
             forceRead: true,
             messageIds: messageIds,

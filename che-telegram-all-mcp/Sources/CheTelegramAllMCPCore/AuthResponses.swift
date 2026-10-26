@@ -143,7 +143,7 @@ private func authStatusLastError(_ error: TDLibClient.TDError?) -> [String: Any]
             "code": code,
             "message": message,
         ]
-    case .notAuthenticated, .missingCredentials:
+    case .notAuthenticated, .missingCredentials, .sessionClosed:
         // Spec scope is "Auto-fire failure surfacing" — only TDLib-origin errors
         // populate lastAutoFireError. Other TDError cases shouldn't reach this
         // serializer, but if they do, return a coherent shape.

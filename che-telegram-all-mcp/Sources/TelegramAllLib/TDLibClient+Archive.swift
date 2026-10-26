@@ -53,11 +53,11 @@ internal enum ArchiveChatID: Equatable {
 extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
     /// One page of `getChatHistory`, newest first, as message JSON objects.
     public func page(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [[String: Any]] {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
+        try requireOpen(authorized: true)
         if fromMessageId == 0 { try await loadChatForArchive(chatId) }
         let result = try await archiveTDLibCall {
-            try await client.getChatHistory(chatId: chatId, fromMessageId: fromMessageId, limit: limit,
-                                            offset: 0, onlyLocal: false)
+            try await openClient.getChatHistory(chatId: chatId, fromMessageId: fromMessageId, limit: limit,
+                                                offset: 0, onlyLocal: false)
         }
         // TDLib excludes the cursor at offset 0 (OrderedMessages::get_history); filtering keeps
         // the protocol's "strictly below" true even if that ever changes.
@@ -67,9 +67,9 @@ extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
     /// Downloads a file completely (`synchronous: true` returns only when it is done) and
     /// returns its path in TDLib's cache.
     public func download(fileId: Int) async throws -> String {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
+        try requireOpen(authorized: true)
         let file = try await archiveTDLibCall {
-            try await client.downloadFile(fileId: fileId, limit: 0, offset: 0, priority: 1, synchronous: true)
+            try await openClient.downloadFile(fileId: fileId, limit: 0, offset: 0, priority: 1, synchronous: true)
         }
         guard file.local.isDownloadingCompleted, !file.local.path.isEmpty else {
             throw TDError.tdlibError(code: 0, message: "download of file \(fileId) did not complete")
@@ -78,9 +78,9 @@ extension TDLibClient: ArchiveHistorySource, ArchiveMediaDownloading {
     }
 
     public func message(chatId: Int64, messageId: Int64) async throws -> [String: Any] {
-        guard getAuthState() == .ready else { throw TDError.notAuthenticated }
+        try requireOpen(authorized: true)
         try await loadChatForArchive(chatId)
-        return messageToDict(try await archiveTDLibCall { try await client.getMessage(chatId: chatId, messageId: messageId) })
+        return messageToDict(try await archiveTDLibCall { try await openClient.getMessage(chatId: chatId, messageId: messageId) })
     }
 }
 
@@ -90,15 +90,15 @@ extension TDLibClient {
     /// unseen chat fails with "Chat not found"; such a chat is created from its id.
     func loadChatForArchive(_ chatId: Int64) async throws {
         do {
-            _ = try await archiveTDLibCall { try await client.getChat(chatId: chatId) }
+            _ = try await archiveTDLibCall { try await openClient.getChat(chatId: chatId) }
         } catch TDError.tdlibError(code: 400, message: _) {
             switch ArchiveChatID(chatId) {
             case .user(let userId):
-                _ = try await archiveTDLibCall { try await client.createPrivateChat(force: false, userId: userId) }
+                _ = try await archiveTDLibCall { try await openClient.createPrivateChat(force: false, userId: userId) }
             case .basicGroup(let groupId):
-                _ = try await archiveTDLibCall { try await client.createBasicGroupChat(basicGroupId: groupId, force: false) }
+                _ = try await archiveTDLibCall { try await openClient.createBasicGroupChat(basicGroupId: groupId, force: false) }
             case .supergroup(let supergroupId):
-                _ = try await archiveTDLibCall { try await client.createSupergroupChat(force: false, supergroupId: supergroupId) }
+                _ = try await archiveTDLibCall { try await openClient.createSupergroupChat(force: false, supergroupId: supergroupId) }
             case .other:
                 throw TDError.tdlibError(code: 400, message: "Chat not found")
             }

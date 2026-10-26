@@ -402,6 +402,37 @@ final class AuthCoordinatorTests: XCTestCase {
         await second?.value
         XCTAssertEqual(fake.handOffs.count, 1)
     }
+
+    // MARK: - A closing or closed client (#64)
+
+    /// An explicit phone number or 2FA password to a client that is logging
+    /// out, closing or closed fails at once with `sessionClosed` and hands
+    /// nothing to TDLib, which would never answer it (#64 on #98's request
+    /// seam; the automatic value cannot get there, since its claim needs its
+    /// own state to be current).
+    func testAClosingOrClosedClientRefusesAnExplicitCredential() async {
+        for state in [TDLibClient.AuthState.closing, .closed] {
+            let fake = FakeRequests(answer: .success(()))
+            let coordinator = AuthCoordinator(credentials: NoKeychainCredentialSource(), requests: fake)
+            coordinator.enter(state)
+            let sends: [(String, () async throws -> Void)] = [
+                ("phone", { try await coordinator.sendPhoneNumber("+886900000417") }),
+                ("password", { try await coordinator.sendPassword("stored-secret") }),
+            ]
+            for (name, send) in sends {
+                do {
+                    try await send()
+                    XCTFail("\(state) \(name): the request was sent")
+                } catch {
+                    guard case .sessionClosed? = error as? TDLibClient.TDError else {
+                        XCTFail("\(state) \(name): \(error)")
+                        continue
+                    }
+                }
+            }
+            XCTAssertEqual(fake.handOffs, [], "\(state): nothing reaches TDLib")
+        }
+    }
 }
 
 /// Polls `condition` every millisecond for up to 5 seconds.

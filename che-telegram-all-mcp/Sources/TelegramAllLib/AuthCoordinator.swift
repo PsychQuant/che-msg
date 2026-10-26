@@ -131,7 +131,8 @@ internal final class AuthCoordinator: @unchecked Sendable {
     /// recorded either before the claim, which then fails, or after the
     /// request was handed to TDLib; an explicit call after it joins the
     /// request. Then waits for TDLib's answer. Returns false, sending nothing,
-    /// when the claim fails.
+    /// when the claim fails. The claim holds only while the state it was made
+    /// for is current, so a closing or closed client never gets one (#64).
     private func submitAutomatically(_ value: String, for state: TDLibClient.AuthState,
                                      generation: UInt64) async throws -> Bool {
         guard state == .waitingForPhoneNumber || state == .waitingForPassword else { return false }
@@ -186,8 +187,10 @@ internal final class AuthCoordinator: @unchecked Sendable {
 
     /// An explicit phone number: the current state gets no automatic one after
     /// it (#96), and it joins an automatic request claimed before it (#98).
+    /// A closing or closed client gets none (#64): TDLib would never answer.
     func sendPhoneNumber(_ phoneNumber: String) async throws {
-        let request: Task<Void, Error> = lock.withLock {
+        let request: Task<Void, Error> = try lock.withLock {
+            if let refusal = TDLibClient.requestRefusal(state: authState, authorized: false) { throw refusal }
             // Only while TDLib waits for a phone number: a phone number sent at
             // another step must not cancel that step's automatic value.
             if authState == .waitingForPhoneNumber { credentialLookups.explicitSubmission() }
@@ -198,8 +201,10 @@ internal final class AuthCoordinator: @unchecked Sendable {
 
     /// An explicit 2FA password: the current state gets no automatic one after
     /// it (#96), and it joins an automatic request claimed before it (#98).
+    /// A closing or closed client gets none (#64).
     func sendPassword(_ password: String) async throws {
-        let request: Task<Void, Error> = lock.withLock {
+        let request: Task<Void, Error> = try lock.withLock {
+            if let refusal = TDLibClient.requestRefusal(state: authState, authorized: false) { throw refusal }
             if authState == .waitingForPassword { credentialLookups.explicitSubmission() }
             return passwordRequest(password)
         }
