@@ -72,9 +72,9 @@ JSON 讓 skill 不必解析自由文字，第三方文字也不會被誤認為�
 ## Implementation Contract
 
 - **行為**：`python3 -I search_archive.py --archive <絕對路徑> [--text T]... [--sender S] [--since D] [--until D] [--chat ID]... [--max-results N] [--snippet-chars N]` 搜尋；`--cite telegram:<chat_id>/<message_id>`（可重複，最多 10）解析引用。輸出一個 JSON 物件到 stdout：搜尋是 `{"archive", "searched_files", "matched", "shown", "truncated", "results": [...], "skipped": [...], "skipped_count", "missing_chats": [...]}`；引用是 `{"archive", "blocks": [...], "not_found": [...], "skipped": [...], "skipped_count"}`。每筆 result 有 `citation`、`chat_id`、`message_id`、`date`、`time`、`utc_offset`、`sender`、`snippet`、`file`、`annotations`；每個 block 把 `snippet` 換成 `text` 與 `text_truncated`。
-- **錯誤**：`{"error": {"type", "message", ...}}` 也寫到 stdout。`usage`（exit 2）、`not_ignored`（exit 3，附 `files` 與 `count`）、`git_failed`（exit 3）、`archive_missing`（exit 4：不是絕對路徑、不存在、不是目錄）。
+- **錯誤**：`{"error": {"type", "message", ...}}` 也寫到 stdout。`usage`（exit 2）、`not_ignored`（exit 3，附 `files` 與 `count`）、`git_failed`（exit 3）、`archive_missing`（exit 4：不是絕對路徑、不存在、不是目錄、列不出內容）、`internal`（exit 1：腳本本身的例外，只回例外類型，不回 traceback，免得夾帶檔案內容）。
 - **介面**：skill `plugins/che-telegram-mcp/skills/archive-telegram-search/SKILL.md`（`disable-model-invocation: true`，沒有 `allowed-tools`），以 `python3 -I '${CLAUDE_SKILL_DIR}/scripts/search_archive.py'` 呼叫腳本，路徑與參數依 `/archive-telegram` 的單引號規則包住。
-- **邊界**：不讀 `media/`、索引、非日檔名稱的檔案；symlink 的聊天目錄不進入；日檔以 `O_RDONLY | O_NONBLOCK | O_NOFOLLOW` 開啟，只讀一般檔案，大於 32 MiB 的列為 `too-large`；`skipped` 最多列 20 個並給總數。
+- **邊界**：不讀 `media/`、索引、非日檔名稱的檔案；symlink 的聊天目錄不進入，列為 `symlinked-chat-directory`；日檔以 `O_RDONLY | O_NONBLOCK | O_NOFOLLOW` 開啟，只讀一般檔案，大於 32 MiB 的列為 `too-large`；`skipped` 最多列 20 個並給總數。
 - **驗收**：`tests/che-telegram-mcp/test-archive-search.sh` 以合成日檔驗證 spec 的所有 scenario（含 #72 標記行、其他 HTML 註解行、多行內文、跳脫行、不相符的檔案、CR、FIFO、symlink、git 檢查三種情況、唯讀、上限、雙向字元），在 `python3` 與 `/usr/bin/python3`（存在時）各跑一次；`test-plugin-layout.sh` 的 (h) 含新 skill，mutation 測試證明 (h)、(d) 會抓到新 skill 的違規；`claude plugin validate plugins/che-telegram-mcp` 通過。
 - **範圍內**：新 skill 與腳本、新 capability、`telegram-messaging` 一行、layout 測試 (h) 與 mutation 案例、plugin README 與 CHANGELOG。
 - **範圍外**：寫入端與 `telegram-chat-archive` spec、#72 的標記與升級、server 工具、CLI 子命令、多個歸檔目錄、plugin 版號、引用離開歸檔後的同意與匿名化。
