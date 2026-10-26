@@ -17,17 +17,28 @@
 #   DEVELOPER_ID, NOTARY_PROFILE  see sign-and-notarize.sh
 #   REQUIRE_CODESIGN=1            refuse to build unless signing is set up
 #                                 (make release-signed and make sign-check set it)
-#   VERSION_CHECK_TIMEOUT         seconds the telegram-all --version check may
+#   VERSION_CHECK_TIMEOUT         seconds each telegram-all --version check may
 #                                 take (default 20)
 #
 # Before anything is built: the full mode runs check-versions.sh, including the
 # check that tag vX is unused, and requires every tracked file to be committed
-# (and no untracked file in a package's Sources), because the release must be
-# reproducible from the commit its tag will point at; the other modes check
-# consistency only and warn about uncommitted changes. Signing modes also run
-# sign-and-notarize.sh --preflight. In every mode, each package's
-# Package.resolved must be tracked and present, and every swift build uses
-# exactly its versions (--force-resolved-versions). The output directory
+# and no untracked or ignored file in a package's Sources or among its
+# Package*.swift manifests (SwiftPM compiles those whatever git ignores;
+# .DS_Store aside), because the release must be reproducible from the commit
+# its tag will point at; the other modes check consistency only and warn about
+# uncommitted changes. Every mode refuses a commit that tracks a symlink
+# anywhere in a package. Signing modes also run sign-and-notarize.sh
+# --preflight. In every mode, each package's Package.resolved must be tracked
+# and present, and every swift build uses exactly its versions
+# (--force-resolved-versions).
+#
+# The .mcpb bundles hold the mcpb files of the commit printed at the start,
+# whatever the working tree holds or HEAD becomes. telegram-all's --version is
+# checked before signing and, in the signing modes, once more on the signed
+# binary, so every signed build launches the hardened-runtime binary once.
+# Before the full mode writes .build/dist/vX it checks again that HEAD is that
+# commit and the tree passes the same gate; an edit made and undone while the
+# build runs is not noticed (PsychQuant/che-msg#94). The output directory
 # appears only when every file in it is done.
 
 set -euo pipefail

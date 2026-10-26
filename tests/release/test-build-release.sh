@@ -14,7 +14,7 @@
 #   1. DEVELOPER_ID unset, signing required: refused before any build.
 #   2. NOTARY_PROFILE unset, full mode: refused before any build.
 #   3. Versions disagree: refused before any build, naming the place, in the
-#      full mode and with --sign-only.
+#      full mode, with --sign-only and unsigned.
 #   4. Tag vX already on origin, full mode: refused before any build.
 #   5. Full mode: each package is built for arm64 and x86_64, combined, and
 #      built once more for the host; both binaries are signed with hardened
@@ -24,7 +24,10 @@
 #      each .sha256 is its file's hash; the commit is printed; the staging
 #      directory is removed.
 #   6. A telegram-all binary that reports another version, or never answers
-#      --version: refused before anything is signed, nothing in dist.
+#      --version: refused before anything is signed, nothing in dist; another
+#      version also in --sign-only and unsigned mode. One that reports another
+#      version once signed: refused after signing, in the full mode and with
+#      --sign-only, nothing in dist (#94).
 #   7. A per-arch build that has the wrong architecture: refused.
 #   8. --sign-only without NOTARY_PROFILE: signed, never notarized, written to
 #      .build/dist/vX-sign-only, even though tag vX exists.
@@ -32,8 +35,11 @@
 #  10. No DEVELOPER_ID and signing not required: an unsigned build in
 #      .build/dist/vX-unsigned, with a warning.
 #  11. Full mode refuses an uncommitted change to a tracked file, an untracked
-#      file in a package's Sources, and a symlink in a package's mcpb directory,
-#      before building; --sign-only builds a dirty tree with a warning.
+#      file in a package's Sources, an untracked or ignored Package@swift-*.swift
+#      and an ignored file in Sources (not an ignored .DS_Store), before
+#      building; --sign-only builds a dirty tree with a warning. A symlink
+#      tracked in a package's Sources, as its Package.swift, or in its mcpb
+#      directory is refused before building in every mode (#94).
 #  12. The second notarization fails: no .build/dist/vX is left; a stale file
 #      in .build/dist/vX before a successful run is gone after it.
 #  13. mcpb missing: refused before any build.
@@ -44,6 +50,14 @@
 #  15. Every swift build uses --force-resolved-versions; a Package.resolved
 #      that is on disk but untracked, or tracked but missing from the working
 #      tree, is refused before any build (#92).
+#  16. The bundles hold the commit's mcpb files (#94): a non-ASCII name under
+#      mcpb is packed under its real name; a dirty tree's --sign-only and
+#      unsigned bundles hold the committed PRIVACY.md, and the warning says
+#      they hold the committed manifest; a commit made during a --sign-only
+#      build does not reach its bundles.
+#  17. The checkout changes during a full build (a commit, an edit to a tracked
+#      file, an untracked file in Sources): refused after both notarizations,
+#      naming the change, with no .build/dist/vX and no staging left (#94).
 #
 # Usage:
 #   bash tests/release/test-build-release.sh
