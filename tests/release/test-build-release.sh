@@ -94,12 +94,16 @@ cat > "$PROGS/all.c" <<'EOF'
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#ifndef EXIT
+#define EXIT 0
+#endif
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
         if (HANG) { sleep(300); }
         printf("che-telegram-all-mcp %s\n", VERSION);
+        fflush(stdout);
     }
-    return 0;
+    return EXIT;
 }
 EOF
 printf 'int main(void) { return 0; }\n' > "$PROGS/bot.c"
@@ -107,6 +111,7 @@ for arch in arm64 x86_64; do
     if ! { cc -arch "$arch" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/CheTelegramAllMCP-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" -DHANG=0 -DVERSION="\"0.0.1\"" -o "$PROGS/WrongVersion-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" -DHANG=1 -DVERSION="\"$X\"" -o "$PROGS/Hang-$arch" "$PROGS/all.c" &&
+           cc -arch "$arch" -DHANG=0 -DEXIT=3 -DVERSION="\"$X\"" -o "$PROGS/FailsAfterVersion-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" -o "$PROGS/CheTelegramBotMCP-$arch" "$PROGS/bot.c"; }; then
         echo "ERROR: cc cannot build for $arch" >&2; exit 1
     fi
@@ -139,6 +144,7 @@ PINNED=(
 # <repo>/../fakebin and a call log in <repo>/../calls. Prints the repo path.
 #   variant: wrong-version  the telegram-all build reports 0.0.1
 #            hang-version   the telegram-all build never answers --version
+#            fails-after-version  it prints the right version, then exits 3
 #            same-arch      every build is arm64, whatever --arch says
 #            signed-wrong-version  signing turns the telegram-all binary into
 #                           one that reports 0.0.1, as a binary that runs
@@ -150,6 +156,7 @@ make_repo() {
     case "${2:-}" in
         wrong-version) all_prog=WrongVersion ;;
         hang-version) all_prog=Hang ;;
+        fails-after-version) all_prog=FailsAfterVersion ;;
         same-arch) same_arch=1 ;;
         signed-wrong-version) ;;
     esac
@@ -332,6 +339,27 @@ start=$(date +%s); build "$R" "${SIGN_ENV[@]}" --; took=$(( $(date +%s) - start 
 if [ "$RC" -ne 0 ] && [ "$took" -lt 60 ]; then pass "refused after ${took}s"; else fail "exit $RC after ${took}s"; fi
 if calls "$R" "codesign --force" >/dev/null; then fail "something was signed first"; else pass "refused before signing"; fi
 
+test_case "a telegram-all binary that prints the version and then fails (#94 verify)"
+R=$(make_repo fails-after fails-after-version)
+build "$R" --
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'exits with 3'; then pass "refused, naming the exit status"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -2)"; fi
+
+test_case "a failing git ls-tree stops the build (#94 verify)"
+REAL_GIT=$(command -v git)
+for listed in che-telegram-bot-mcp che-telegram-bot-mcp/mcpb; do
+    R=$(make_repo "lstree-${listed//\//-}")
+    # The listing starts, then git fails: a cut-short list must not read as complete.
+    cat > "$R/../fakebin/git" <<EOF
+#!/bin/bash
+case " \$* " in *" ls-tree "*" -- $listed ") "$REAL_GIT" "\$@" | head -c 40; exit 128 ;; esac
+exec "$REAL_GIT" "\$@"
+EOF
+    chmod +x "$R/../fakebin/git"
+    build "$R" --
+    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF "cannot list $listed"; then pass "$listed: refused"; else fail "$listed: exit $RC: $(printf '%s' "$OUT" | tail -2)"; fi
+    if ls "$R/.build/dist" 2>/dev/null | grep -q .; then fail "$listed: wrote dist: $(ls "$R/.build/dist")"; else pass "$listed: nothing in dist"; fi
+done
+
 test_case "a telegram-all binary that reports another version, sign-only and unsigned (#94)"
 for mode in sign-only unsigned; do
     R=$(make_repo "wrong-$mode" wrong-version)
@@ -448,8 +476,11 @@ echo "outside" > "$SCRATCH/outside.swift"
 for link in che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Linked.swift che-telegram-bot-mcp/Package.swift che-telegram-bot-mcp/mcpb/EXTRA.md; do
     for mode in full sign-only unsigned; do
         R=$(make_repo "symlink-${link//\//-}-$mode")
-        ln -s "$SCRATCH/outside.swift" "$R/$link"
-        git -C "$R" add "$link" && commit_in "$R" -m "add a symlink"
+        # Replace the file if there is one (Package.swift), and make sure the
+        # link is really what the commit tracks.
+        rm -f "$R/$link" && ln -s "$SCRATCH/outside.swift" "$R/$link" &&
+            git -C "$R" add "$link" && commit_in "$R" -m "add a symlink" &&
+            [ "$(git -C "$R" ls-tree HEAD -- "$link" | cut -c1-6)" = 120000 ] || { fail "$mode, $link: fixture not committed"; continue; }
         case "$mode" in
             full)      build "$R" "${SIGN_ENV[@]}" -- ;;
             sign-only) build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only ;;

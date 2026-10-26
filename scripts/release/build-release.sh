@@ -147,9 +147,15 @@ done
 for entry in "${PACKAGES[@]}"; do
     pkg=${entry%%:*}
     LINKS=""
+    # From a file, not a process substitution: a failed ls-tree stops the
+    # build instead of reading as "no symlinks".
+    TREE=$(mktemp "${TMPDIR:-/tmp}/build-release-tree.XXXXXX")
+    git -C "$ROOT" ls-tree -r -z "$COMMIT" -- "$pkg" > "$TREE" ||
+        { rm -f "$TREE"; echo "Error: cannot list $pkg at commit ${COMMIT:0:12}" >&2; exit 1; }
     while IFS= read -r -d '' record; do
         if [[ "${record%% *}" == 120000 ]]; then LINKS+="         ${record#*$'\t'}"$'\n'; fi
-    done < <(git -C "$ROOT" ls-tree -r -z "$COMMIT" -- "$pkg")
+    done < "$TREE"
+    rm -f "$TREE"
     if [[ -n "$LINKS" ]]; then
         echo "Error: $pkg tracks a symlink, which the build would follow, possibly out of the repository:" >&2
         printf '%s' "$LINKS" >&2
@@ -198,11 +204,13 @@ write_sha256() { shasum -a 256 "$1" | awk '{print $1}' > "$1.sha256"; }
 # closed and perl's alarm bounds the run in case it does not. The bot binary
 # has no such flag.
 check_version() {
-    local reported
+    # The binary has to exit 0 as well: one that prints the version and then
+    # crashes, or is killed by the alarm, fails the check.
+    local reported status=0
     reported=$(perl -e 'my $t = shift; alarm $t; exec @ARGV or die "exec failed: $!"' \
-        -- "$VERSION_CHECK_TIMEOUT" "$1" --version </dev/null 2>&1 || true)
-    [[ "$reported" == "che-telegram-all-mcp $X" ]] || {
-        echo "Error: $2 reports \"$reported\" within ${VERSION_CHECK_TIMEOUT}s, expected \"che-telegram-all-mcp $X\"" >&2; exit 1; }
+        -- "$VERSION_CHECK_TIMEOUT" "$1" --version </dev/null 2>&1) || status=$?
+    [[ $status -eq 0 && "$reported" == "che-telegram-all-mcp $X" ]] || {
+        echo "Error: $2 reports \"$reported\" and exits with $status within ${VERSION_CHECK_TIMEOUT}s, expected \"che-telegram-all-mcp $X\" and 0" >&2; exit 1; }
 }
 
 echo ""
@@ -246,6 +254,10 @@ for entry in "${PACKAGES[@]}"; do
     # written to. -z keeps a name git would quote (non-ASCII) as it is.
     BUNDLE="$STAGE/mcpb-$pkg"
     mkdir -p "$BUNDLE/server"
+    # Listed into a file first, so a failed or cut-short ls-tree stops the
+    # build instead of packing a partial bundle.
+    git -C "$ROOT" ls-tree -r -z "$COMMIT" -- "$pkg/mcpb" > "$STAGE/tree-$pkg" ||
+        { echo "Error: cannot list $pkg/mcpb at commit ${COMMIT:0:12}" >&2; exit 1; }
     while IFS= read -r -d '' record; do
         path=${record#*$'\t'}
         sha=${record%%$'\t'*}; sha=${sha##* }
@@ -253,7 +265,7 @@ for entry in "${PACKAGES[@]}"; do
         [[ "$rel" == server/.gitkeep ]] && continue
         mkdir -p "$BUNDLE/$(dirname "$rel")"
         git -C "$ROOT" cat-file blob "$sha" > "$BUNDLE/$rel"
-    done < <(git -C "$ROOT" ls-tree -r -z "$COMMIT" -- "$pkg/mcpb")
+    done < "$STAGE/tree-$pkg"
     cp "$UNIVERSAL" "$BUNDLE/server/$bin"
     mcpb validate "$BUNDLE/manifest.json"
     mcpb pack "$BUNDLE" "$STAGE/$pkg.mcpb"
