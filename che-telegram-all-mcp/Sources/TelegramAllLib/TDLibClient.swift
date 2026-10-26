@@ -315,7 +315,9 @@ public final class TDLibClient {
             envApiHash: env["TELEGRAM_API_HASH"],
             envPhone: env["TELEGRAM_PHONE"],
             envPassword: env["TELEGRAM_2FA_PASSWORD"],
-            envAuthCode: env["TELEGRAM_AUTH_CODE"]
+            // Spec: "SMS verification code is never auto-fired from environment" —
+            // the client does not read TELEGRAM_AUTH_CODE at all (#87).
+            envAuthCode: nil
         )
         guard case .fireSetParameters(let apiId, let apiHash) = action else { return }
         lock.withLock {

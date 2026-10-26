@@ -56,12 +56,14 @@ public enum CLIBootstrap {
           TELEGRAM_API_ID, TELEGRAM_API_HASH    Telegram API credentials (required)
           TELEGRAM_PHONE                         Phone for auto-fire authentication; when \
         unset, the Keychain item of the same name (account che-telegram-all-mcp)
-          TELEGRAM_AUTH_CODE                     SMS code for auto-fire (rare; usually \
-        prompted via tool call)
           TELEGRAM_2FA_PASSWORD                  2FA password for auto-fire authentication; \
         when unset, the Keychain item of the same name (account che-telegram-all-mcp)
           CHE_TELEGRAM_LOG_STARTUP=1             Emit `[startup]` timing lines to stderr \
         during init (diagnostic; default: off)
+
+        The SMS verification code is never read from the environment or the
+        Keychain (TELEGRAM_AUTH_CODE is ignored): give it once, through the
+        auth_run tool (code: "...") or auth_send_code.
 
         For tool documentation, connect via stdio JSON-RPC and call `tools/list`.
         """
