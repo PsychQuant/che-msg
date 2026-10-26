@@ -267,6 +267,38 @@ final class ToolRoutingTests: XCTestCase {
         XCTAssertLessThan(check.lowerBound, open.lowerBound)
     }
 
+    private struct NotOpened: LocalizedError {
+        var errorDescription: String? { "test: TDLib was not opened" }
+    }
+
+    /// The same check driven through handleToolCall with TDLib free: the
+    /// server's open function is replaced by one that counts and throws, so
+    /// no real TDLib is opened. A bad argument never reaches it; good
+    /// arguments do (#27 verify: the source-order test alone let a call that
+    /// discards the check's result pass).
+    func testBadArgumentsNeverOpenTDLib() async throws {
+        let opens = OpenCounter()
+        let server = try await CheTelegramAllMCPServer(
+            lock: TDLibProcessLock(cacheDirectory: cache, pid: getpid()), idleTimeout: 600, reader: reader,
+            openTDLib: { await opens.increment(); throw NotOpened() })
+        let bad = await server.handleToolCall(name: "get_chat_history", arguments: [:])
+        XCTAssertEqual(texts(bad), ["Error: chat_id is required"])
+        let badDump = await server.handleToolCall(name: "dump_chat_to_markdown", arguments: ["chat_id": Value.int(777)])
+        XCTAssertEqual(texts(badDump), ["Error: output_path is required"])
+        let count = await opens.value
+        XCTAssertEqual(count, 0)
+        let good = await server.handleToolCall(name: "get_chat_history", arguments: arguments(for: "get_chat_history"))
+        XCTAssertEqual(good.isError, true)
+        XCTAssertEqual(texts(good), ["Error: test: TDLib was not opened"])
+        let after = await opens.value
+        XCTAssertEqual(after, 1)
+    }
+
+    private actor OpenCounter {
+        private(set) var value = 0
+        func increment() { value += 1 }
+    }
+
     // MARK: - Source note
 
     private let utcPlus8 = TimeZone(secondsFromGMT: 8 * 3600)!

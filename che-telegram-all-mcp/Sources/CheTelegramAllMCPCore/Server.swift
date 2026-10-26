@@ -51,7 +51,8 @@ public final class CheTelegramAllMCPServer {
 
     init(lock: TDLibProcessLock, idleTimeout: TimeInterval?,
          reader: LocalCacheReading = LocalTDLibReader(directory: TDLibClient.databaseDirectory),
-         syncState: TDLibSyncState = TDLibSyncState()) async throws {
+         syncState: TDLibSyncState = TDLibSyncState(),
+         openTDLib: (@Sendable () async throws -> TDLibClient)? = nil) async throws {
         self.reader = reader
         self.syncState = syncState
         // Diagnostic hook (#29): when CHE_TELEGRAM_LOG_STARTUP=1, print
@@ -71,6 +72,9 @@ public final class CheTelegramAllMCPServer {
         // TDLib itself opens on first use; its timing is logged then.
         self.idleTimeout = idleTimeout
         lifecycle = TDLibLifecycle(lock: lock, idleTimeout: idleTimeout) {
+            // Tests replace the open so that handleToolCall can run with TDLib
+            // free without opening a real client (#27).
+            if let openTDLib { return try await openTDLib() }
             let tdlibStart = DispatchTime.now()
             do {
                 let client = try await TDLibClient(syncState: syncState)
