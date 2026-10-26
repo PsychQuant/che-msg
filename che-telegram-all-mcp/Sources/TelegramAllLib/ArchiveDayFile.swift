@@ -230,7 +230,7 @@ public enum ArchiveDayFile {
         let parts = split(existing ?? "")
         var blocks: [Int64: String] = [:]
         for block in parts.blocks where blocks[block.id] == nil {
-            blocks[block.id] = block.text.unicodeScalars.last == "\n" ? block.text : block.text + "\n"
+            blocks[block.id] = block.text   // kept byte for byte, final newline or not
         }
         var added: [Int64] = []
         var upgraded: [Int64] = []
@@ -245,8 +245,15 @@ public enum ArchiveDayFile {
                 added.append(message.id)
             }
         }
-        let body = blocks.keys.sorted().map { blocks[$0]! }.joined()
-        return (frontmatter(chatId: chatId, day: day, utcOffset: utcOffset) + parts.preamble + body, added, upgraded)
+        // Only the file's last block (or a preamble with no block after it) can lack a final
+        // newline; an LF is put after it only when another block follows, so that block's anchor
+        // starts a line and nothing that stays last changes.
+        var content = frontmatter(chatId: chatId, day: day, utcOffset: utcOffset)
+        for piece in [parts.preamble] + blocks.keys.sorted().map({ blocks[$0]! }) where !piece.isEmpty {
+            if content.unicodeScalars.last != "\n" { content += "\n" }
+            content += piece
+        }
+        return (content, added, upgraded)
     }
 
     /// Writes the day file for `day` under `directory` (created when missing), merging with

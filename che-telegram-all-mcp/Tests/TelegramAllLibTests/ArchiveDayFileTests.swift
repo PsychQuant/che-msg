@@ -707,4 +707,51 @@ final class ArchiveDayFileTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: file), before)
         }
     }
+
+    // MARK: - Retained blocks keep their bytes (#72)
+
+    /// An upgrade rewrites the file; an unmarked last block that ends at EOF without a newline stays
+    /// byte for byte (no LF is added to it).
+    func testAnUpgradeLeavesALastBlockWithoutANewlineAsItIs() {
+        let block100 = "<!-- msg:100 -->\n<!-- provisional: local-cache -->\n**09:00 User 1001**：\nold\n\n"
+        let block200 = "<!-- msg:200 -->\n**09:01 Alex**：\nlast line, no newline"
+        let (content, added, upgraded) = ArchiveDayFile.merged(
+            existing: head + block100 + block200, chatId: 7, day: "2026-10-11", utcOffset: "+08:00",
+            messages: [message(100, minute: 0, body: "new"), message(200, minute: 1, body: "different")])
+        XCTAssertEqual(upgraded, [100])
+        XCTAssertEqual(added, [])
+        XCTAssertEqual(content, head + "<!-- msg:100 -->\n**09:00 Alex**：\nnew\n\n" + block200)
+    }
+
+    /// A block or preamble without a final newline gets one LF only where a new or upgraded block
+    /// follows it, so the following anchor starts a line.
+    func testASeparatorIsAddedOnlyWhereABlockFollows() {
+        let block200 = "<!-- msg:200 -->\n**09:01 Alex**：\nno newline"
+        let (content, added, _) = ArchiveDayFile.merged(existing: head + block200, chatId: 7, day: "2026-10-11",
+                                                        utcOffset: "+08:00", messages: [message(300, minute: 2)])
+        XCTAssertEqual(added, [300])
+        XCTAssertEqual(content, head + block200 + "\n<!-- msg:300 -->\n**09:02 Alex**：\nm300\n\n")
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(content).map(\.id), [200, 300])
+
+        let (withNote, _, _) = ArchiveDayFile.merged(existing: head + "a note, no newline", chatId: 7, day: "2026-10-11",
+                                                     utcOffset: "+08:00", messages: [message(5, minute: 0)])
+        XCTAssertEqual(withNote, head + "a note, no newline\n<!-- msg:5 -->\n**09:00 Alex**：\nm5\n\n")
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(withNote).map(\.id), [5])
+    }
+
+    /// The same through `write`: the file on disk ends with block 200's bytes exactly.
+    func testWriteUpgradesWithoutTouchingALastBlockWithoutANewline() throws {
+        let dir = try scratchDir()
+        let file = dir.appendingPathComponent("2026-10-11.md")
+        let block200 = "<!-- msg:200 -->\n**09:01 Alex**：\nlast line, no newline"
+        try Data((validHead + "<!-- msg:100 -->\n<!-- provisional: local-cache -->\n**09:00 User 1001**：\nold\n\n"
+                  + block200).utf8).write(to: file)
+        let result = try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00", messages: [
+            ArchiveMessage(id: 100, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: "new"),
+            ArchiveMessage(id: 200, date: utc(2026, 10, 11, 1, 1), sender: "Alex", body: "different"),
+        ])
+        XCTAssertEqual(result.upgraded, [100])
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8),
+                       validHead + "<!-- msg:100 -->\n**09:00 Alex**：\nnew\n\n" + block200)
+    }
 }
