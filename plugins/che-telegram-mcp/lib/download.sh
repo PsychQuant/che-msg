@@ -15,8 +15,8 @@
 # meanwhile.
 #
 # Its files live in a private staging directory, ~/bin/.che-telegram-mcp-download
-# (mode 700, owned by the user; a symbolic link or anything else there is
-# refused): the lock, the log, the partial file and the version record's
+# (created with mode 700; one that is a symbolic link, not a directory, not the
+# user's, or of any other mode is refused, not repaired): the lock, the log, the partial file and the version record's
 # temporary copy. Nothing there is followed if it is a symbolic link: curl
 # would append to a link's target, shasum would hash it and mv would install
 # the link. A partial file, lock or log that is not a regular file is removed
@@ -176,7 +176,7 @@ download_failure() {
         30) echo "no sha256 is known to check it against: this plugin pins none for this version, and GitHub reported no digest for the asset" ;;
         31) echo "the downloaded file does not match its sha256, so it was removed" ;;
         40) echo "the downloaded file could not be put in place in ~/bin" ;;
-        42) echo "its staging directory ~/bin/$DOWNLOAD_STAGE_NAME, or a file in it, is not safe to use (see the message before this one)" ;;
+        42) echo "its staging directory ~/bin/$DOWNLOAD_STAGE_NAME, or a file in it, is not safe to use: remove the directory and reconnect, and the download creates it anew" ;;
         *)  echo "the download stopped with status $1" ;;
     esac
 }
@@ -198,10 +198,14 @@ download_manual_hint() {
 
 # download_stage <install dir>: prints the private staging directory
 # <install dir>/.che-telegram-mcp-download, creating it with mode 700. Fails,
-# saying why on stderr, when it is a symbolic link, not a directory, or not
-# the user's; a directory of the user's with looser permissions is set to 700.
+# saying why on stderr, when it is a symbolic link, not a directory, not the
+# user's, or has any mode but 700. Such a directory is refused, never
+# repaired: while it was open to others, anyone could have left a file in it
+# and kept that file open for writing, and making the directory or the file
+# private afterwards does not take back a descriptor already open. Removing
+# it lets the next start create it anew, empty.
 download_stage() {
-    local stage="$1/$DOWNLOAD_STAGE_NAME"
+    local stage="$1/$DOWNLOAD_STAGE_NAME" mode
     mkdir -p "$1" 2>/dev/null
     [[ -e "$stage" || -L "$stage" ]] || mkdir -m 700 "$stage" 2>/dev/null
     if [[ -L "$stage" ]]; then
@@ -216,8 +220,9 @@ download_stage() {
         echo "che-telegram-mcp: $stage belongs to another user; the download does not use it." >&2
         return 1
     fi
-    if ! chmod 700 "$stage" 2>/dev/null; then
-        echo "che-telegram-mcp: the permissions of $stage cannot be set to 700; the download does not use it." >&2
+    mode=$(stat -f %Lp "$stage" 2>/dev/null)
+    if [[ "$mode" != 700 ]]; then
+        echo "che-telegram-mcp: $stage has mode ${mode:-unknown}, not 700, so files in it may not be the download's own; the download does not use it. Remove the directory (rm -rf ~/bin/$DOWNLOAD_STAGE_NAME) and reconnect: it is created anew." >&2
         return 1
     fi
     printf '%s' "$stage"

@@ -50,8 +50,10 @@
 #      installed binary leaves that binary's bytes untouched and the installed
 #      file is the verified asset; a log that is a link leaves its target
 #      untouched; a staging directory that is a link, or not a directory, is
-#      refused and nothing is installed; one with looser permissions is set
-#      back to 700. ~/bin holds no temporary file afterwards.
+#      refused and nothing is installed; one whose mode is not 700 (777, 755)
+#      is refused too, not repaired, even with a genuine partial file in it,
+#      and once it is removed the next start creates it anew with mode 700.
+#      ~/bin holds no temporary file afterwards.
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-download.sh
@@ -333,7 +335,7 @@ stop "$W1"; stop "$W2"
 # ---------------------------------------- 9. a lock held by a running download
 test_case "telegram-all: a download another process is running is left to it"
 H="$SCRATCH/all-held"; empty_home "$H" all; serve "$H" all
-LOCK=$(lock_of "$H" "$ALL"); mkdir -p "$(dirname "$LOCK")"
+LOCK=$(lock_of "$H" "$ALL"); make_stage "$H"
 HOLDER=$(hold_lock "$LOCK"); STARTED+=("$HOLDER")
 wait_until 5 test -e "$LOCK" || fail "the holder did not take the lock"
 CHE_TELEGRAM_MCP_INSTALL_WAIT=1 run "$H" all
@@ -387,12 +389,29 @@ for kind in link file; do
     esac
 done
 
-test_case "telegram-all: the staging directory is private"
-H="$SCRATCH/all-stage-mode"; empty_home "$H" all; serve "$H" all
-mkdir -m 777 "$(stage_of "$H")"; chmod 777 "$(stage_of "$H")"
-run "$H" all
-if [ "$(stat -f %Lp "$(stage_of "$H")")" = 700 ]; then pass "set back to 700"; else fail "mode $(stat -f %Lp "$(stage_of "$H")")"; fi
-expect_installed "$H" "$ALL" "$DESIRED_VERSION"
+for mode in 777 755; do
+    test_case "telegram-all: a staging directory with mode $mode is refused, not repaired"
+    H="$SCRATCH/all-stage-mode-$mode"; empty_home "$H" all; serve "$H" all
+    mkdir "$(stage_of "$H")"; chmod "$mode" "$(stage_of "$H")"
+    # A partial file with the genuine bytes, as another user could leave
+    # there while keeping it open for writing.
+    cp "$ASSETS/$ALL" "$(part_of "$H" "$ALL" "$DESIRED_VERSION")"
+    run "$H" all 31
+    if [ "$RC" = 1 ]; then pass "the start fails (exit 1)"; else fail "exit $RC"; fi
+    if [ ! -e "$H/bin/$ALL" ]; then pass "nothing installed, the planted partial file included"; else fail "installed from the non-private directory"; fi
+    if [ "$(asset_calls "$H")" = 0 ]; then pass "nothing was downloaded"; else fail "downloaded $(asset_calls "$H") time(s)"; fi
+    if [ "$(stat -f %Lp "$(stage_of "$H")")" = "$mode" ]; then pass "its mode is left at $mode"; else fail "its mode was changed to $(stat -f %Lp "$(stage_of "$H")")"; fi
+    if [ "$(ls -A "$(stage_of "$H")")" = "$ALL.$DESIRED_VERSION.part" ]; then pass "nothing was written in it"; else fail "it now holds: $(ls -A "$(stage_of "$H")" | tr '\n' ' ')"; fi
+    case "$(reason "$H" all)" in
+        *".che-telegram-mcp-download"*remove*|*".che-telegram-mcp-download"*Remove*) pass "the reason names the directory and says to remove it" ;;
+        *) fail "the reason does not say so: $(reason "$H" all)" ;;
+    esac
+    if grep -q "mode $mode" "$H/err"; then pass "stderr gives its mode"; else fail "stderr: $(grep -i staging "$H/err" | head -2)"; fi
+    rm -rf "$(stage_of "$H")"
+    run "$H" all
+    expect_installed "$H" "$ALL" "$DESIRED_VERSION"
+    if [ "$(stat -f %Lp "$(stage_of "$H")")" = 700 ]; then pass "removed, it is created anew with mode 700"; else fail "recreated with mode $(stat -f %Lp "$(stage_of "$H")")"; fi
+done
 H="$SCRATCH/all-resume"
 extra=$(cd "$H/bin" && ls -A | grep -v -x -e "$ALL" -e ".$ALL.version" -e "$(basename "$(stage_of "$H")")" || true)
 if [ -z "$extra" ]; then pass "~/bin holds only the binary, its version record and the staging directory"; else fail "~/bin also holds: $(echo "$extra" | tr '\n' ' ')"; fi
