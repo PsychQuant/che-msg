@@ -49,7 +49,7 @@ What to expect once the items are stored:
 
 - The `/che-telegram-mcp:auth` skill still walks through the older step-by-step login and asks for the phone number and the 2FA password ([#48](https://github.com/PsychQuant/che-msg/issues/48)). With 0.9.0 and both items stored, ask Claude to run `auth_run` without arguments instead; the login code is then the only value you type.
 - After the login code is sent, `auth_run` can take up to 15 seconds to answer while the stored 2FA password is being sent, so that its answer is the state after the password, not a request for it.
-- With the phone number stored, while the account is logged out, the first tool call (or any `telegram-all` CLI command) that opens TDLib sends the stored phone number, and Telegram sends you a login code. That is the same as having `TELEGRAM_PHONE` in the environment.
+- With the phone number stored, while the account is logged out, the first tool call that opens TDLib sends the stored phone number, and Telegram sends you a login code. That is the same as having `TELEGRAM_PHONE` in the environment. The `telegram-all` CLI never reads the Keychain ([#96](https://github.com/PsychQuant/che-msg/issues/96)).
 - If the Keychain is locked, macOS may ask you to unlock it. The server waits up to 10 seconds for the value, so that first call can be slow; after that it carries on without the value.
 
 Don't want the bot server spawning at startup? Add this to `.claude/settings.json` in your project (or `~/.claude/settings.json` for user-wide):

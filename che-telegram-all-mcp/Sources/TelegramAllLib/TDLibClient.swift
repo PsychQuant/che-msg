@@ -358,22 +358,26 @@ public final class TDLibClient {
             await runCredentialPlan(
                 plan, generation: generation, tracker: tracker,
                 lookup: { await source.lookup($0) },
-                submit: { [weak self] value, stillCurrent in
-                    try await self?.submitCredential(value, for: state, onlyIf: stillCurrent)
-                },
+                claim: { [weak self] in self?.claimCredentialSubmission(generation) ?? false },
+                submit: { [weak self] value in try await self?.submitCredential(value, for: state) },
                 recordFailure: { [weak self] error in self?.recordAutoFireError(error) })
         }
     }
 
+    /// Claims the automatic submission for `generation` under the lock that
+    /// guards `authState`, so the decision and the state change that would
+    /// invalidate it are ordered (#96).
+    private func claimCredentialSubmission(_ generation: UInt64) -> Bool {
+        lock.withLock { credentialLookups.claimSubmission(generation) }
+    }
+
     /// Sends an auto-fired phone number or 2FA password through the coalesced
-    /// path, only if `onlyIf` still holds inside that task, right before the
-    /// TDLib request (#96). The value is not kept; a failure is thrown to the
-    /// caller.
-    private func submitCredential(_ value: String, for state: AuthState,
-                                  onlyIf stillCurrent: @escaping @Sendable () -> Bool) async throws {
+    /// path, after `claimCredentialSubmission`. The value is not kept; a
+    /// failure is thrown to the caller.
+    private func submitCredential(_ value: String, for state: AuthState) async throws {
         switch state {
-        case .waitingForPhoneNumber: try await sendPhoneNumber(value, onlyIf: stillCurrent)
-        case .waitingForPassword: try await sendPassword(value, onlyIf: stillCurrent)
+        case .waitingForPhoneNumber: try await requestPhoneNumber(value)
+        case .waitingForPassword: try await requestPassword(value)
         case .waitingForParameters, .waitingForCode, .ready, .closed: return
         }
     }
@@ -445,16 +449,15 @@ public final class TDLibClient {
         }
     }
 
+    /// An explicit phone number (`auth_run`, `auth_send_phone`, the CLI): the
+    /// current state gets no automatic one after it (#96).
     public func sendPhoneNumber(_ phoneNumber: String) async throws {
-        try await sendPhoneNumber(phoneNumber, onlyIf: { true })
+        lock.withLock { credentialLookups.explicitSubmission() }
+        try await requestPhoneNumber(phoneNumber)
     }
 
-    /// `onlyIf` is evaluated inside the coalesced task, immediately before the
-    /// request: false sends nothing and throws `StaleCredentialSubmission` to
-    /// every caller of that task (#96).
-    private func sendPhoneNumber(_ phoneNumber: String, onlyIf stillCurrent: @escaping @Sendable () -> Bool) async throws {
+    private func requestPhoneNumber(_ phoneNumber: String) async throws {
         try await coalesceTask(holder: sendPhoneTask) { [self] in
-            guard stillCurrent() else { throw StaleCredentialSubmission() }
             do {
                 _ = try await client.setAuthenticationPhoneNumber(phoneNumber: phoneNumber, settings: nil)
             } catch {
@@ -473,14 +476,15 @@ public final class TDLibClient {
         }
     }
 
+    /// An explicit 2FA password: the current state gets no automatic one after
+    /// it (#96).
     public func sendPassword(_ password: String) async throws {
-        try await sendPassword(password, onlyIf: { true })
+        lock.withLock { credentialLookups.explicitSubmission() }
+        try await requestPassword(password)
     }
 
-    /// See `sendPhoneNumber(_:onlyIf:)`.
-    private func sendPassword(_ password: String, onlyIf stillCurrent: @escaping @Sendable () -> Bool) async throws {
+    private func requestPassword(_ password: String) async throws {
         try await coalesceTask(holder: sendPasswordTask) { [self] in
-            guard stillCurrent() else { throw StaleCredentialSubmission() }
             do {
                 _ = try await client.checkAuthenticationPassword(password: password)
             } catch {

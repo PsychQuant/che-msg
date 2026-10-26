@@ -126,4 +126,35 @@ final class CredentialLookupTrackerTests: XCTestCase {
         tracker.note(before, miss: .notStored)
         XCTAssertNil(tracker.lastMiss)
     }
+
+    // MARK: - One automatic submission per state (#96)
+
+    func testAStateIsClaimedOnce() {
+        let tracker = CredentialLookupTracker()
+        let generation = tracker.stateChanged(lookingUp: false)
+        XCTAssertTrue(tracker.claimSubmission(generation))
+        XCTAssertFalse(tracker.claimSubmission(generation))
+    }
+
+    func testAnExplicitSubmissionTakesTheClaim() {
+        let tracker = CredentialLookupTracker()
+        let generation = tracker.stateChanged(lookingUp: true)
+        tracker.explicitSubmission()
+        XCTAssertFalse(tracker.claimSubmission(generation))
+    }
+
+    func testAnEarlierStateCannotBeClaimed() {
+        let tracker = CredentialLookupTracker()
+        let phone = tracker.stateChanged(lookingUp: true)
+        _ = tracker.stateChanged(lookingUp: true)
+        XCTAssertFalse(tracker.claimSubmission(phone))
+    }
+
+    func testANewStateCanBeClaimedAgain() {
+        let tracker = CredentialLookupTracker()
+        _ = tracker.stateChanged(lookingUp: false)
+        tracker.explicitSubmission()
+        let next = tracker.stateChanged(lookingUp: false)
+        XCTAssertTrue(tracker.claimSubmission(next), "the explicit value belonged to the earlier state")
+    }
 }

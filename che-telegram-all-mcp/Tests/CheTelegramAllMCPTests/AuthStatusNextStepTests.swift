@@ -238,7 +238,8 @@ final class AuthStatusNextStepTests: XCTestCase {
         let box = Box()
         await runCredentialPlan(.lookUp(.phone), generation: generation, tracker: tracker,
                                 lookup: { _ in .found("+886900000417") },
-                                submit: { _, _ in throw TDLibClient.TDError.tdlibError(code: 400, message: "PHONE_NUMBER_INVALID") },
+                                claim: { tracker.claimSubmission(generation) },
+                                submit: { _ in throw TDLibClient.TDError.tdlibError(code: 400, message: "PHONE_NUMBER_INVALID") },
                                 recordFailure: { box.error = $0 })
         let error = try XCTUnwrap(box.error as? TDLibClient.TDError)
         XCTAssertFalse("\(error)".contains("886900000417"))
