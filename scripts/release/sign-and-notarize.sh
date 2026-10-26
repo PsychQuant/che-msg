@@ -169,7 +169,13 @@ codesign --force \
 
 echo ""
 echo "[2/$STEPS] Verifying the signature..."
-VERIFY_OUTPUT="$(codesign --verify --strict --verbose=2 "$BINARY" 2>&1)"
+# A failing assignment would end the run under set -e before the output is
+# shown, so codesign's reason is printed explicitly.
+if ! VERIFY_OUTPUT="$(codesign --verify --strict --verbose=2 "$BINARY" 2>&1)"; then
+    echo "Error: the signature does not verify right after signing:" >&2
+    sed 's/^/         /' <<<"$VERIFY_OUTPUT" >&2
+    exit 1
+fi
 sed -n '1,5p' <<<"$VERIFY_OUTPUT"
 
 # Check the signed result itself, so a wrong signing call fails here and not

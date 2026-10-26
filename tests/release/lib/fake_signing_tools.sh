@@ -12,6 +12,7 @@
 #           not-notarized      spctl does not accept the binary as notarized
 #           rejected-notarized spctl says "rejected" but names a notarized source
 #           notarize-fails-second  the second notarytool submit fails
+#           verify-fails       codesign --verify reports a broken signature and fails
 #           split-output       security and file write their listing in two
 #                              parts with a pause between them, and codesign
 #                              and spctl add 256 KB after the lines that
@@ -63,6 +64,11 @@ case " \$* " in
         else echo "CodeDirectory v=20500 flags=0x10000(runtime)" >&2; fi
         [ "$mode" = split-output ] && fake_filler >&2 ;;
     *" --verify "*)
+        if [ "$mode" = verify-fails ]; then
+            for last; do :; done
+            echo "\$last: a sealed resource is missing or invalid" >&2
+            exit 1
+        fi
         [ "$mode" = split-output ] && fake_filler >&2 ;;
 esac
 exit 0

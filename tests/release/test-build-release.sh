@@ -346,6 +346,11 @@ R=$(make_repo stale); mkdir -p "$R/.build/dist/v$X"; echo old > "$R/.build/dist/
 build "$R" "${SIGN_ENV[@]}" --
 if [ "$RC" -eq 0 ] && [ ! -e "$R/.build/dist/v$X/old-asset" ]; then pass "gone after a successful run"; else fail "exit $RC; still there: $(ls "$R/.build/dist/v$X" 2>&1 | tr '\n' ' ')"; fi
 
+test_case "the fixed staging directory of older builds is removed"
+R=$(make_repo old-stage); mkdir -p "$R/.build/release-stage/dist"; echo old > "$R/.build/release-stage/dist/CheTelegramAllMCP"
+build "$R" "${SIGN_ENV[@]}" --
+if [ "$RC" -eq 0 ] && [ ! -e "$R/.build/release-stage" ]; then pass "removed"; else fail "exit $RC; .build/release-stage still there"; fi
+
 # ------------------------------------------------------------------- make
 test_case "make targets with DEVELOPER_ID unset"
 R=$(make_repo make)

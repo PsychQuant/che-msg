@@ -111,7 +111,9 @@ fi
 
 # Everything is assembled in a private staging directory and moved into place
 # at the end, so a failure leaves no partial .build/dist/vX behind.
-rm -rf "$DIST"
+# .build/release-stage is the fixed staging directory of builds before
+# 2026-10-26 (several hundred MB); nothing uses it any more.
+rm -rf "$DIST" "$ROOT/.build/release-stage"
 mkdir -p "$ROOT/.build"
 STAGE=$(mktemp -d "$ROOT/.build/release-stage.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT

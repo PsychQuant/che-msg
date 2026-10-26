@@ -30,6 +30,8 @@
 #      entitlements plist and a bad SPCTL_TIMEOUT_SECONDS are refused before
 #      codesign; signed entitlements that differ, and an spctl "rejected", fail;
 #      the notarization's temp files are removed.
+#  12. A signature that does not verify right after signing stops the run
+#      with codesign's reason on stderr, not silently.
 #  11. Output that a reader stops reading at its first match (an identity
 #      listing written in two parts, 256 KB after the matching line) does not
 #      fail any mode: under pipefail the writer's SIGPIPE used to end the run
@@ -165,6 +167,13 @@ for mode_args in "full" "sign-only" "preflight"; do
     esac
     if [ "$RC" -eq 0 ]; then pass "$mode_args: exit 0"; else fail "$mode_args: exit $RC: $(printf '%s\n' "$OUT" | head -3)"; fi
 done
+
+test_case "a signature that does not verify is reported, not silent"
+D="$SCRATCH/verify-fails"; make_env "$D" verify-fails
+run_sign "$D" "DEVELOPER_ID=$IDENTITY" -- --sign-only "$D/Bin"
+if [ "$RC" -ne 0 ]; then pass "fails (exit $RC)"; else fail "exit 0"; fi
+case "$OUT" in *"Error:"*"does not verify"*) pass "says the signature does not verify" ;; *) fail "no error message: $(printf '%s\n' "$OUT" | tail -2)" ;; esac
+case "$OUT" in *"a sealed resource is missing or invalid"*) pass "shows codesign's reason" ;; *) fail "codesign's reason is missing" ;; esac
 
 test_case "--preflight"
 D="$SCRATCH/preflight"; make_env "$D"
