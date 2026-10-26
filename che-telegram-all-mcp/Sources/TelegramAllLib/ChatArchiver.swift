@@ -68,6 +68,8 @@ public struct ChatArchiver {
         public var files: [String] = []
         public var newMessages = 0
         public var mediaMessages = 0
+        /// Blocks written earlier from the local cache that this call replaced (#72); not in `newMessages`.
+        public var upgradedMessages = 0
         public var newestMessageId: Int64?
         /// The day file holding `newestMessageId` (relative to the output directory), written by this call or not.
         public var newestMessageFile: String?
@@ -84,6 +86,7 @@ public struct ChatArchiver {
                 "files": files,
                 "new_messages": newMessages,
                 "media_messages": mediaMessages,
+                "upgraded_messages": upgradedMessages,
                 "newest_message_id": newestMessageId.map { NSNumber(value: $0) } ?? NSNull(),
                 "newest_message_file": newestMessageFile ?? NSNull(),
                 "source": source.rawValue,
@@ -276,13 +279,16 @@ public struct ChatArchiver {
             }
         }
         // Text first: an interrupted run then keeps the page's messages even if a large
-        // download had not finished.
+        // download had not finished. Blocks from the local cache are written provisional, and a
+        // TDLib run replaces them (#72).
         for (day, dayMessages) in byDay {
-            let (added, _) = try ArchiveDayFile.write(directory: chatDir, chatId: request.chatId, day: day,
-                                                      utcOffset: request.utcOffset, messages: dayMessages)
-            guard !added.isEmpty else { continue }
+            let (added, upgraded) = try ArchiveDayFile.write(directory: chatDir, chatId: request.chatId, day: day,
+                                                             utcOffset: request.utcOffset, messages: dayMessages,
+                                                             provisional: sourceKind == .localCache)
+            guard !added.isEmpty || !upgraded.isEmpty else { continue }
             result.newMessages += added.count
             result.mediaMessages += added.filter { media[$0] == true }.count
+            result.upgradedMessages += upgraded.count
             files.insert("\(request.chatId)/\(day).md")
         }
         await ensureMedia(messages, chatDir: chatDir, maxBytes: request.maxMediaBytes, into: &result)

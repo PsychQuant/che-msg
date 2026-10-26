@@ -99,4 +99,88 @@ final class LocalCacheArchiveTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.manifestJSON().utf8)) as? [String: Any])
         XCTAssertEqual(object["undated_messages_skipped"] as? Int, 1)
     }
+
+    // MARK: - Provisional blocks and their upgrade (#72)
+
+    private let marker = "<!-- provisional: local-cache -->"
+
+    private func cacheArchive(_ messages: [[String: Any]], into dir: URL) async throws -> ChatArchiver.Result {
+        try await ChatArchiver.localCache(LocalCacheHistorySource(reader: StrictReader(messages)))
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+    }
+
+    private func tdlibArchive(_ messages: [[String: Any]], into dir: URL) async throws -> ChatArchiver.Result {
+        try await ChatArchiver(source: ChatArchiverTests.FakeSource(messages), sourceKind: .tdlib,
+                               resolveNames: { _ in [1001: "Alex"] }, isSynced: { true }, pageSize: 10)
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+    }
+
+    private func dayFile(_ dir: URL) throws -> String {
+        try String(contentsOf: dir.appendingPathComponent("777/2026-10-11.md"), encoding: .utf8)
+    }
+
+    // Scenario "Another session holds TDLib": every block the cache call adds is provisional.
+    func testEveryBlockFromTheLocalCacheIsProvisional() async throws {
+        let dir = outputDir()
+        let result = try await cacheArchive([local(30, 3), local(20, 2, type: "photo")], into: dir)
+        XCTAssertEqual(result.newMessages, 2)
+        XCTAssertEqual(result.upgradedMessages, 0)
+        let text = try dayFile(dir)
+        XCTAssertTrue(text.contains("<!-- msg:20 -->\n\(marker)\n**08:02 User 1001**：\n[photo](media/20/)\n\n"), text)
+        XCTAssertTrue(text.contains("<!-- msg:30 -->\n\(marker)\n**08:03 User 1001**：\nm30\n\n"), text)
+    }
+
+    // Scenario "TDLib run after a cache run".
+    func testATDLibRunUpgradesTheBlocksACacheRunWrote() async throws {
+        let dir = outputDir()
+        _ = try await cacheArchive([local(30, 3, type: "photo"), local(20, 2)], into: dir)
+        // A block the cache did not write stays as it is.
+        let tdlibOnly = "<!-- msg:10 -->\n**08:01 Someone**：\nkept\n\n"
+        let file = dir.appendingPathComponent("777/2026-10-11.md")
+        let cached = try dayFile(dir)
+        let withPlain = cached.replacingOccurrences(of: "<!-- msg:20 -->", with: tdlibOnly + "<!-- msg:20 -->")
+        try Data(withPlain.utf8).write(to: file)
+
+        let result = try await tdlibArchive([ChatArchiverTests.msg(30, 3, type: "photo", caption: "menu"),
+                                             ChatArchiverTests.msg(20, 2), ChatArchiverTests.msg(10, 1)], into: dir)
+        XCTAssertEqual(result.upgradedMessages, 2)
+        XCTAssertEqual(result.newMessages, 0)
+        XCTAssertEqual(result.mediaMessages, 0, "an upgrade is not a new message")
+        XCTAssertEqual(result.files, ["777/2026-10-11.md"])
+        let text = try dayFile(dir)
+        XCTAssertFalse(text.contains(marker), text)
+        XCTAssertTrue(text.contains(tdlibOnly), text)
+        XCTAssertTrue(text.contains("<!-- msg:20 -->\n**08:02 Alex**：\nm20\n\n"), text)
+        XCTAssertTrue(text.contains("<!-- msg:30 -->\n**08:03 Alex**：\n[photo](media/30/) menu\n\n"), text)
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(text).map(\.id), [10, 20, 30])
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.manifestJSON().utf8)) as? [String: Any])
+        XCTAssertEqual(object["upgraded_messages"] as? Int, 2)
+
+        // Scenario "TDLib re-run after an upgrade".
+        let before = try Data(contentsOf: file)
+        let again = try await tdlibArchive([ChatArchiverTests.msg(30, 3, type: "photo", caption: "menu"),
+                                            ChatArchiverTests.msg(20, 2), ChatArchiverTests.msg(10, 1)], into: dir)
+        XCTAssertEqual(again.upgradedMessages, 0)
+        XCTAssertEqual(again.files, [])
+        XCTAssertEqual(try Data(contentsOf: file), before)
+    }
+
+    // Scenario "Cache run after a TDLib run": no downgrade.
+    func testACacheRunNeverReplacesABlock() async throws {
+        let dir = outputDir()
+        _ = try await tdlibArchive([ChatArchiverTests.msg(30, 3), ChatArchiverTests.msg(20, 2)], into: dir)
+        let file = dir.appendingPathComponent("777/2026-10-11.md")
+        let before = try Data(contentsOf: file)
+        let result = try await cacheArchive([local(30, 3), local(20, 2)], into: dir)
+        XCTAssertEqual(result.upgradedMessages, 0)
+        XCTAssertEqual(result.newMessages, 0)
+        XCTAssertEqual(result.files, [])
+        XCTAssertEqual(try Data(contentsOf: file), before)
+        // And a second cache run over its own blocks changes nothing either.
+        let cacheDir = outputDir()
+        _ = try await cacheArchive([local(30, 3)], into: cacheDir)
+        let cached = try Data(contentsOf: cacheDir.appendingPathComponent("777/2026-10-11.md"))
+        _ = try await cacheArchive([local(30, 3)], into: cacheDir)
+        XCTAssertEqual(try Data(contentsOf: cacheDir.appendingPathComponent("777/2026-10-11.md")), cached)
+    }
 }
