@@ -249,7 +249,7 @@ chats:
     label: 專案群組               # optional, used only in the report
 ```
 
-Without this file the skill shows the template and does nothing else. Each run writes, per chat:
+Without this file the skill shows the template and does nothing else. `output_dir` must not be empty and must not contain `..` or start with `~` (the skill does not expand `~`; write the absolute path instead) ([#76](https://github.com/PsychQuant/che-msg/issues/76)). Each run writes, per chat:
 
 - `archives/telegram/<chat_id>/YYYY-MM-DD.md` — one block per message, anchored by `<!-- msg:<message_id> -->`. Re-runs merge into these files; nothing already there is rewritten. Owner-only (0600).
 - `archives/telegram/<chat_id>/media/<message_id>/` — the photo, video, document, audio, voice note, video note, animation or sticker. The message's line links to that directory.
@@ -258,11 +258,11 @@ The bookmark of each chat (the newest archived message id) is kept in `.claude/.
 
 While another session holds TDLib the skill stops instead of archiving from TDLib's local cache: blocks written from the cache have no sender names, captions or audio links, and later runs never rewrite a block that is already there ([#72](https://github.com/PsychQuant/che-msg/issues/72)). Ask for a cache archive explicitly if you want one anyway. It also stops when `output_dir` sits in a git repository without being ignored, and when two `output_dir` values would share one index.
 
-Media that failed to download are retried on the next run. Media skipped by `max_media_mb` are listed with their size; fetch one later with `download_message_media` (`chat_id`, `message_id`, `output_dir`), which also works on its own to save any single message's media ([#17](https://github.com/PsychQuant/che-msg/issues/17)).
+Media that failed to download are retried on the next run, unless Telegram says the message no longer exists; the report counts those separately and drops them from the retry list ([#75](https://github.com/PsychQuant/che-msg/issues/75)). A day file the tool cannot merge into safely — a symbolic link, FIFO or directory named like a day, or a file with CRLF or CR line endings — stops that chat, and the report names the file ([#76](https://github.com/PsychQuant/che-msg/issues/76)). Media skipped by `max_media_mb` are listed with their size; fetch one later with `download_message_media` (`chat_id`, `message_id`, `output_dir`), which also works on its own to save any single message's media ([#17](https://github.com/PsychQuant/che-msg/issues/17)).
 
 When a group is upgraded to a supergroup its `chat_id` changes (to a `-100…` id): put the new id in the config. The old directory stays.
 
-> **Privacy.** Archives and media are other people's messages and files, verbatim. Do not commit them to any repository — the skill refuses to run while `output_dir` is inside a git repository and not ignored. Media keep the sender's file name and extension: treat them as untrusted files. The skill's report gives only counts, file names and message ids, never message text, captions or sender names.
+> **Privacy.** Archives and media are other people's messages and files, verbatim. Do not commit them to any repository — the skill refuses to run while `output_dir` is inside a git repository and not ignored. Media keep the sender's file name and extension: treat them as untrusted files. Newly saved media carry the macOS quarantine attribute, so Gatekeeper checks an app or script before it opens from Finder. The skill's report gives only counts, file names and message ids, never message text, captions or sender names.
 
 Needs `che-telegram-all-mcp` 0.8.0 or later (the release that adds `archive_chat_to_markdown` and `download_message_media`).
 

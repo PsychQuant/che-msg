@@ -241,8 +241,8 @@ public struct ChatArchiver {
 
     /// True when fetching a message failed because TDLib says it does not exist: code 404, which
     /// td_api.tl documents for `getMessage` ("Returns a 404 error if the message doesn't exist"),
-    /// or code 400 with exactly `Message not found`. Anything else — `Chat not found`, a rate
-    /// limit, no session — may pass, so the id stays pending (#75).
+    /// or code 400 with exactly `Message not found`. Anything else (`Chat not found`, a rate
+    /// limit, no session) can be temporary, so the id stays pending (#75).
     static func messageIsGone(_ error: Error) -> Bool {
         guard case TDLibClient.TDError.tdlibError(let code, let message) = error else { return false }
         return code == 404 || (code == 400 && message == "Message not found")

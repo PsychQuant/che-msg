@@ -135,8 +135,9 @@ public enum ArchiveDayFile {
     static func readDayFile(_ file: URL, day: String, limit: Int? = nil) throws -> Data? {
         let fd = open(file.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else {
-            if errno == ENOENT { return nil }
-            throw errno == ELOOP ? WriteError.notRegularFile(day: day) : WriteError.unreadableOffset(day: day)
+            let error = errno
+            if error == ENOENT { return nil }
+            throw error == ELOOP ? WriteError.notRegularFile(day: day) : WriteError.unreadableOffset(day: day)
         }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? handle.close() }

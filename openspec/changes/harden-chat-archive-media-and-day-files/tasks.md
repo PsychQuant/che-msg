@@ -30,4 +30,4 @@
 ## 7. skill 與文件
 
 - [x] 7.1 SKILL.md（Requirement: archive-telegram skill configuration and index、Requirement: archive-telegram end-of-run check and report）：Step 1 的 `output_dir` 三條規則（空白、`..`、`~`）、權限段落列出 `date`、`mv`、`mkdir`、`git` 與 Grep；Step 4 以「cannot be merged into safely」比對日檔錯誤並說明三種原因；Step 6 說明已刪除的 id 不在 `media_failed_ids` 裡、`last_run` 加 `media_gone` 與 `undated_messages_skipped`；Step 7 報告與範例加上這兩個數字。驗證：`for t in tests/che-telegram-mcp/*.sh; do bash "$t" | tail -1; done` 全過，人工核對 Scenario: Output directory under the home shorthand、Gone media leaves the pending list、Report names media that is gone 都有對應的步驟 [after: 4.2, 6.2, 2.2]
-- [ ] 7.2 工具說明（`Server.swift` 的 `archive_chat_to_markdown`）、all-mcp README 的 manifest 欄位、日檔拒絕條件與 quarantine、plugin README 的歸檔段落、兩份 CHANGELOG 的 `[Unreleased]`（各記 #75、#76）。驗證：人工核對 README 的欄位名稱與 `manifestJSON` 的鍵一致；`swift test --skip E2ETests` 全過 [after: 7.1]
+- [x] 7.2 工具說明（`Server.swift` 的 `archive_chat_to_markdown`）、all-mcp README 的 manifest 欄位、日檔拒絕條件與 quarantine、plugin README 的歸檔段落、兩份 CHANGELOG 的 `[Unreleased]`（各記 #75、#76）。驗證：人工核對 README 的欄位名稱與 `manifestJSON` 的鍵一致；`swift test --skip E2ETests` 全過 [after: 7.1]

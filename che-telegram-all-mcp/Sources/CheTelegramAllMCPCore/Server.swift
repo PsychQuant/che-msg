@@ -416,7 +416,9 @@ public final class CheTelegramAllMCPServer {
                  message text. Advance a stored bookmark to newest_message_id only when bookmark_safe is true. \
                  While another session holds TDLib it archives from the local cache without media, sender \
                  names or captions, and later calls never rewrite those blocks. Day files are owner-only; one \
-                 archive per chat directory runs at a time.
+                 archive per chat directory runs at a time; a day file that is not a regular file (a symbolic \
+                 link, FIFO or directory) or that contains a carriage return is refused. Saved media carry the \
+                 macOS quarantine attribute.
                  """,
                  properties: [
                     "chat_id": prop("integer", "Chat ID"),
@@ -425,7 +427,7 @@ public final class CheTelegramAllMCPServer {
                     "since_date": prop("string", "First day to archive, YYYY-MM-DD at utc_offset (default: the whole history)"),
                     "utc_offset": prop("string", "Offset that decides each message's day, +HH:MM or -HH:MM, at most 18:00 either way (default: the server's current offset)"),
                     "max_media_bytes": prop("integer", "Skip media files larger than this many bytes (default: no limit)"),
-                    "retry_media_message_ids": arrayOfIntsProp("Ids of messages whose media download failed before; downloaded again without rewriting day files"),
+                    "retry_media_message_ids": arrayOfIntsProp("Ids of messages whose media download failed before; downloaded again without rewriting day files (ids whose message no longer exists come back in media_gone_ids)"),
                  ],
                  required: ["chat_id", "output_dir"]),
 
