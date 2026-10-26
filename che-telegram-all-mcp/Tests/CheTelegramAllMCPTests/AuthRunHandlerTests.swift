@@ -249,5 +249,30 @@ final class AuthRunHandlerTests: XCTestCase {
                          "\(state)")
         }
     }
+
+    // MARK: - A Keychain value read before the state moved on (verify round 1)
+
+    func testAKeychainValueIsUsedWhileTheStateStillAsksForIt() {
+        let values = authRunKeychainValues(lookedUp: .password, value: "from-keychain", stateNow: .waitingForPassword,
+                                           phone: nil, password: nil, envPhone: nil, envPassword: nil)
+        XCTAssertEqual(values.phone, nil)
+        XCTAssertEqual(values.password, "from-keychain")
+    }
+
+    func testAKeychainValueIsDroppedWhenTheStateMovedOn() {
+        for stateNow in [TDLibClient.AuthState.ready, .waitingForCode, .waitingForPhoneNumber, .closed] {
+            let values = authRunKeychainValues(lookedUp: .password, value: "from-keychain", stateNow: stateNow,
+                                               phone: nil, password: nil, envPhone: nil, envPassword: nil)
+            XCTAssertNil(values.password, "\(stateNow)")
+            XCTAssertNil(values.phone, "\(stateNow)")
+        }
+    }
+
+    func testNothingLookedUpGivesNoKeychainValues() {
+        let values = authRunKeychainValues(lookedUp: nil, value: nil, stateNow: .waitingForPhoneNumber,
+                                           phone: nil, password: nil, envPhone: nil, envPassword: nil)
+        XCTAssertNil(values.phone)
+        XCTAssertNil(values.password)
+    }
 }
 

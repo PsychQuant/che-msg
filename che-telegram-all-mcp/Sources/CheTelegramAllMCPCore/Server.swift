@@ -506,8 +506,14 @@ public final class CheTelegramAllMCPServer {
                                                    envPhone: env["TELEGRAM_PHONE"],
                                                    envPassword: env["TELEGRAM_2FA_PASSWORD"])
                 let stored = if let needed { await tdlib.lookUpKeychainCredential(needed) } else { String?.none }
+                // The lookup awaited with no lock: route on the state as it is now.
+                let stateNow: TDLibClient.AuthState = needed == nil ? state : tdlib.getAuthState()
+                let keychain = authRunKeychainValues(lookedUp: needed, value: stored, stateNow: stateNow,
+                                                     phone: phoneArg, password: passwordArg,
+                                                     envPhone: env["TELEGRAM_PHONE"],
+                                                     envPassword: env["TELEGRAM_2FA_PASSWORD"])
                 let action = decideAuthRunAction(
-                    state: state,
+                    state: stateNow,
                     phone: phoneArg,
                     code: args["code"]?.stringValue,
                     password: passwordArg,
@@ -515,8 +521,8 @@ public final class CheTelegramAllMCPServer {
                     envApiHash: env["TELEGRAM_API_HASH"],
                     envPhone: env["TELEGRAM_PHONE"],
                     envPassword: env["TELEGRAM_2FA_PASSWORD"],
-                    keychainPhone: needed == .phone ? stored : nil,
-                    keychainPassword: needed == .password ? stored : nil
+                    keychainPhone: keychain.phone,
+                    keychainPassword: keychain.password
                 )
                 switch action {
                 case .callSetParameters(let apiId, let apiHash):
@@ -531,6 +537,12 @@ public final class CheTelegramAllMCPServer {
                     break
                 case .errorClosed:
                     return errorResult("Authentication session is closed. Restart the MCP server to retry.")
+                }
+                // A phone number or 2FA password from the Keychain may be on its
+                // way for the state this step led to: answer once it has been
+                // sent, rather than asking the caller for it (#49).
+                if tdlib.isSubmittingKeychainCredential {
+                    await tdlib.waitForAuthorizationToSettle(timeout: 15)
                 }
                 return authStatusResult(
                     state: tdlib.getAuthState(),

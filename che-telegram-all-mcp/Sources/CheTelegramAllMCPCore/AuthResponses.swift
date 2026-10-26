@@ -187,3 +187,18 @@ internal func authRunKeychainLookup(state: TDLibClient.AuthState, phone: String?
         return nil
     }
 }
+
+/// The Keychain values `auth_run` may route with, after its lookup returned
+/// (verify round 1 of #49): the lookup ran with no lock held, so the state can
+/// have moved on (for example the background auto-fire sent the value). A
+/// value is used only while the state still asks for the credential it was
+/// read for; otherwise both are nil and `auth_run` routes on the new state.
+internal func authRunKeychainValues(lookedUp: KeychainCredential?, value: String?, stateNow: TDLibClient.AuthState,
+                                    phone: String?, password: String?,
+                                    envPhone: String?, envPassword: String?) -> (phone: String?, password: String?) {
+    guard let lookedUp, let value,
+          authRunKeychainLookup(state: stateNow, phone: phone, password: password,
+                                envPhone: envPhone, envPassword: envPassword) == lookedUp else { return (nil, nil) }
+    return lookedUp == .phone ? (value, nil) : (nil, value)
+}
+
