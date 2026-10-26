@@ -46,3 +46,12 @@ internal func tdlibErrorResult(for error: Error) -> CallTool.Result? {
         return nil
     }
 }
+
+/// What a tool returns for an error it throws (`handleWithTDLib`'s one catch, pinned by
+/// `TDLibErrorResultTests`): a TDLib error's structured result, otherwise
+/// `errorResultFromParse`, so `HandlerArgError` / `DateParseError` thrown by `parseLimit`,
+/// `parseGetChatHistoryArgs` and the like show their `description` rather than the generic
+/// `localizedDescription` (the cluster #22 / #23 / #25 throw paths were silent before).
+internal func toolErrorResult(_ error: Error) -> CallTool.Result {
+    tdlibErrorResult(for: error) ?? errorResultFromParse(error)
+}

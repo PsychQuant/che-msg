@@ -748,16 +748,8 @@ public final class CheTelegramAllMCPServer {
             return CallTool.Result(content: [.text(text: result, annotations: nil, _meta: nil)], isError: false)
 
         } catch {
-            // A TDLib error from any tool, with its code and message (#71).
-            if let structured = tdlibErrorResult(for: error) { return structured }
-            // Use errorResultFromParse so HandlerArgError / DateParseError
-            // thrown by parseLimit / parseGetChatHistoryArgs / etc. surface
-            // their `description` (user-friendly message) rather than the
-            // generic Swift `Error.localizedDescription` fallback. Other
-            // error types still fall through to localizedDescription inside
-            // errorResultFromParse. Improves observability for the cluster
-            // #22 / #23 / #25 throw paths that were previously silent.
-            return errorResultFromParse(error)
+            // A TDLib error with its code and message (#71); see toolErrorResult.
+            return toolErrorResult(error)
         }
     }
 

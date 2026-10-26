@@ -50,4 +50,35 @@ final class TDLibErrorResultTests: XCTestCase {
         XCTAssertNil(tdlibErrorResult(for: TDLibClient.TDError.notAuthenticated))
         XCTAssertNil(tdlibErrorResult(for: HandlerArgError(message: "chat_id is required")))
     }
+
+    /// What a tool returns for any error it throws: the structured result for a TDLib error,
+    /// the plain-text one for everything else.
+    func testToolErrorResultPicksTheResultForEachError() throws {
+        let unknown = TDLibClient.TDError.unknownChat(chatId: 123_456_789, code: 400, message: "Chat not found")
+        XCTAssertEqual(try payload(toolErrorResult(unknown))["hint"] as? String, unknown.hint)
+        XCTAssertEqual(try payload(toolErrorResult(TDLibClient.TDError.tdlibError(code: 429, message: "Too Many Requests: retry after 30")))["code"] as? Int, 429)
+        let plain = toolErrorResult(HandlerArgError(message: "chat_id is required"))
+        XCTAssertEqual(plain.isError, true)
+        guard case .text(let text, _, _) = try XCTUnwrap(plain.content.first) else { return XCTFail("expected a text block") }
+        XCTAssertEqual(text, "Error: chat_id is required")
+    }
+
+    /// `handleWithTDLib` needs a TDLib session, so its error path is pinned in the source: one
+    /// catch at the function's level, and it returns `toolErrorResult(error)` and nothing else
+    /// (#71 verify: dropping the TDLib branch from that catch failed no test).
+    func testHandleWithTDLibSendsEveryErrorThroughToolErrorResult() throws {
+        let server = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/CheTelegramAllMCPCore/Server.swift")
+        let lines = try String(contentsOf: server, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let start = try XCTUnwrap(lines.firstIndex { $0.hasPrefix("    private func handleWithTDLib(") })
+        let end = try XCTUnwrap(lines[start...].firstIndex { $0 == "    }" }, "handleWithTDLib's closing brace")
+        let body = lines[(start + 1)..<end].filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+        let catches = body.indices.filter { body[$0].hasPrefix("        } catch") && !body[$0].hasPrefix("         ") }
+        XCTAssertEqual(catches.map { body[$0] }, ["        } catch {"], "one catch at the function's level, catching everything")
+        guard let only = catches.first, only + 2 < body.endIndex else { return }
+        XCTAssertEqual(body[only + 1], "            return toolErrorResult(error)")
+        XCTAssertEqual(body[only + 2], "        }")
+    }
 }
