@@ -13,6 +13,8 @@ HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # WRAPPER_UNDER_TEST runs the tests against another copy, e.g. an earlier version.
 WRAPPER="${WRAPPER_UNDER_TEST:-$HARNESS_ROOT/plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh}"
 DESIRED_VERSION=$(sed -n 's/^DESIRED_VERSION="\(.*\)"$/\1/p' "$WRAPPER")
+BOT_WRAPPER="${BOT_WRAPPER_UNDER_TEST:-$HARNESS_ROOT/plugins/che-telegram-mcp/bin/che-telegram-bot-mcp-wrapper.sh}"
+BOT_DESIRED=$(sed -n 's/^DESIRED_VERSION="\(.*\)"$/\1/p' "$BOT_WRAPPER")
 
 # make_home <dir> [credentials: yes|no] [binary version | "silent"]
 # The fake binary answers --version with the given version (default: the
@@ -57,6 +59,25 @@ if IFS= read -r -t 2 line; then printf '%s\n' "$line" > "$HOME/stdin.txt"; fi
 exec /bin/sleep 300
 EOF
     chmod +x "$path"
+}
+
+# make_bot_home <dir> <record content | "-">: an installed fake bot binary that
+# records its start and exits, its version record (none with "-"), a `security`
+# that returns a bot token, and the fake curl.
+make_bot_home() {
+    local home=$1 record=$2
+    mkdir -p "$home/bin" "$home/fakebin"
+    write_fake_bot_binary "$home/bin/CheTelegramBotMCP"
+    if [ "$record" != - ]; then printf '%s' "$record" > "$home/bin/.CheTelegramBotMCP.version"; fi
+    printf '#!/bin/bash\ncase "$*" in *TELEGRAM_BOT_TOKEN*) echo 123:faketoken ;; *) exit 44 ;; esac\n' > "$home/fakebin/security"
+    chmod +x "$home/fakebin/security"
+    install_fake_curl "$home"
+}
+
+# write_fake_bot_binary <path>: a fake CheTelegramBotMCP that records its start.
+write_fake_bot_binary() {
+    printf '#!/bin/bash\necho $$ >> "$HOME/started.pids"\n' > "$1"
+    chmod +x "$1"
 }
 
 # install_fake_curl <home>: the scriptable fake curl in <home>/fakebin.
@@ -108,6 +129,17 @@ serve_release_api() {
   ]
 }
 EOF
+}
+
+# wrapper_copy <wrapper> <dir>: a copy of the wrapper at <dir>/bin/, next to a
+# copy of the plugin's lib/ at <dir>/lib/, as the wrapper finds it in the
+# plugin; prints the copy's path. The test edits the copy, never the original.
+wrapper_copy() {
+    local src=$1 dir=$2
+    mkdir -p "$dir/bin"
+    cp -R "$HARNESS_ROOT/plugins/che-telegram-mcp/lib" "$dir/lib"
+    cp "$src" "$dir/bin/$(basename "$src")"
+    echo "$dir/bin/$(basename "$src")"
 }
 
 # start_wrapper <home> <stdin-file> <stdout-file>: starts the wrapper in the

@@ -6,9 +6,12 @@
 # - DESIRED_VERSION below pins the binary version this plugin expects.
 # - ~/bin/.CheTelegramAllMCP.version sidecar tracks what's installed.
 # - With no binary installed, downloads it. Once one is installed in ~/bin,
-#   re-downloads from GitHub Release (atomic .tmp + mv) only when the sidecar
-#   is older than the pin, missing, or not a plain x.y.z; a binary newer than
-#   the pin is kept (PsychQuant/che-msg#83).
+#   re-downloads from GitHub Release only when the sidecar is older than the
+#   pin, missing, or not a plain x.y.z; a binary newer than the pin is kept
+#   (PsychQuant/che-msg#83).
+# - The download (lib/download.sh, shared with the bot wrapper) retries,
+#   resumes a cut-off transfer from a version-named partial file, refuses an
+#   HTTP error, and lets one process at a time write (PsychQuant/che-msg#56).
 # - Source builds in $HOME/Developer/... are NEVER auto-replaced.
 
 BINARY_NAME="CheTelegramAllMCP"
@@ -17,7 +20,6 @@ INSTALL_DIR="$HOME/bin"
 INSTALLED_BINARY="$INSTALL_DIR/$BINARY_NAME"
 VERSION_FILE="$INSTALL_DIR/.${BINARY_NAME}.version"
 DESIRED_VERSION="0.9.0"
-DOWNLOAD_TIMEOUT=600  # universal binary ~220MB; allow slow links
 
 # --- Startup errors Claude Code can show (#31, PsychQuant/che-msg#58) ---
 # When the wrapper exits before starting the server, Claude Code's MCP
@@ -86,6 +88,16 @@ fail_startup() {
     exit 1
 }
 
+# --- Downloading the binary (PsychQuant/che-msg#56) ---
+# lib/download.sh downloads and installs the binary for both wrappers, and
+# holds version_at_least and read_version_record, which the decision below
+# uses.
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+if [[ -z "$PLUGIN_ROOT" ]] || ! source "$PLUGIN_ROOT/lib/download.sh"; then
+    echo "$BINARY_NAME: ERROR — the plugin's lib/download.sh cannot be read; reinstall the che-telegram-mcp plugin" >&2
+    fail_startup "The che-telegram-mcp plugin is incomplete: its lib/download.sh cannot be read. Reinstall the plugin, then reconnect with /mcp."
+fi
+
 # Find binary — prefer $HOME/bin (installed from release) > source builds
 BINARY=""
 for loc in "$INSTALLED_BINARY" "/usr/local/bin/$BINARY_NAME" "$HOME/.local/bin/$BINARY_NAME" "$HOME/Developer/che-msg/che-telegram-all-mcp/.build/release/$BINARY_NAME" "$HOME/Developer/che-mcps/che-telegram-all-mcp/.build/release/$BINARY_NAME"; do
@@ -98,19 +110,9 @@ done
 # over a newer one (PsychQuant/che-msg#83).
 NEED_DOWNLOAD=false
 KEPT_AFTER_FAILED_DOWNLOAD=false
+DOWNLOAD_PROBLEM=""
 REASON=""
-INSTALLED_VERSION=""
-[[ -f "$VERSION_FILE" ]] && INSTALLED_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || true)
-# Strip only surrounding whitespace (a trailing CR included). Whitespace inside
-# stays, so "9. 0.0" or a second line fails the x.y.z check below.
-INSTALLED_VERSION="${INSTALLED_VERSION#"${INSTALLED_VERSION%%[![:space:]]*}"}"
-INSTALLED_VERSION="${INSTALLED_VERSION%"${INSTALLED_VERSION##*[![:space:]]}"}"
-
-# version_at_least <version> <minimum>: true when <version> is x.y.z and not older.
-version_at_least() {
-    [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
-    [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]]
-}
+INSTALLED_VERSION=$(read_version_record "$VERSION_FILE")
 
 if [[ -z "$BINARY" ]]; then
     NEED_DOWNLOAD=true
@@ -146,6 +148,7 @@ if $NEED_DOWNLOAD; then
             echo "$BINARY_NAME: WARNING — no download URL found, keeping existing binary" >&2
             BINARY="$INSTALLED_BINARY"
             KEPT_AFTER_FAILED_DOWNLOAD=true
+            DOWNLOAD_PROBLEM="no release asset was found"
         else
             echo "$BINARY_NAME: ERROR — no release asset found at $GITHUB_REPO." >&2
             echo "  Install manually: https://github.com/$GITHUB_REPO/releases" >&2
@@ -155,22 +158,21 @@ if $NEED_DOWNLOAD; then
             fail_startup "CheTelegramAllMCP is not installed and no release asset was found to download. Install it by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
         fi
     else
-        if curl -sL --max-time "$DOWNLOAD_TIMEOUT" "$URL" -o "${INSTALLED_BINARY}.tmp" 2>/dev/null; then
-            chmod +x "${INSTALLED_BINARY}.tmp"
-            xattr -dr com.apple.quarantine "${INSTALLED_BINARY}.tmp" 2>/dev/null || true
-            mv "${INSTALLED_BINARY}.tmp" "$INSTALLED_BINARY"
-            echo "$DESIRED_VERSION" > "$VERSION_FILE"
-            echo "$BINARY_NAME: installed v$DESIRED_VERSION" >&2
+        download_install "$BINARY_NAME" "$DESIRED_VERSION" "$URL" "$INSTALL_DIR"
+        DOWNLOAD_STATUS=$?
+        if [[ "$DOWNLOAD_STATUS" -eq 0 ]]; then
             BINARY="$INSTALLED_BINARY"
         else
-            rm -f "${INSTALLED_BINARY}.tmp" 2>/dev/null
+            DOWNLOAD_PROBLEM=$(download_failure "$DOWNLOAD_STATUS")
             if [[ -x "$INSTALLED_BINARY" ]]; then
-                echo "$BINARY_NAME: WARNING — download failed, keeping existing binary" >&2
+                echo "$BINARY_NAME: WARNING — v$DESIRED_VERSION not installed: $DOWNLOAD_PROBLEM. Keeping the existing binary." >&2
                 BINARY="$INSTALLED_BINARY"
                 KEPT_AFTER_FAILED_DOWNLOAD=true
             else
-                echo "$BINARY_NAME: ERROR — download failed" >&2
-                fail_startup "Downloading CheTelegramAllMCP failed. Check the network, or install it by hand as the che-telegram-mcp README describes, then reconnect with /mcp."
+                echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $DOWNLOAD_PROBLEM." >&2
+                echo "  To install it by hand (see Manual install in the che-telegram-mcp README):" >&2
+                echo "    curl -fL https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME -o ~/bin/$BINARY_NAME.tmp && chmod +x ~/bin/$BINARY_NAME.tmp && mv ~/bin/$BINARY_NAME.tmp ~/bin/$BINARY_NAME && echo $DESIRED_VERSION > ~/bin/.$BINARY_NAME.version" >&2
+                fail_startup "CheTelegramAllMCP v$DESIRED_VERSION could not be installed: $DOWNLOAD_PROBLEM. Reconnect with /mcp to try again, or install it by hand as the che-telegram-mcp README describes."
             fi
         fi
     fi
@@ -218,7 +220,7 @@ if [[ -z "$BINARY_VERSION" ]] || \
         FOUND="does not report a version (binaries before 0.6.0 do not)"
     fi
     if $KEPT_AFTER_FAILED_DOWNLOAD; then
-        WHY="The download of v$DESIRED_VERSION did not succeed, so the previous binary was kept."
+        WHY="The download of v$DESIRED_VERSION did not succeed ($DOWNLOAD_PROBLEM), so the previous binary was kept."
     elif $NEED_DOWNLOAD; then
         WHY="The release that was downloaded is older than $MIN_BINARY_VERSION."
     elif [[ "$BINARY" != "$INSTALLED_BINARY" ]]; then

@@ -12,13 +12,17 @@
 #        The plugin also has only the components a check here reviews
 #        (PsychQuant/che-msg#54, mirroring tests/che-archive-lines): the root
 #        holds exactly .claude-plugin, .mcp.json, CHANGELOG.md, README.md, bin,
-#        hooks and skills; .claude-plugin/ only plugin.json; hooks/ only
+#        hooks, lib and skills; .claude-plugin/ only plugin.json; lib/ only
+#        the files the wrappers source (download.sh, #56); hooks/ only
 #        check-mcp.sh and hooks.json, whose only hook is the SessionStart
 #        command; skills/ exactly the six skills, each with only SKILL.md (a new
 #        skill must be added here and to (h) on purpose). plugin.json and the
 #        repository marketplace entry carry metadata keys only (no hooks,
 #        skills, mcpServers, …); the entry is the only one for this plugin and
 #        its source is ./plugins/che-telegram-mcp.
+#   (a2) every file a wrapper sources from lib/ ("$PLUGIN_ROOT/lib/<file>")
+#        exists as a regular file. Both wrappers download through
+#        lib/download.sh (PsychQuant/che-msg#56); without it they cannot start.
 #   (b)  every .mcp.json command is ${CLAUDE_PLUGIN_ROOT}/bin/<name>-wrapper.sh
 #        and resolves to an executable file
 #        .mcp.json declares exactly telegram-all and telegram-bot, each with
@@ -175,10 +179,11 @@ def listing(path):
     return sorted(set(os.listdir(path)) - IGNORED) if os.path.isdir(path) else None
 SKILLS = ["archive-telegram", "auth", "chats", "search", "send", "telegram-messaging"]
 expected = {
-    "": [".claude-plugin", ".mcp.json", "CHANGELOG.md", "README.md", "bin", "hooks", "skills"],
+    "": [".claude-plugin", ".mcp.json", "CHANGELOG.md", "README.md", "bin", "hooks", "lib", "skills"],
     ".claude-plugin": ["plugin.json"],
     "bin": ["che-telegram-all-mcp-wrapper.sh", "che-telegram-bot-mcp-wrapper.sh"],
     "hooks": ["check-mcp.sh", "hooks.json"],
+    "lib": ["download.sh"],
     "skills": SKILLS,
 }
 for name in SKILLS:
@@ -258,6 +263,19 @@ if manifest_cfg is not None:
                                  "homepage", "repository", "license", "keywords"}
     if extra:
         bad("a", f"plugin.json declares {sorted(extra)} (components or behaviour no check reviews)")
+
+# ---------- (a2) files the wrappers source from lib/ ----------
+if os.path.isdir(bindir):
+    for name in sorted(os.listdir(bindir)):
+        if not name.endswith("-wrapper.sh"):
+            continue
+        for line in open(os.path.join(bindir, name)).read().splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            for rel in re.findall(r'source\s+"\$PLUGIN_ROOT/(lib/[^"]+)"', line):
+                p = os.path.join(root, rel)
+                if os.path.islink(p) or not os.path.isfile(p):
+                    bad("a2", f"bin/{name} sources {rel}, which is not a regular file in the plugin")
 
 # ---------- (b) / (b2) .mcp.json ----------
 mcp_path = os.path.join(root, ".mcp.json")
@@ -574,7 +592,8 @@ report() {  # $1 = tag, $2 = description when clean
     fi
 }
 
-report a  "only reviewed components: bin/ wrappers, hooks/, skills/, metadata-only manifests"
+report a  "only reviewed components: bin/ wrappers, hooks/, lib/, skills/, metadata-only manifests"
+report a2 "every file a wrapper sources from lib/ exists"
 report b  ".mcp.json commands are \${CLAUDE_PLUGIN_ROOT}/bin/*-wrapper.sh and executable"
 report b2 "every wrapper assigns DESIRED_VERSION exactly once, as a literal"
 report c  "hook commands quote \${CLAUDE_PLUGIN_ROOT}"

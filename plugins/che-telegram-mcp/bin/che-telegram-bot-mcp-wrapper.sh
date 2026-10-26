@@ -6,9 +6,14 @@
 # - DESIRED_VERSION below pins the binary version this plugin expects.
 # - ~/bin/.CheTelegramBotMCP.version sidecar tracks what's installed.
 # - With no binary installed, downloads it. Once one is installed in ~/bin,
-#   re-downloads from GitHub Release (atomic .tmp + mv) only when the sidecar
-#   is older than the pin, missing, or not a plain x.y.z; a binary newer than
-#   the pin is kept (PsychQuant/che-msg#83).
+#   re-downloads from GitHub Release only when the sidecar is older than the
+#   pin, missing, or not a plain x.y.z; a binary newer than the pin is kept
+#   (PsychQuant/che-msg#83).
+# - The download (lib/download.sh, shared with the telegram-all wrapper)
+#   retries, resumes a cut-off transfer from a version-named partial file,
+#   refuses an HTTP error, and lets one process at a time write
+#   (PsychQuant/che-msg#56). This wrapper has no --version probe, so what the
+#   download refuses is all that keeps a bad file from being run.
 # - Source builds in $HOME/Developer/... are NEVER auto-replaced.
 
 BINARY_NAME="CheTelegramBotMCP"
@@ -17,7 +22,14 @@ INSTALL_DIR="$HOME/bin"
 INSTALLED_BINARY="$INSTALL_DIR/$BINARY_NAME"
 VERSION_FILE="$INSTALL_DIR/.${BINARY_NAME}.version"
 DESIRED_VERSION="0.9.0"
-DOWNLOAD_TIMEOUT=180  # bot binary is small (~30MB)
+
+# lib/download.sh downloads and installs the binary for both wrappers, and
+# holds version_at_least and read_version_record (PsychQuant/che-msg#56).
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+if [[ -z "$PLUGIN_ROOT" ]] || ! source "$PLUGIN_ROOT/lib/download.sh"; then
+    echo "$BINARY_NAME: ERROR — the plugin's lib/download.sh cannot be read; reinstall the che-telegram-mcp plugin" >&2
+    exit 1
+fi
 
 # Find binary
 BINARY=""
@@ -31,18 +43,7 @@ done
 # over a newer one (PsychQuant/che-msg#83).
 NEED_DOWNLOAD=false
 REASON=""
-INSTALLED_VERSION=""
-[[ -f "$VERSION_FILE" ]] && INSTALLED_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || true)
-# Strip only surrounding whitespace (a trailing CR included). Whitespace inside
-# stays, so "9. 0.0" or a second line fails the x.y.z check below.
-INSTALLED_VERSION="${INSTALLED_VERSION#"${INSTALLED_VERSION%%[![:space:]]*}"}"
-INSTALLED_VERSION="${INSTALLED_VERSION%"${INSTALLED_VERSION##*[![:space:]]}"}"
-
-# version_at_least <version> <minimum>: true when <version> is x.y.z and not older.
-version_at_least() {
-    [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
-    [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]]
-}
+INSTALLED_VERSION=$(read_version_record "$VERSION_FILE")
 
 if [[ -z "$BINARY" ]]; then
     NEED_DOWNLOAD=true
@@ -84,22 +85,18 @@ if $NEED_DOWNLOAD; then
             exit 1
         fi
     else
-        if curl -sL --max-time "$DOWNLOAD_TIMEOUT" "$URL" -o "${INSTALLED_BINARY}.tmp" 2>/dev/null; then
-            chmod +x "${INSTALLED_BINARY}.tmp"
-            xattr -dr com.apple.quarantine "${INSTALLED_BINARY}.tmp" 2>/dev/null || true
-            mv "${INSTALLED_BINARY}.tmp" "$INSTALLED_BINARY"
-            echo "$DESIRED_VERSION" > "$VERSION_FILE"
-            echo "$BINARY_NAME: installed v$DESIRED_VERSION" >&2
+        download_install "$BINARY_NAME" "$DESIRED_VERSION" "$URL" "$INSTALL_DIR"
+        DOWNLOAD_STATUS=$?
+        if [[ "$DOWNLOAD_STATUS" -eq 0 ]]; then
+            BINARY="$INSTALLED_BINARY"
+        elif [[ -x "$INSTALLED_BINARY" ]]; then
+            echo "$BINARY_NAME: WARNING — v$DESIRED_VERSION not installed: $(download_failure "$DOWNLOAD_STATUS"). Keeping the existing binary." >&2
             BINARY="$INSTALLED_BINARY"
         else
-            rm -f "${INSTALLED_BINARY}.tmp" 2>/dev/null
-            if [[ -x "$INSTALLED_BINARY" ]]; then
-                echo "$BINARY_NAME: WARNING — download failed, keeping existing binary" >&2
-                BINARY="$INSTALLED_BINARY"
-            else
-                echo "$BINARY_NAME: ERROR — download failed" >&2
-                exit 1
-            fi
+            echo "$BINARY_NAME: ERROR — v$DESIRED_VERSION not installed: $(download_failure "$DOWNLOAD_STATUS")." >&2
+            echo "  Reconnect with /mcp to try again, or install it by hand (see Manual install in the che-telegram-mcp README):" >&2
+            echo "    curl -fL https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME -o ~/bin/$BINARY_NAME.tmp && chmod +x ~/bin/$BINARY_NAME.tmp && mv ~/bin/$BINARY_NAME.tmp ~/bin/$BINARY_NAME && echo $DESIRED_VERSION > ~/bin/.$BINARY_NAME.version" >&2
+            exit 1
         fi
     fi
 fi

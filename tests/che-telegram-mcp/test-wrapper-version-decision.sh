@@ -14,7 +14,8 @@
 # directory is read or written, and nothing reaches the network.
 #
 # Tests:
-#   1. version_at_least, loaded from each wrapper's own source: multi-digit
+#   1. version_at_least, loaded from lib/download.sh, which both wrappers
+#      source (PsychQuant/che-msg#56) and neither redefines: multi-digit
 #      ordering (0.10.0 vs 0.9.0, 0.8.10 vs 0.8.9, 10.0.0 vs 9.9.9) and both
 #      regex anchors (1.0.0-rc1, x1.0.0).
 #   For each wrapper:
@@ -44,8 +45,6 @@ set -u
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/wrapper_harness.sh"
 
 ALL_WRAPPER="$WRAPPER"
-BOT_WRAPPER="${BOT_WRAPPER_UNDER_TEST:-$HARNESS_ROOT/plugins/che-telegram-mcp/bin/che-telegram-bot-mcp-wrapper.sh}"
-BOT_DESIRED=$(sed -n 's/^DESIRED_VERSION="\(.*\)"$/\1/p' "$BOT_WRAPPER")
 
 FAIL=0
 TOTAL=0
@@ -91,16 +90,22 @@ expect_vat() {
     if [ "$got" = "$3" ]; then pass "$4"; else fail "$4 (version_at_least $1 $2 gave $got)"; fi
 }
 
-# pinned_copy <wrapper> <pin> <dest>: the real wrapper with DESIRED_VERSION replaced.
-pinned_copy() { sed "s/^DESIRED_VERSION=\".*\"$/DESIRED_VERSION=\"$2\"/" "$1" > "$3"; }
+# pinned_copy <wrapper> <pin> <dir>: a copy of the real wrapper, next to the
+# plugin's lib/, with DESIRED_VERSION replaced; prints its path.
+pinned_copy() {
+    local copy; copy=$(wrapper_copy "$1" "$3")
+    perl -pi -e "s/^DESIRED_VERSION=\".*\"\$/DESIRED_VERSION=\"$2\"/" "$copy"
+    echo "$copy"
+}
 
 # ---------------------------------------------------------- version_at_least
-for pair in "telegram-all:$ALL_WRAPPER" "bot:$BOT_WRAPPER"; do
-    label=${pair%%:*}; path=${pair#*:}
-    test_case "$label: version_at_least orders multi-digit components and anchors the pattern"
-    unset -f version_at_least 2>/dev/null
-    eval "$(sed -n '/^version_at_least() {/,/^}/p' "$path")"
-    if ! declare -f version_at_least >/dev/null; then fail "version_at_least not found in $label wrapper"; continue; fi
+LIB="$HARNESS_ROOT/plugins/che-telegram-mcp/lib/download.sh"
+test_case "version_at_least orders multi-digit components and anchors the pattern"
+unset -f version_at_least 2>/dev/null
+eval "$(sed -n '/^version_at_least() {/,/^}/p' "$LIB")"
+if ! declare -f version_at_least >/dev/null; then
+    fail "version_at_least not found in lib/download.sh"
+else
     expect_vat 0.10.0 0.9.0 yes "0.10.0 is not older than 0.9.0"
     expect_vat 0.9.0 0.10.0 no  "0.9.0 is older than 0.10.0"
     expect_vat 0.8.10 0.8.9 yes "0.8.10 is not older than 0.8.9"
@@ -108,7 +113,13 @@ for pair in "telegram-all:$ALL_WRAPPER" "bot:$BOT_WRAPPER"; do
     expect_vat 10.0.0 9.9.9 yes "10.0.0 is not older than 9.9.9"
     expect_vat 1.0.0-rc1 0.8.0 no "1.0.0-rc1 is not x.y.z"
     expect_vat x1.0.0 0.8.0 no  "x1.0.0 is not x.y.z"
-    unset -f version_at_least
+fi
+unset -f version_at_least 2>/dev/null
+for pair in "telegram-all:$ALL_WRAPPER" "bot:$BOT_WRAPPER"; do
+    label=${pair%%:*}; path=${pair#*:}
+    test_case "$label: the wrapper takes version_at_least from lib/download.sh"
+    if grep -qF 'source "$PLUGIN_ROOT/lib/download.sh"' "$path"; then pass "sources lib/download.sh"; else fail "does not source lib/download.sh"; fi
+    if grep -q 'version_at_least() *{' "$path"; then fail "defines its own version_at_least"; else pass "does not define its own version_at_least"; fi
 done
 
 # ---------------------------------------------------------------- telegram-all
@@ -173,8 +184,8 @@ done
 
 test_case "telegram-all: pinned 0.9.0 with record 0.10.0"
 H="$SCRATCH/all-pin090"; make_home "$H" yes 0.10.0
-pinned_copy "$ALL_WRAPPER" 0.9.0 "$SCRATCH/all-pin090.sh"
-WRAPPER="$SCRATCH/all-pin090.sh"; run_all "$H" 0.10.0; WRAPPER="$ALL_WRAPPER"
+COPY=$(pinned_copy "$ALL_WRAPPER" 0.9.0 "$SCRATCH/all-pin090-plugin")
+WRAPPER="$COPY"; run_all "$H" 0.10.0; WRAPPER="$ALL_WRAPPER"
 expect_no_download "$H" "0.10.0 vs pin 0.9.0"; expect_started "$H" "0.10.0 vs pin 0.9.0"
 
 test_case "telegram-all: a binary outside ~/bin with an older record is not downloaded over"
@@ -205,19 +216,9 @@ esac
 BOT_NEWER=$(newer_than "$BOT_DESIRED")
 BOT_MAJOR=${BOT_NEWER%%.*}
 
-# make_bot_home <dir> <record content | "-">: an installed fake bot binary that
-# records its start, a `security` that returns a bot token, and the recording,
-# failing `curl`.
-make_bot_home() {
-    local home=$1 record=$2
-    mkdir -p "$home/bin" "$home/fakebin"
-    printf '#!/bin/bash\necho $$ >> "$HOME/started.pids"\n' > "$home/bin/CheTelegramBotMCP"
-    chmod +x "$home/bin/CheTelegramBotMCP"
-    if [ "$record" != - ]; then printf '%s' "$record" > "$home/bin/.CheTelegramBotMCP.version"; fi
-    printf '#!/bin/bash\ncase "$*" in *TELEGRAM_BOT_TOKEN*) echo 123:faketoken ;; *) exit 44 ;; esac\n' > "$home/fakebin/security"
-    printf '#!/bin/bash\necho "$*" >> "$HOME/curl.calls"\nexit 1\n' > "$home/fakebin/curl"
-    chmod +x "$home/fakebin/security" "$home/fakebin/curl"
-}
+# make_bot_home (tests/lib/wrapper_harness.sh): an installed fake bot binary
+# that records its start, a `security` that returns a bot token, and the fake
+# curl, which records its calls and fails.
 run_bot() { HOME="$1" PATH="$1/fakebin:$PATH" bash "${2:-$BOT_WRAPPER}" </dev/null >/dev/null 2>"$1/err"; }
 
 test_case "bot: record newer than the pin ($BOT_NEWER > $BOT_DESIRED)"
@@ -266,7 +267,7 @@ done
 
 test_case "bot: pinned 0.9.0 with record 0.10.0"
 H="$SCRATCH/bot-pin090"; make_bot_home "$H" 0.10.0
-pinned_copy "$BOT_WRAPPER" 0.9.0 "$SCRATCH/bot-pin090.sh"; run_bot "$H" "$SCRATCH/bot-pin090.sh"
+COPY=$(pinned_copy "$BOT_WRAPPER" 0.9.0 "$SCRATCH/bot-pin090-plugin"); run_bot "$H" "$COPY"
 expect_no_download "$H" "0.10.0 vs pin 0.9.0"; expect_started "$H" "0.10.0 vs pin 0.9.0"
 
 test_case "bot: a binary outside ~/bin with an older record is not downloaded over"
