@@ -89,20 +89,11 @@ final class ParseDateInArgsTests: XCTestCase {
             "chat_id": .int(100),
             "until_date": .string("2026-04-17"),
         ])
-        XCTAssertNotNil(parsed.untilDate)
-        // #15-C3: assert year/month/day too — without these a TZ drift bug
-        // could shift `until_date` to a different calendar day while keeping
-        // hour/min/sec at 23:59:59 (same wall clock, wrong date).
-        let components = Calendar.current.dateComponents(
-            [.year, .month, .day, .hour, .minute, .second],
-            from: parsed.untilDate!
-        )
-        XCTAssertEqual(components.year, 2026)
-        XCTAssertEqual(components.month, 4)
-        XCTAssertEqual(components.day, 17)
-        XCTAssertEqual(components.hour, 23)
-        XCTAssertEqual(components.minute, 59)
-        XCTAssertEqual(components.second, 59)
+        // The handler uses the shared parser; what that parser returns in a
+        // given time zone is pinned once, with absolute epochs, in
+        // DateParsingTests (#16, #19). Comparing through Calendar.current here
+        // would pass for a producer and an oracle that drift together.
+        XCTAssertEqual(parsed.untilDate, try parseUntilDate("2026-04-17"))
     }
 
     func testInvalidDateFormatThrows() {
@@ -135,24 +126,13 @@ final class ParseDateInArgsTests: XCTestCase {
         ]))
     }
 
-    /// Parity with #15-C3 — until_date must hit end-of-day with full
-    /// year/month/day assertions to catch TZ drift bugs.
+    /// Parity with get_chat_history: the dump uses the same until_date parser.
     func testDumpUntilDateUsesEndOfDay() throws {
         let parsed = try parseDumpChatToMarkdownArgs([
             "chat_id": .int(100),
             "output_path": .string("/tmp/x.md"),
             "until_date": .string("2026-04-17"),
         ])
-        XCTAssertNotNil(parsed.untilDate)
-        let components = Calendar.current.dateComponents(
-            [.year, .month, .day, .hour, .minute, .second],
-            from: parsed.untilDate!
-        )
-        XCTAssertEqual(components.year, 2026)
-        XCTAssertEqual(components.month, 4)
-        XCTAssertEqual(components.day, 17)
-        XCTAssertEqual(components.hour, 23)
-        XCTAssertEqual(components.minute, 59)
-        XCTAssertEqual(components.second, 59)
+        XCTAssertEqual(parsed.untilDate, try parseUntilDate("2026-04-17"), "the shared parser, as for get_chat_history (#19)")
     }
 }

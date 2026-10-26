@@ -28,8 +28,10 @@ public struct DateParseError: Error, CustomStringConvertible {
     }
 }
 
-/// Parse an ISO date string (`YYYY-MM-DD`) as the **start of the day** in the
-/// current local timezone. Used for `since_date` bounds.
+/// Parse an ISO date string (`YYYY-MM-DD`) as the **start of the day** in
+/// `timeZone` (default: the server's, which the tool schemas call "local").
+/// Used for `since_date` bounds. Tests pass a fixed zone so their oracle does
+/// not share the host's zone with the code under test (#16).
 ///
 /// - Returns `nil` for nil or empty input (meaning "no lower bound").
 /// - Throws `DateParseError` for any non-empty string that doesn't match the format.
@@ -37,11 +39,11 @@ public struct DateParseError: Error, CustomStringConvertible {
 /// The throwing behavior is deliberate: silent-nil on invalid input (previous
 /// behavior) was a UX footgun — a typo like `"2026/04/17"` silently disabled
 /// the filter (#5-A2).
-public func parseISODate(_ s: String?) throws -> Date? {
+public func parseISODate(_ s: String?, timeZone: TimeZone = .current) throws -> Date? {
     guard let s = s, !s.isEmpty else { return nil }
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd"
-    formatter.timeZone = TimeZone.current
+    formatter.timeZone = timeZone
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.isLenient = false
 
@@ -57,7 +59,7 @@ public func parseISODate(_ s: String?) throws -> Date? {
 }
 
 /// Parse an ISO date string (`YYYY-MM-DD`) as the **end of the day** (23:59:59)
-/// in the current local timezone. Used for `until_date` bounds so that
+/// in `timeZone` (default: the server's). Used for `until_date` bounds so that
 /// "include the whole day" semantics work correctly.
 ///
 /// - Returns `nil` for nil or empty input.
@@ -72,13 +74,18 @@ public func parseISODate(_ s: String?) throws -> Date? {
 /// (e.g. America/New_York 2026-11-01 has 25 hours; +23:59:59 from
 /// 00:00:00 EDT lands at 22:59:59 EST, excluding the real 23:00-23:59
 /// window). Wall-clock construction lets Calendar resolve DST naturally.
-public func parseUntilDate(_ s: String?) throws -> Date? {
-    guard let startOfDay = try parseISODate(s) else { return nil }
-    let calendar = Calendar.current
+///
+/// The calendar is still `Calendar.current` with only its zone set to
+/// `timeZone`, so both parsers read one zone; the calendar system (#84) and
+/// days without a midnight (#85) are unchanged here.
+public func parseUntilDate(_ s: String?, timeZone: TimeZone = .current) throws -> Date? {
+    guard let startOfDay = try parseISODate(s, timeZone: timeZone) else { return nil }
+    var calendar = Calendar.current
+    calendar.timeZone = timeZone
     var components = calendar.dateComponents([.year, .month, .day], from: startOfDay)
     components.hour = 23
     components.minute = 59
     components.second = 59
-    components.timeZone = calendar.timeZone
+    components.timeZone = timeZone
     return calendar.date(from: components)
 }

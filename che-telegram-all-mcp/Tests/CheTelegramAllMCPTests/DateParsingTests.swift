@@ -96,24 +96,47 @@ final class DateParsingTests: XCTestCase {
 
     // MARK: - DST safety (#5 verify finding)
 
-    /// Construct end-of-day across DST fall-back boundary. Previously failed
-    /// when parseUntilDate added +23h59m59s to start-of-day on a 25-hour day
-    /// (excluding real 23:00-23:59 window). Fix constructs from wall-clock
-    /// components directly, so Calendar resolves DST correctly.
-    func testParseUntilDateOnDSTFallBackDay() throws {
-        // 2026-11-01 is a DST fall-back day in America/New_York (EDT → EST).
-        // This test uses current timezone — it serves as a regression guard
-        // for any locale that sees this as a DST day; in tz without DST it
-        // just confirms 23:59:59 behavior.
-        let until = try parseUntilDate("2026-11-01")!
-        let components = Calendar.current.dateComponents(
-            [.hour, .minute, .second],
-            from: until
-        )
-        XCTAssertEqual(components.hour, 23,
-                       "hour must be 23 even on DST boundary day")
-        XCTAssertEqual(components.minute, 59)
-        XCTAssertEqual(components.second, 59)
+    /// #16: the bounds of one day string in two fixed zones, against plain
+    /// UTC epochs (no Calendar in the oracle). A producer that uses UTC, or
+    /// the host's zone, instead of the zone it is given fails here whatever
+    /// zone the host is in.
+    func testTheDayBoundsFollowTheGivenTimeZone() throws {
+        let cases: [(zone: String, start: TimeInterval, end: TimeInterval)] = [
+            ("Asia/Taipei", 1_776_355_200, 1_776_441_599),   // 2026-04-16T16:00:00Z, 2026-04-17T15:59:59Z
+            ("UTC", 1_776_384_000, 1_776_470_399),
+        ]
+        for c in cases {
+            let zone = try XCTUnwrap(TimeZone(identifier: c.zone))
+            XCTAssertEqual(try parseISODate("2026-04-17", timeZone: zone)?.timeIntervalSince1970, c.start, c.zone)
+            XCTAssertEqual(try parseUntilDate("2026-04-17", timeZone: zone)?.timeIntervalSince1970, c.end, c.zone)
+        }
+    }
+
+    /// #28: a DST day is a whole wall-clock day, 25 or 23 hours long, built
+    /// from components rather than by adding 23:59:59 (which drops the last
+    /// hour of a fall-back day and adds one of the next day after a spring
+    /// forward). `start <= end` is validateDateRange's precondition.
+    func testDSTDaysAreWholeWallClockDays() throws {
+        let cases: [(zone: String, day: String, start: TimeInterval, end: TimeInterval, length: TimeInterval)] = [
+            ("America/New_York", "2026-11-01", 1_793_505_600, 1_793_595_599, 90_000),   // fall back
+            ("Australia/Sydney", "2026-10-04", 1_791_036_000, 1_791_118_799, 82_800),   // spring forward
+        ]
+        for c in cases {
+            let zone = try XCTUnwrap(TimeZone(identifier: c.zone))
+            let start = try XCTUnwrap(parseISODate(c.day, timeZone: zone)).timeIntervalSince1970
+            let end = try XCTUnwrap(parseUntilDate(c.day, timeZone: zone)).timeIntervalSince1970
+            XCTAssertEqual(start, c.start, c.zone)
+            XCTAssertEqual(end, c.end, c.zone)
+            XCTAssertEqual(end - start + 1, c.length, c.zone)
+            XCTAssertLessThanOrEqual(start, end, c.zone)
+        }
+    }
+
+    /// Without a zone, both parsers use the server's zone (the tool schemas
+    /// say "local"), so the callers did not change.
+    func testWithoutAZoneTheServersZoneIsUsed() throws {
+        XCTAssertEqual(try parseISODate("2026-04-17"), try parseISODate("2026-04-17", timeZone: .current))
+        XCTAssertEqual(try parseUntilDate("2026-04-17"), try parseUntilDate("2026-04-17", timeZone: .current))
     }
 
     // MARK: - Semantic contract: a message at end of `until_date` day is included
