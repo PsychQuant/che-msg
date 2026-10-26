@@ -32,7 +32,7 @@
 ## Implementation Contract
 
 - **行為**：TDLib 等電話或 2FA 密碼、而該狀態最後一次 Keychain 查詢沒有拿到值時，`auth_status` 與 `auth_run` 回應的 `keychain_lookup` 是 `{"credential": "phone"|"password", "outcome": "not_stored"|"timed_out"|"unavailable"}`；其他情況是 null。`waitingForPassword` 的 `next_step.hint` 先講 Keychain 再講參數；有分類時開頭先講原因。
-- **介面**：`TelegramAllLib` 新增 `public enum KeychainMiss: String`（`notStored = "not_stored"`、`timedOut = "timed_out"`、`unavailable`），`init?(_ lookup: KeychainLookup)`（`found` 回 nil）；`TDLibClient.lastKeychainMiss: KeychainMiss?`。`CredentialLookupTracker.finish(_:miss:)` 取代 `finish(_:found:)`（nil 表示找到），新增 `note(_:miss:)` 供 `auth_run` 的查詢使用，`generationNow` 供它取得起始 generation。`authStatusResult(state:lastError:sync:keychainMiss:)` 新參數預設 nil。
+- **介面**：`TelegramAllLib` 新增 `public enum KeychainMiss: String`（`notStored = "not_stored"`、`timedOut = "timed_out"`、`unavailable`），`init?(_ lookup: KeychainLookup)`（`found` 回 nil）；`TDLibClient.authStateAndKeychainMiss() -> (state: AuthState, keychainMiss: KeychainMiss?)`（狀態與原因在 client lock 下一起讀出，原因才確定屬於那個狀態）；`waitingState(for:)` 把憑證對應到等它的狀態，`auth_run` 的查詢只在狀態仍在等該憑證時記錄結果。`CredentialLookupTracker.finish(_:miss:)` 取代 `finish(_:found:)`（nil 表示找到），新增 `note(_:miss:)` 供 `auth_run` 的查詢使用，`generationNow` 供它取得起始 generation。`authStatusResult(state:lastError:sync:keychainMiss:)` 新參數預設 nil。
 - **錯誤與邊界**：`keychainMiss` 在狀態不是等電話或等密碼時一律輸出 null。兩次查詢以後完成者為準。`unavailable` 不帶結束碼。
 - **驗收**：`CredentialLookupTrackerTests`（分類的記錄、狀態變更清除、`note` 不改 status、過期 generation 不寫入）、`CredentialPlanRunnerTests`（三種失敗各自記錄、找到值不記錄）、`AuthStatusNextStepTests`（三種分類的 JSON、非等待狀態為 null、提示順序、不含值）；`swift test --skip E2ETests` 全過。
 - **範圍外**：#96 的單一送出路徑、CLI、enum 描述遮蔽。

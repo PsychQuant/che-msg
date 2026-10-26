@@ -306,6 +306,7 @@ final class AuthStatusNextStepTests: XCTestCase {
         let payload = try parsePayload(authStatusResult(state: .waitingForPassword, lastError: nil))
         let hint = try XCTUnwrap((payload["next_step"] as? [String: Any])?["hint"] as? String)
         XCTAssertTrue(hint.contains("security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_2FA_PASSWORD -U -w, "), hint)
+        XCTAssertTrue(hint.contains("environment has no TELEGRAM_2FA_PASSWORD"), "an environment value is used first: \(hint)")
     }
 }
 
