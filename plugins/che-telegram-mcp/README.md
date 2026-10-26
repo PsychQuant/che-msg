@@ -26,15 +26,18 @@ You want to read/send messages as **yourself**.
 /plugin marketplace add PsychQuant/che-msg
 /plugin install che-telegram-mcp@che-msg
 
-# 2. Store API credentials (from https://my.telegram.org/apps)
-security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_ID" -w 'YOUR_API_ID' -U
-security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_HASH" -w 'YOUR_API_HASH' -U
+# 2. Store API credentials (from https://my.telegram.org/apps).
+#    Each command ends with -w, so security asks for the value (twice) instead of
+#    taking it as an argument, which would stay in your shell history. Run these
+#    in your own terminal, not through Claude's Bash tool.
+security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_ID" -U -w
+security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_HASH" -U -w
 
 # Optional: 2FA password (read by the server when Telegram asks for it, so you never type it into the conversation)
-security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_2FA_PASSWORD" -w 'YOUR_2FA_PASSWORD' -U
+security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_2FA_PASSWORD" -U -w
 
 # Optional: phone number (read the same way, to skip the prompt)
-security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_PHONE" -w '+886912345678' -U
+security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_PHONE" -U -w
 
 # 3. Authenticate (one-time; SMS code is the only thing you must enter live)
 /che-telegram-mcp:auth
@@ -60,7 +63,7 @@ You want a **bot** to post messages or receive commands. No personal account.
 /plugin install che-telegram-mcp@che-msg
 
 # 2. Store bot token (get one from @BotFather in Telegram)
-security add-generic-password -a "che-telegram-bot-mcp" -s "TELEGRAM_BOT_TOKEN" -w 'YOUR_BOT_TOKEN' -U
+security add-generic-password -a "che-telegram-bot-mcp" -s "TELEGRAM_BOT_TOKEN" -U -w
 
 # 3. Disable the personal-account server (skip TDLib download entirely)
 ```

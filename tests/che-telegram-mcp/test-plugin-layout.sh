@@ -48,6 +48,11 @@
 #        must have one) and its #anchor point at this README. The five rules
 #        are in tests/lib/install_refs.py (PsychQuant/che-msg#42: five such
 #        places still named the old marketplace after the move).
+#   (k)  every `security add-generic-password` command in the README, hooks/
+#        and bin/ ends with a bare `-w`, so security prompts for the secret
+#        instead of taking it as an argument, which would stay in the shell
+#        history and show in the process list (PsychQuant/che-msg#51). A
+#        command that cannot be parsed counts as a violation.
 #   (fm) every skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (see below)
 #
@@ -98,7 +103,7 @@ if [ -z "$LIB_DIR" ] || [ ! -f "$LIB_DIR/frontmatter_subset.py" ]; then
 fi
 
 OUT=$(python3 - "$PLUGIN_DIR" "$LIB_DIR" <<'EOF'
-import json, os, re, sys
+import json, os, re, shlex, sys
 
 try:
     import yaml
@@ -317,6 +322,36 @@ for name in ("auth", "chats", "search", "send", "archive-telegram"):
 
 # ---------- (j) install references name this marketplace ----------
 import install_refs
+# (k) Keychain commands take the secret from a prompt, never from an argument.
+def keychain_command_files():
+    yield "README.md"
+    for sub in ("hooks", "bin"):
+        d = os.path.join(root, sub)
+        if os.path.isdir(d):
+            for name in sorted(os.listdir(d)):
+                if os.path.isfile(os.path.join(d, name)) and not name.startswith("."):
+                    yield f"{sub}/{name}"
+for rel in keychain_command_files():
+    try:
+        with open(os.path.join(root, rel), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except (OSError, UnicodeDecodeError) as e:
+        bad("k", f"{rel}: cannot be read ({e}) — not checked")
+        continue
+    for n, line in enumerate(lines, 1):
+        i = line.find("add-generic-password")
+        if i < 0:
+            continue
+        # The command runs to the end of the line, or to the closing quote of
+        # the echo that prints it (optionally followed by a redirection).
+        cmd = re.sub(r'"\s*(>&\s*\d+)?\s*$', "", line[i:])
+        try:
+            toks = shlex.split(cmd)
+        except ValueError:
+            toks = []
+        if not toks or toks[-1] != "-w" or toks.count("-w") != 1:
+            bad("k", f"{rel}:{n}: `-w` is not the last argument (a secret after it stays in shell history): {line.strip()}")
+
 for msg in install_refs.problems("che-telegram-mcp", root, os.path.join(root, "..", ".."), docs_url_required=True):
     bad("j", msg)
 
@@ -357,6 +392,7 @@ report g  "telegram-messaging exists and stays model-invocable"
 report h  "auth/chats/search/send/archive-telegram set disable-model-invocation: true"
 report i  "no skill sets hooks or runs !\`command\` blocks"
 report j  "the plugin and the repository README name the marketplace this repository publishes"
+report k  "Keychain commands end with a bare -w (the secret is prompted for, not passed)"
 
 echo
 if [ "$FAILURES" -gt 0 ]; then

@@ -70,7 +70,7 @@ check_keychain_required() {
         echo "✓ $label in Keychain"
     else
         echo "⚠️  $label not in Keychain"
-        echo "   security add-generic-password -a $account -s $service -w 'VALUE' -U"
+        echo "   security add-generic-password -a $account -s $service -U -w"
     fi
 }
 

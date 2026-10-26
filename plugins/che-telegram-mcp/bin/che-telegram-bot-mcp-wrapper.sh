@@ -90,7 +90,7 @@ export TELEGRAM_BOT_TOKEN="$(security find-generic-password -a "che-telegram-bot
 if [[ -z "$TELEGRAM_BOT_TOKEN" ]]; then
     echo "Bot token not found in Keychain." >&2
     echo "Set it up:" >&2
-    echo "  security add-generic-password -a che-telegram-bot-mcp -s TELEGRAM_BOT_TOKEN -w 'YOUR_TOKEN' -U" >&2
+    echo "  security add-generic-password -a che-telegram-bot-mcp -s TELEGRAM_BOT_TOKEN -U -w" >&2
     echo "Get a token from @BotFather on Telegram." >&2
     exit 1
 fi

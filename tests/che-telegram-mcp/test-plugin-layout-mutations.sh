@@ -449,6 +449,11 @@ expect_pass "a skill that mentions docsUrl in prose"
 P=$(fresh); python3 -c 'import sys; open(sys.argv[1], "a").write("\n# a" + " " * 990 + "b" * 1 + ("\n# a" + " " * 990 + "b") * 1499 + ("\n# " + "[" * 990) * 300 + ("\n# " + "_" * 990 + "a") * 100 + "\n")' "$P/README.md"
 expect_fast_pass "1900 README headings just under the length cap are read in time (round 5 lib: about 20 s)" 5
 
+P=$(fresh); printf '%s\n' '' 'security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_PHONE" -U -w '"'"'+886912345678'"'"'' >> "$P/README.md"
+expect_fail "a README Keychain command with the secret after -w (#51)" "FAIL \(k\)"
+P=$(fresh); printf '%s\n' '    echo "  security add-generic-password -a x -s Y -w VALUE -U" >&2' >> "$P/bin/che-telegram-bot-mcp-wrapper.sh"
+expect_fail "a wrapper hint with a value after -w (#51)" "che-telegram-bot-mcp-wrapper.sh:[0-9]+: .-w. is not the last"
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
