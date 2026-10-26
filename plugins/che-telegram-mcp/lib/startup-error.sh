@@ -38,7 +38,7 @@
 #     line, not exactly one JSON value, a
 #     value that is neither an object nor
 #     an array, an id of another type, or
-#     jq not on PATH                      REQUEST_ID = null
+#     no jq 1.7 or later (startup_jq)     REQUEST_ID = null
 #
 # There is no parser without jq: macOS ships /usr/bin/jq, and a hand-written
 # one read nested fields and mangled ids that were not plain integers or
@@ -49,14 +49,16 @@
 # would delay wrapper exit and could push Claude Code into its own
 # transport timeout.
 read_first_request() {
-    local line="" verdict="" kind id
+    local line="" verdict="" kind id jq
     REQUEST_ID=null
 
     IFS= read -r -t 2 line 2>/dev/null || return 0
-    [ -n "$line" ] && command -v jq >/dev/null 2>&1 || return 0
+    [ -n "$line" ] || return 0
+    jq=$(startup_jq) || return 0
 
-    # One line, "<kind> <id as JSON>"; tojson keeps an id on one line.
-    verdict=$(printf '%s\n' "$line" | jq -r -s '
+    # One line, "<kind> <id as JSON>"; tojson keeps an id on one line, and
+    # jq 1.7 or later writes an unchanged number literal as it was written.
+    verdict=$(printf '%s\n' "$line" | "$jq" -r -s '
         if length != 1 then "unparseable"
         else .[0]
         | if type == "array" then "batch"
@@ -88,4 +90,28 @@ read_first_request() {
             printf '{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}\n'
             exit 1 ;;
     esac
+}
+
+# The jq tried first: the one macOS includes. A test may set it to another
+# path after sourcing this file.
+STARTUP_SYSTEM_JQ=/usr/bin/jq
+
+# startup_jq: prints the path of the first jq of version 1.7 or later among
+# $STARTUP_SYSTEM_JQ and the jq on PATH, by what `jq --version` reports
+# (jq-1.7.1, jq-1.7.1-apple, jq-1.8.2 ...); returns 1 when there is none. An
+# older jq rounds a number literal it writes back (jq 1.6 turns
+# 9007199254740993 into 9007199254740992), so an id echoed through it could
+# differ from the request's (PsychQuant/che-msg#59).
+startup_jq() {
+    local candidate version
+    for candidate in "$STARTUP_SYSTEM_JQ" "$(command -v jq 2>/dev/null)"; do
+        [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+        version=$("$candidate" --version 2>/dev/null)
+        [[ "$version" =~ ^jq-([0-9]+)\.([0-9]+) ]] || continue
+        if (( 10#${BASH_REMATCH[1]} > 1 || (10#${BASH_REMATCH[1]} == 1 && 10#${BASH_REMATCH[2]} >= 7) )); then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    return 1
 }

@@ -51,8 +51,17 @@
 #      startup error with the object's id; an id of another type, two JSON
 #      values on the line, a JSON value that is not an object, a line that is
 #      not JSON and empty stdin leave it with id null.
-#  15. Without jq on PATH: every line leaves the startup error with id null,
-#      a request for another method and a batch included.
+#  15. Without a jq (none on PATH and no system jq): every line leaves the
+#      startup error with id null, a request for another method and a batch
+#      included.
+#  16. Number ids are echoed exactly: 9007199254740993 and
+#      3.141592653589793238462643383279 (the raw text is compared).
+#  17. Only a jq of 1.7 or later is used: the system jq (STARTUP_SYSTEM_JQ,
+#      /usr/bin/jq) first, then the one on PATH. A jq-1.6 alone, or a jq whose
+#      version cannot be read, means no jq (id null, no -32601); a jq-1.7.1 or
+#      jq-2.0 on PATH is used; a system jq-1.6 is passed over for a jq-1.7.1
+#      on PATH, and a system jq-1.7.1 is used before a jq-1.6 on PATH (one
+#      that fails if it is used to parse).
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-first-request.sh
@@ -246,21 +255,23 @@ if [ "$(cat "$H/stdin.txt" 2>/dev/null)" = "$(probe 5)" ]; then pass "the binary
 if [ ! -s "$H/out" ]; then pass "the wrapper wrote nothing to stdout"; else fail "the wrapper wrote: $(head -c 200 "$H/out")"; fi
 
 # ----------------------------------------------------------------------
-# reader <PATH> <first line>: runs read_first_request from the lib on its own
-# with that line (none if empty) on stdin and that PATH; prints
-# "<exit status>|<stdout>", where stdout ends with <id=REQUEST_ID> unless the
-# reader exited.
+# reader <PATH> <first line> [system jq]: runs read_first_request from the
+# lib on its own with that line (none if empty) on stdin and that PATH, with
+# STARTUP_SYSTEM_JQ (the jq tried before the one on PATH) set to [system jq]
+# when given; prints "<exit status>|<stdout>", where stdout ends with
+# <id=REQUEST_ID> unless the reader exited.
 reader() {
-    local path=$1 line=$2 out rc
+    local path=$1 line=$2 system_jq=${3:-} out rc
     out=$( { [ -n "$line" ] && printf '%s\n' "$line"; } | env PATH="$path" /bin/bash -c '
         source "$1" || exit 99
+        [ -n "$2" ] && STARTUP_SYSTEM_JQ=$2
         read_first_request
-        printf "<id=%s>" "$REQUEST_ID"' _ "$LIB")
+        printf "<id=%s>" "$REQUEST_ID"' _ "$LIB" "$system_jq")
     rc=$?
     printf '%s|%s' "$rc" "$out"
 }
-expect_reader() {   # <label> <path> <first line> <expected>
-    local got; got=$(reader "$2" "$3")
+expect_reader() {   # <label> <path> <first line> <expected> [system jq]
+    local got; got=$(reader "$2" "$3" "${5:-}")
     if [ "$got" = "$4" ]; then pass "$1"; else fail "$1: got '$got', expected '$4'"; fi
 }
 M601='{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"Method not found"}}'
@@ -303,9 +314,47 @@ expect_reader "empty stdin: id null" "$PATH" '' '0|<id=null>'
 test_case "read_first_request without jq"
 NOJQ="$SCRATCH/no-jq-path"; mkdir -p "$NOJQ"
 if env PATH="$NOJQ" /bin/bash -c 'command -v jq' >/dev/null 2>&1; then fail "jq is still on the test PATH"; else pass "jq is not on the test PATH"; fi
-expect_reader "initialize: id null" "$NOJQ" "$INIT7" '0|<id=null>'
-expect_reader "server/discover: the startup error with id null, not -32601" "$NOJQ" "$(probe 10)" '0|<id=null>'
-expect_reader "a batch: id null" "$NOJQ" "[$(probe 1)]" '0|<id=null>'
+NONE="$SCRATCH/no-system-jq"   # a STARTUP_SYSTEM_JQ that does not exist
+expect_reader "initialize: id null" "$NOJQ" "$INIT7" '0|<id=null>' "$NONE"
+expect_reader "server/discover: the startup error with id null, not -32601" "$NOJQ" "$(probe 10)" '0|<id=null>' "$NONE"
+expect_reader "a batch: id null" "$NOJQ" "[$(probe 1)]" '0|<id=null>' "$NONE"
+
+# ----------------------------------------------------------------------
+# A jq older than 1.7 rounds a number literal it echoes (1.6 turns
+# 9007199254740993 into 9007199254740992), so an answer's id would not match
+# the request's. The fakes below report a version and otherwise run the real
+# jq, so only the version check can tell them apart.
+REAL_JQ=$(command -v jq)
+fake_jq() {   # <dir> <version output>: a jq in <dir> that reports that version
+    mkdir -p "$1"
+    printf '#!/bin/bash\nif [ "$1" = --version ]; then echo %s; exit 0; fi\nexec %s "$@"\n' "$2" "$REAL_JQ" > "$1/jq"
+    chmod +x "$1/jq"
+}
+fake_jq "$SCRATCH/jq16" jq-1.6
+fake_jq "$SCRATCH/jq17" jq-1.7.1
+fake_jq "$SCRATCH/jq20" jq-2.0
+fake_jq "$SCRATCH/jqodd" jq-master-abc
+# A jq-1.6 that fails if it is used for anything but --version.
+mkdir -p "$SCRATCH/jq16-unused"
+printf '#!/bin/bash\nif [ "$1" = --version ]; then echo jq-1.6; exit 0; fi\nexit 3\n' > "$SCRATCH/jq16-unused/jq"
+chmod +x "$SCRATCH/jq16-unused/jq"
+
+test_case "read_first_request echoes number ids exactly (jq 1.7 or later)"
+BIG='{"jsonrpc":"2.0","id":9007199254740993,"method":"server/discover"}'
+LONG='{"jsonrpc":"2.0","id":3.141592653589793238462643383279,"method":"server/discover"}'
+expect_reader "id 9007199254740993 is echoed as written" "$PATH" "$BIG" "1|$(printf "$M601" 9007199254740993)"
+expect_reader "id 3.141592653589793238462643383279 is echoed as written" "$PATH" "$LONG" "1|$(printf "$M601" 3.141592653589793238462643383279)"
+expect_reader "initialize with id 9007199254740993 keeps it for the startup error" "$PATH" \
+    '{"jsonrpc":"2.0","id":9007199254740993,"method":"initialize"}' '0|<id=9007199254740993>'
+
+test_case "read_first_request uses only jq 1.7 or later"
+expect_reader "only a jq-1.6 on PATH, no system jq: id null, no -32601" "$SCRATCH/jq16" "$BIG" '0|<id=null>' "$NONE"
+expect_reader "only a jq-1.6 on PATH, no system jq: initialize gets id null" "$SCRATCH/jq16" "$INIT7" '0|<id=null>' "$NONE"
+expect_reader "a jq-1.7.1 on PATH, no system jq: used" "$SCRATCH/jq17" "$(probe 3)" "1|$(printf "$M601" 3)" "$NONE"
+expect_reader "a jq-2.0 on PATH, no system jq: used" "$SCRATCH/jq20" "$(probe 4)" "1|$(printf "$M601" 4)" "$NONE"
+expect_reader "a jq whose version cannot be read: not used" "$SCRATCH/jqodd" "$(probe 5)" '0|<id=null>' "$NONE"
+expect_reader "a system jq-1.6 is passed over for a jq-1.7.1 on PATH" "$SCRATCH/jq17" "$(probe 6)" "1|$(printf "$M601" 6)" "$SCRATCH/jq16/jq"
+expect_reader "a system jq-1.7.1 is used before a jq-1.6 on PATH" "$SCRATCH/jq16-unused" "$(probe 7)" "1|$(printf "$M601" 7)" "$SCRATCH/jq17/jq"
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."
