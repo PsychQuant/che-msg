@@ -47,8 +47,10 @@ RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIR
 # who opens TDLib).
 #
 # The error carries the id of the initialize request, which
-# lib/startup-error.sh's read_initialize_id reads briefly from stdin (Claude
-# Code drops an error whose id is null).
+# lib/startup-error.sh's read_first_request reads briefly from stdin (Claude
+# Code drops an error whose id is null). A first request for another method,
+# such as server/discover, gets "method not found" (-32601) there instead
+# (PsychQuant/che-msg#59).
 
 # Emit a JSON-RPC 2.0 error answering the pending initialize request, then
 # exit 1. $1 is the message and MUST NOT contain double quotes or backslashes
@@ -56,15 +58,17 @@ RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIR
 # $HOME shown as ~), so the JSON needs no escaping.
 fail_startup() {
     local message="$1"
-    local request_id=null
-    declare -F read_initialize_id >/dev/null && request_id=$(read_initialize_id)
+    REQUEST_ID=null
+    # Answers a first request other than initialize itself and exits
+    # (lib/startup-error.sh, PsychQuant/che-msg#59).
+    declare -F read_first_request >/dev/null && read_first_request
     printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"%s","data":{"docsUrl":"https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/README.md#when-telegram-all-does-not-start"}}}\n' \
-        "$request_id" "$message"
+        "$REQUEST_ID" "$message"
     exit 1
 }
 
 # --- Shared code (PsychQuant/che-msg#56, #67) ---
-# lib/startup-error.sh reads the initialize request's id for fail_startup;
+# lib/startup-error.sh reads the client's first request for fail_startup;
 # lib/download.sh downloads and installs the binary for both wrappers, and
 # holds version_at_least and read_version_record, which the decision below
 # uses.

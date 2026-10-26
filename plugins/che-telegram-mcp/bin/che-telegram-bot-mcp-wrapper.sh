@@ -46,14 +46,16 @@ RELEASE_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/tags/v$DESIR
 # escaping.
 fail_startup() {
     local message="$1"
-    local request_id=null
-    declare -F read_initialize_id >/dev/null && request_id=$(read_initialize_id)
+    REQUEST_ID=null
+    # Answers a first request other than initialize itself and exits
+    # (lib/startup-error.sh, PsychQuant/che-msg#59).
+    declare -F read_first_request >/dev/null && read_first_request
     printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"%s","data":{"docsUrl":"https://github.com/PsychQuant/che-msg/blob/main/plugins/che-telegram-mcp/README.md#when-telegram-bot-does-not-start"}}}\n' \
-        "$request_id" "$message"
+        "$REQUEST_ID" "$message"
     exit 1
 }
 
-# lib/startup-error.sh reads the initialize request's id for fail_startup;
+# lib/startup-error.sh reads the client's first request for fail_startup;
 # lib/download.sh downloads and installs the binary for both wrappers, and
 # holds version_at_least and read_version_record (PsychQuant/che-msg#56).
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
