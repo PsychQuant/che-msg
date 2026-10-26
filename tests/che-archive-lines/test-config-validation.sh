@@ -16,7 +16,10 @@
 #
 # calibrate refuses to run unless stdin is a terminal (PsychQuant/che-msg#52),
 # so its cases run under a pseudo-terminal from tests/lib/pty_run.py (run_pty),
-# typing the lines the case gives and then end of input.
+# typing the lines the case gives and then end of input. The last section
+# checks the #52 guards themselves: no terminal, input that ends at either
+# prompt, and a cursor outside the LINE window, each leaving the config as it
+# was. (A bare #149 is PsychQuant/psychquant-claude-plugins#149.)
 #
 # Usage:
 #   bash tests/che-archive-lines/test-config-validation.sh
@@ -119,7 +122,7 @@ python3 "$PTY_RUN" "$SCRATCH/out.log" $'\n250\n' "$SHEBANG_BASH" -c \
 rc=$?
 [ "$rc" -eq 0 ] || { echo "✗ positive control: run_pty does not give a terminal that delivers the typed lines (exit $rc)"; cat "$SCRATCH/out.log" 2>/dev/null; exit 1; }
 
-echo "test-config-validation.sh (#149)"
+echo "test-config-validation.sh (#149, che-msg#52)"
 
 # ---- valid config: save and test click where expected ----
 reset; write_config -20 30 240
