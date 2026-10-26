@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Changed
-- The README's installation section recommends the plugin, and for a server run on its own reads `TELEGRAM_BOT_TOKEN` from the Keychain at launch (a `claude mcp add … /bin/sh -c` example); it says that a token in the environment is readable by other processes of the same user and that a token in `~/.claude.json` sits there in plain text ([#97](https://github.com/PsychQuant/che-msg/issues/97)).
+- The README's installation section recommends the plugin, and for a server run on its own reads `TELEGRAM_BOT_TOKEN` from the Keychain at launch (a `claude mcp add … /bin/sh -c` example); it says that a token in the environment is readable by other processes of the same user and that a token in `~/.claude.json` or the Claude Desktop config sits there in plain text ([#97](https://github.com/PsychQuant/che-msg/issues/97)).
 
 ### Distribution
 - Starting with this release, the binary is signed with a Developer ID and notarized by Apple, and every release asset comes with a `.sha256` file holding its SHA-256 hash ([#40](https://github.com/PsychQuant/che-msg/issues/40)). The releases are built by `make release-signed` ([RELEASING.md](../RELEASING.md)). Releases up to `v0.8.0` stay as they were: ad-hoc signed, without `.sha256` files.
