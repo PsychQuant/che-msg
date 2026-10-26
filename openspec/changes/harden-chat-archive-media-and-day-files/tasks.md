@@ -10,7 +10,7 @@
 
 ## 3. 媒體檔名（#76 item 5）
 
-- [ ] 3.1 補測試（Requirement: Media download into the archive 的 Scenario: Bidirectional formatting characters in a file name；依設計「預設選項（維護者不在時採用）」的 #76 item 5，只補測試）：檔名含 U+202E、U+2066、U+2069、U+061C、U+200E、U+200F 時都被去掉，`invoice` U+202E `fdp.exe` 存成 `invoicefdp.exe`。不改程式。驗證：`swift test --filter ArchiveMediaTests` 第一次就通過（Diagnosis 已確認現有過濾涵蓋 Cf）
+- [x] 3.1 補測試（Requirement: Media download into the archive 的 Scenario: Bidirectional formatting characters in a file name；依設計「預設選項（維護者不在時採用）」的 #76 item 5，只補測試）：檔名含 U+202E、U+2066、U+2069、U+061C、U+200E、U+200F 時都被去掉，`invoice` U+202E `fdp.exe` 存成 `invoicefdp.exe`。不改程式。驗證：`swift test --filter ArchiveMediaTests` 第一次就通過（Diagnosis 已確認現有過濾涵蓋 Cf）
 
 ## 4. 重試時訊息已不存在（#75 item 1）
 

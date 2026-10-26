@@ -336,4 +336,16 @@ final class ArchiveMediaTests: XCTestCase {
                                              downloadedPath: "/c/x." + String(repeating: "e", count: 300))
         XCTAssertLessThanOrEqual(fallback.utf8.count, 255)
     }
+
+    // Scenario "Bidirectional formatting characters in a file name" (#76): they are category Cf,
+    // which CharacterSet.controlCharacters covers, so a name cannot display reversed in Finder.
+    func testBidirectionalFormattingCharactersAreDropped() {
+        XCTAssertEqual(ArchiveMedia.fileName(type: "document", name: "invoice\u{202E}fdp.exe", downloadedPath: "/c/x"),
+                       "invoicefdp.exe")
+        for scalar in ["\u{202A}", "\u{202B}", "\u{202C}", "\u{202D}", "\u{202E}", "\u{2066}", "\u{2067}", "\u{2068}",
+                       "\u{2069}", "\u{200E}", "\u{200F}", "\u{061C}"] {
+            XCTAssertEqual(ArchiveMedia.fileName(type: "document", name: "a\(scalar)b.pdf", downloadedPath: "/c/x"), "ab.pdf",
+                           String(format: "U+%04X", scalar.unicodeScalars.first!.value))
+        }
+    }
 }
