@@ -1,16 +1,22 @@
 # Release tooling for the che-telegram binaries (PsychQuant/che-msg#40).
 # Run from the repository root; RELEASING.md walks through a release.
 
-.PHONY: help check-pins check-versions check-sha256 release-signed sign-check test-release
+.PHONY: help check-build-versions check-pins check-versions check-sha256 release-signed sign-check test-release
 .DEFAULT_GOAL := help
 
 help:
+	@echo "make check-build-versions  before the build: the binary's places agree, tag vX unused"
 	@echo "make check-pins      every place that pins the binary or plugin version agrees"
 	@echo "make check-versions  the same, and tag vX is still unused (locally and on origin)"
 	@echo "make sign-check      full build, signed, not notarized (.build/dist/vX-sign-only/)"
 	@echo "make release-signed  the release build: signed and notarized (.build/dist/vX/)"
 	@echo "make check-sha256    after the release build: both wrappers pin the build's sha256"
 	@echo "make test-release    the release-tooling tests (fake tools; nothing is signed)"
+
+# Before the build: the binary's places agree and tag vX is unused. The plugin
+# is bumped to vX and pinned after the build (PsychQuant/che-msg#50).
+check-build-versions:
+	./scripts/release/check-versions.sh --before-build
 
 # Consistency only; passes on a tree whose version is already released.
 check-pins:

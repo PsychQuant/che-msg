@@ -35,13 +35,18 @@
 #      to the che-telegram-mcp plugin version), and one that is not x.y.z is
 #      reported.
 #  11. The wrappers' sha256 pins (#50): HEAD's pins pass without a build to
-#      compare them with; empty pins pass and say they are not set yet; a pin
-#      for vX that matches .build/dist/vX/<Binary>.sha256 passes; one that
-#      does not match, one for another version, one that is not 64 lowercase
-#      hex digits, a pin without its version or a version without its pin,
-#      and a second assignment are each reported, and nothing else is.
-#      --require-sha256 refuses empty pins and a pin with no .build/dist/vX
-#      file to compare, and passes matching pins.
+#      compare them with; empty pins are reported (a wrapper without one
+#      downloads nothing); a pin for vX that matches
+#      .build/dist/vX/<Binary>.sha256 passes; one that does not match, one for
+#      another version, one that is not 64 lowercase hex digits, a pin without
+#      its version or a version without its pin, and a second assignment are
+#      each reported, and nothing else is. --require-sha256 also refuses a pin
+#      with no .build/dist/vX file to compare, and passes matching pins.
+#  12. --before-build checks the binary's places and the tag only: the plugin,
+#      which is bumped and pinned after the build, may still pin the previous
+#      version (and the default mode reports it); a binary place that differs
+#      and an existing tag are still refused; --require-sha256 with it is a
+#      usage error.
 #
 # Usage:
 #   bash tests/release/test-check-versions.sh
@@ -360,11 +365,11 @@ run "$BASE" --no-remote
 if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC:"$'\n'"$OUT"; fi
 if printf '%s\n' "$OUT" | grep -q "che-telegram-bot-mcp-wrapper.sh: SHA256_PIN set for v$X"; then pass "says the pin is set for v$X"; else fail "no pin line:"$'\n'"$(printf '%s\n' "$OUT" | grep SHA256)"; fi
 
-test_case "sha256 pins not set yet"
+test_case "sha256 pins not set"
 D=$(fresh_copy pin-empty); set_pin "$D" "$ALLW" "" ""; set_pin "$D" "$BOTW" "" ""
-run "$D" --no-remote
-if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC:"$'\n'"$OUT"; fi
-if printf '%s\n' "$OUT" | grep -q 'che-telegram-all-mcp-wrapper.sh: SHA256_PIN not set yet'; then pass "says the pin is not set yet"; else fail "no not-set-yet line:"$'\n'"$OUT"; fi
+run "$D" --no-remote --expect "$X" --expect-plugin "$P"
+if [ "$RC" -eq 1 ] && [ "$(crosses)" -eq 2 ]; then pass "exit 1, both wrappers reported"; else fail "exit $RC:"$'\n'"$OUT"; fi
+if printf '%s\n' "$OUT" | grep -q 'che-telegram-all-mcp-wrapper.sh: SHA256_PIN is not set'; then pass "says the pin is not set"; else fail "no not-set line:"$'\n'"$OUT"; fi
 
 test_case "sha256 pins for v$X matching .build/dist/v$X"
 D=$(fresh_copy pin-match); set_pin "$D" "$ALLW" "$X" "$HEX_A"; set_pin "$D" "$BOTW" "$X" "$HEX_B"
@@ -411,6 +416,39 @@ if printf '%s\n' "$OUT" | grep -qF "che-telegram-bot-mcp-wrapper.sh: SHA256_PIN 
 D=$(fresh_copy pin-nodist); set_pin "$D" "$ALLW" "$X" "$HEX_A"; set_pin "$D" "$BOTW" "$X" "$HEX_B"
 run "$D" --no-remote --require-sha256
 if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF ".build/dist/v$X/CheTelegramAllMCP.sha256 not found"; then pass "no build to compare with: refused"; else fail "no build: exit $RC:"$'\n'"$OUT"; fi
+
+# ------------------------------------------------------ before the build (#50)
+test_case "--before-build: HEAD"
+run "$BASE" --no-remote --before-build
+if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC:"$'\n'"$OUT"; fi
+if printf '%s\n' "$OUT" | grep -q 'plugin.*not checked'; then pass "says the plugin is not checked"; else fail "no plugin-not-checked line:"$'\n'"$OUT"; fi
+
+test_case "--before-build: the plugin still pins the previous version"
+D=$(fresh_copy before-build-plugin)
+edit "$D" "$ALLW" "one('DESIRED_VERSION=\"$X\"', 'DESIRED_VERSION=\"$B\"')"
+set_pin "$D" "$BOTW" "" ""
+edit "$D" CLAUDE.md "one('目前 $X', '目前 $B')"
+edit "$D" plugins/che-telegram-mcp/README.md "one('download/v$X/CheTelegramAllMCP ', 'download/v$B/CheTelegramAllMCP ')"
+edit "$D" plugins/che-telegram-mcp/.claude-plugin/plugin.json "one('\"version\": \"$P\"', '\"version\": \"$PB\"')"
+run "$D" --no-remote --before-build --expect "$X"
+if [ "$RC" -eq 0 ]; then pass "not reported (exit 0)"; else fail "exit $RC:"$'\n'"$(printf '%s\n' "$OUT" | grep '^✗')"; fi
+run "$D" --no-remote --expect "$X"
+if [ "$RC" -eq 1 ] && [ "$(crosses)" -ge 5 ]; then pass "the default mode reports the plugin ($(crosses) problems)"; else fail "default mode: exit $RC:"$'\n'"$(printf '%s\n' "$OUT" | grep '^✗')"; fi
+
+test_case "--before-build: a binary place that differs"
+D=$(fresh_copy before-build-binary)
+edit "$D" che-telegram-bot-mcp/mcpb/manifest.json "one('\"version\": \"$X\"', '\"version\": \"$B\"')"
+run "$D" --no-remote --before-build --expect "$X"
+expect_one "che-telegram-bot-mcp/mcpb/manifest.json: version is $B"
+
+test_case "--before-build: tag v$X exists"
+D=$(fresh_copy before-build-tag); git -C "$D" tag "v$X"
+run "$D" --no-remote --before-build
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF "tag v$X already exists locally"; then pass "refuses the existing tag"; else fail "exit $RC:"$'\n'"$OUT"; fi
+
+test_case "--before-build with --require-sha256"
+run "$BASE" --no-remote --before-build --require-sha256
+if [ "$RC" -eq 2 ]; then pass "usage error (exit 2)"; else fail "exit $RC"; fi
 
 # ---------------------------------------------------------------------- tags
 test_case "tag v$X exists locally"

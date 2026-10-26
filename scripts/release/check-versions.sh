@@ -15,24 +15,32 @@
 # CHANGELOG stay as they are.
 #
 # Each wrapper also pins the sha256 of its binary (PsychQuant/che-msg#50):
-# SHA256_PIN_VERSION and SHA256_PIN, both empty, or X and 64 lowercase hex
-# digits. They can only be set after the release build, from
-# .build/dist/vX/<Binary>.sha256, so they are empty while the build runs; a pin
-# that is set must equal that file when it exists. --require-sha256 is the
-# check after the build: both pins set, and equal to the build's.
+# SHA256_PIN_VERSION, which must be X, and SHA256_PIN, 64 lowercase hex digits,
+# equal to .build/dist/vX/<Binary>.sha256 when that file exists. A wrapper
+# without a pin for its version downloads nothing. --require-sha256 also
+# requires that file, to compare with.
+#
+# The pins can only come from the release build, so the che-telegram-mcp plugin
+# is bumped to X, and pinned, after it (RELEASING.md). --before-build checks
+# what the build needs: the binary's own places, the che-slack-mcp places
+# (its wrapper has no sha256 pin) and that tag vX is unused, not the
+# che-telegram-mcp plugin, which still pins the previous version then.
 #
 # Usage:
 #   scripts/release/check-versions.sh [--expect X.Y.Z] [--expect-plugin X.Y.Z]
 #                                     [--root DIR] [--no-tag-check] [--no-remote]
-#                                     [--require-sha256]
+#                                     [--require-sha256 | --before-build]
 #
 #   --expect X.Y.Z   the binary version to require (default: CLIBootstrap.swift)
 #   --expect-plugin X.Y.Z  the plugin version to require (default: plugin.json)
 #   --root DIR       the repository to check (default: this script's repository)
 #   --no-tag-check   check consistency only, not that tag vX.Y.Z is still unused
 #   --no-remote      look for the tag locally only, not on origin
-#   --require-sha256 both wrappers' sha256 pins are set and equal
-#                    .build/dist/vX/<Binary>.sha256
+#   --require-sha256 .build/dist/vX/<Binary>.sha256 must exist, and the pins
+#                    equal it
+#   --before-build   only the binary's places (sources, manifests, binary
+#                    CHANGELOGs, the che-slack-mcp places) and the tag; not
+#                    the che-telegram-mcp plugin
 #
 # Exit: 0 every place agrees; 1 something does not (every problem is listed);
 #       2 usage error or the binary version cannot be read.
@@ -46,6 +54,7 @@ EXPECT_PLUGIN=""
 TAG_CHECK=1
 REMOTE=1
 REQUIRE_SHA256=0
+BEFORE_BUILD=0
 while [ $# -gt 0 ]; do
     case "$1" in
         # An empty value is refused rather than read as "use the default": a
@@ -59,10 +68,15 @@ while [ $# -gt 0 ]; do
         --no-tag-check) TAG_CHECK=0; shift ;;
         --no-remote) REMOTE=0; shift ;;
         --require-sha256) REQUIRE_SHA256=1; shift ;;
+        --before-build) BEFORE_BUILD=1; shift ;;
         -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
         *) echo "check-versions: unknown option: $1" >&2; exit 2 ;;
     esac
 done
+if [ "$REQUIRE_SHA256" = 1 ] && [ "$BEFORE_BUILD" = 1 ]; then
+    echo "check-versions: --require-sha256 checks the plugin's pins, which --before-build leaves out" >&2
+    exit 2
+fi
 [ -n "$ROOT" ] || ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" 2>/dev/null || { echo "check-versions: cannot enter $ROOT" >&2; exit 2; }
 
@@ -139,6 +153,32 @@ for pkg in che-telegram-all-mcp che-telegram-bot-mcp; do
     f=$pkg/mcpb/manifest.json
     expect "$f" "version" "$X" "$(json "$f" 'd["version"]')"
 done
+for pkg in che-telegram-all-mcp che-telegram-bot-mcp; do
+    f=$pkg/CHANGELOG.md
+    if has_section "$f" "$X"; then ok "$f" "section ## [$X]"; else bad "$f: no section ## [$X]"; fi
+done
+# che-slack-mcp ships CheSlackMCP in the same release (#114); slack-all is not
+# released (#112) but reports the same version.
+# Its wrapper has no sha256 pin, so its plugin's pins of the binary are bumped
+# with the binary and checked in every mode.
+f=che-slack-mcp/Sources/CheSlackMCPCore/Server.swift
+expect "$f" "CheSlackMCPServer.version" "$X" "$(found "$f" 's/^[[:space:]]*public static let version = "([^"]*)".*/\1/p')"
+f=che-slack-mcp/Sources/slack-all/main.swift
+expect "$f" "slack-all version" "$X" "$(found "$f" 's/^[[:space:]]*version: "([^"]*)".*/\1/p')"
+SLACK_README=plugins/che-slack-mcp/README.md
+f=plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh
+expect "$f" "DESIRED_VERSION" "$X" "$(found "$f" 's/^DESIRED_VERSION="([^"]*)"$/\1/p')"
+expect "$SLACK_README" "download URL (CheSlackMCP)" "$X" "$(found "$SLACK_README" "s#.*releases/download/v([^/]*)/CheSlackMCP( .*|\$)#\\1#p")"
+expect "$SLACK_README" "version record line (CheSlackMCP)" "$X" "$(found "$SLACK_README" "s#^echo ([^ ]*) > ~/bin/\\.CheSlackMCP\\.version\$#\\1#p")"
+f=che-slack-mcp/CHANGELOG.md
+if has_section "$f" "$X"; then ok "$f" "section ## [$X]"; else bad "$f: no section ## [$X]"; fi
+
+if [ "$BEFORE_BUILD" = 1 ]; then
+    echo ""
+    echo "The che-telegram-mcp plugin is not checked (--before-build): it is bumped to $X and pinned after the build."
+else
+echo ""
+echo "Plugin pins of binary $X"
 for w in che-telegram-all-mcp che-telegram-bot-mcp; do
     f=plugins/che-telegram-mcp/bin/$w-wrapper.sh
     expect "$f" "DESIRED_VERSION" "$X" "$(found "$f" 's/^DESIRED_VERSION="([^"]*)"$/\1/p')"
@@ -160,11 +200,9 @@ for pair in che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTeleg
     elif { [ -n "$pv" ] && [ -z "$pin" ]; } || { [ -z "$pv" ] && [ -n "$pin" ]; }; then
         bad "$f: only one of SHA256_PIN_VERSION and SHA256_PIN is set"
     elif [ -n "$pin" ] && [ "$pv" != "$X" ]; then
-        bad "$f: SHA256_PIN is for v$pv, expected $X (clear both pins when DESIRED_VERSION changes)"
-    elif [ -z "$pin" ] && [ "$REQUIRE_SHA256" = 1 ]; then
-        bad "$f: SHA256_PIN is not set; set it from $built (RELEASING.md)"
+        bad "$f: SHA256_PIN is for v$pv, expected $X (it is set with DESIRED_VERSION, from the build; RELEASING.md)"
     elif [ -z "$pin" ]; then
-        ok "$f" "SHA256_PIN not set yet (it is set from $built after the release build)"
+        bad "$f: SHA256_PIN is not set, so the wrapper would download nothing; set it from $built (RELEASING.md)"
     elif [ -f "$built" ]; then
         if [ "$(tr -d '[:space:]' < "$built")" = "$pin" ]; then ok "$f" "SHA256_PIN matches $built"
         else bad "$f: SHA256_PIN does not match $built"; fi
@@ -182,24 +220,6 @@ done
 for p in che-telegram-all-mcp che-telegram-bot-mcp; do
     expect "$README" "Version section pin ($p)" "$X" "$(found "$README" "/^Plugin version: /s/.*\`$p\` v([0-9][^ ]*).*/\\1/p")"
 done
-for pkg in che-telegram-all-mcp che-telegram-bot-mcp; do
-    f=$pkg/CHANGELOG.md
-    if has_section "$f" "$X"; then ok "$f" "section ## [$X]"; else bad "$f: no section ## [$X]"; fi
-done
-
-# che-slack-mcp ships CheSlackMCP in the same release (#114); slack-all is not
-# released (#112) but reports the same version.
-SLACK_README=plugins/che-slack-mcp/README.md
-f=che-slack-mcp/Sources/CheSlackMCPCore/Server.swift
-expect "$f" "CheSlackMCPServer.version" "$X" "$(found "$f" 's/^[[:space:]]*public static let version = "([^"]*)".*/\1/p')"
-f=che-slack-mcp/Sources/slack-all/main.swift
-expect "$f" "slack-all version" "$X" "$(found "$f" 's/^[[:space:]]*version: "([^"]*)".*/\1/p')"
-f=plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh
-expect "$f" "DESIRED_VERSION" "$X" "$(found "$f" 's/^DESIRED_VERSION="([^"]*)"$/\1/p')"
-expect "$SLACK_README" "download URL (CheSlackMCP)" "$X" "$(found "$SLACK_README" "s#.*releases/download/v([^/]*)/CheSlackMCP( .*|\$)#\\1#p")"
-expect "$SLACK_README" "version record line (CheSlackMCP)" "$X" "$(found "$SLACK_README" "s#^echo ([^ ]*) > ~/bin/\\.CheSlackMCP\\.version\$#\\1#p")"
-f=che-slack-mcp/CHANGELOG.md
-if has_section "$f" "$X"; then ok "$f" "section ## [$X]"; else bad "$f: no section ## [$X]"; fi
 
 # ------------------------------------------------------------ plugin version
 P_JSON=$(json "$PLUGIN_JSON" 'd["version"]')
@@ -228,6 +248,7 @@ else
     else
         bad "$PLUGIN_CHANGELOG: section ## [$P] does not mention $X"
     fi
+fi
 fi
 
 # ------------------------------------------------- che-slack-mcp plugin version
@@ -284,7 +305,8 @@ fi
 
 echo ""
 if [ "$PROBLEMS" -eq 0 ]; then
-    echo "All versions agree: binary $X, che-telegram-mcp plugin $P, che-slack-mcp plugin $SP."
+    if [ "$BEFORE_BUILD" = 1 ]; then echo "The binary's places agree on $X (the che-telegram-mcp plugin was not checked)."
+    else echo "All versions agree: binary $X, che-telegram-mcp plugin $P, che-slack-mcp plugin $SP."; fi
     exit 0
 fi
 echo "$PROBLEMS problem(s) above; fix them before releasing v$X."

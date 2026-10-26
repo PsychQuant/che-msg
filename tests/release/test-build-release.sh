@@ -399,6 +399,17 @@ for mode in full sign-only unsigned; do
     if printf '%s' "$OUT" | grep -q 'che-telegram-bot-mcp/mcpb/manifest.json: version is 0.0.9'; then pass "$mode: names the manifest"; else fail "$mode: no manifest message: $OUT"; fi
 done
 
+test_case "the plugin still pins the previous version: the build goes ahead (#50)"
+# The plugin is bumped to X and pinned after the build, from its .sha256 files.
+R=$(make_repo plugin-behind)
+for w in che-telegram-all-mcp che-telegram-bot-mcp; do
+    perl -pi -e 's/^DESIRED_VERSION=.*/DESIRED_VERSION="0.0.9"/; s/^SHA256_PIN_VERSION=.*/SHA256_PIN_VERSION="0.0.9"/' "$R/plugins/che-telegram-mcp/bin/$w-wrapper.sh"
+done
+git -C "$R" -c user.name=t -c user.email=t@example.invalid commit -qam "the plugin still pins 0.0.9"
+build "$R" --
+if [ "$RC" -eq 0 ] && [ -d "$R/.build/dist/v$X-unsigned" ]; then pass "built"; else fail "exit $RC: $(printf '%s' "$OUT" | grep -E '✗|Error' | head -3)"; fi
+if printf '%s' "$OUT" | grep -q 'plugin is not checked'; then pass "says the plugin is not checked"; else fail "no such line"; fi
+
 test_case "tag v$X already on origin, full mode"
 R=$(make_repo tagged)
 git -C "$R/../origin.git" tag "v$X" HEAD
@@ -892,6 +903,8 @@ if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'release-signed'; then pass "
 if [ -s "$R/../calls" ]; then fail "plain make ran tools: $(head -2 "$R/../calls")"; else pass "plain make runs nothing"; fi
 run_make "$R" -- check-pins
 if [ "$RC" -eq 0 ]; then pass "check-pins passes on a released version"; else fail "check-pins: exit $RC"; fi
+run_make "$R" -- check-build-versions
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "tag v$X already exists"; then pass "check-build-versions refuses the released version"; else fail "check-build-versions: exit $RC"; fi
 run_make "$R" -- check-versions
 if [ "$RC" -ne 0 ]; then pass "check-versions refuses the released version"; else fail "check-versions: exit 0"; fi
 

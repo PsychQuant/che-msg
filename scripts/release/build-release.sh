@@ -91,10 +91,12 @@ esac
 echo "=== build-release: v$X, mode $MODE ==="
 echo ""
 echo "[1/5] Checking versions..."
+# The binary's places only: the plugin is bumped to vX and pinned after the
+# build, from the .sha256 files it writes (PsychQuant/che-msg#50).
 if [[ "$MODE" == full ]]; then
-    "$SCRIPT_DIR/check-versions.sh" --root "$ROOT"
+    "$SCRIPT_DIR/check-versions.sh" --root "$ROOT" --before-build
 else
-    "$SCRIPT_DIR/check-versions.sh" --root "$ROOT" --no-tag-check
+    "$SCRIPT_DIR/check-versions.sh" --root "$ROOT" --before-build --no-tag-check
 fi
 
 echo ""
