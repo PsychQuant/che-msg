@@ -170,8 +170,13 @@ public struct SecurityCLICredentialSource: KeychainCredentialSource {
         let rest = line.dropFirst("password:".count).drop(while: { $0 == " " })
         if rest.isEmpty { return .value("") }
         if rest.hasPrefix("0x") {
-            let hex = rest.dropFirst(2).prefix { $0.isHexDigit }
-            guard hex.count % 2 == 0, !hex.isEmpty else { return .unreadable("printed a malformed hex value") }
+            let digits = rest.dropFirst(2)
+            let hex = digits.prefix { $0.isHexDigit }
+            // The hex is followed by nothing or by `  "<escaped>"`; anything else is not this form.
+            let afterHex = digits.dropFirst(hex.count)
+            guard hex.count % 2 == 0, !hex.isEmpty, afterHex.isEmpty || afterHex.first == " " else {
+                return .unreadable("printed a malformed hex value")
+            }
             var bytes = [UInt8]()
             bytes.reserveCapacity(hex.count / 2)
             var index = hex.startIndex

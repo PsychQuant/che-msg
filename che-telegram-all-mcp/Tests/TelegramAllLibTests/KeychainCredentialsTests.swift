@@ -92,9 +92,36 @@ final class KeychainCredentialsTests: XCTestCase {
         XCTAssertFalse(messages.first?.contains("FF") ?? true, "the diagnostic must not show the value: \(messages)")
     }
 
+    /// `security -g` writes the value to stderr: `password: "` (11 bytes), the value, `"` and a newline.
+    private func stderrPassword(valueBytes: Int) -> String {
+        "{ printf 'password: \"'; head -c \(valueBytes) /dev/zero | tr '\\0' a; printf '\"\\n'; } >&2"
+    }
+
     func testOutputBeyondTheLimitIsUnavailable() async throws {
-        let (result, _) = try await lookup("printf 'password: \"'; head -c 70000 /dev/zero | tr '\\0' a; printf '\"\\n'", .password)
-        XCTAssertEqual(result.value, nil, "a truncated value must not be used")
+        let (result, messages) = try await lookup(stderrPassword(valueBytes: 70000), .password)
+        XCTAssertEqual(result, .unavailable(exitStatus: 0), "a truncated value must not be used")
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertTrue(messages.first?.contains("more than") == true, "\(messages)")
+    }
+
+    func testOutputExactlyAtTheLimitIsRead() async throws {
+        let limit = OutputCollector.limit
+        let (result, _) = try await lookup(stderrPassword(valueBytes: limit - 13), .password)
+        XCTAssertEqual(result.value?.count, limit - 13)
+        let (over, _) = try await lookup(stderrPassword(valueBytes: limit - 12), .password)
+        XCTAssertEqual(over, .unavailable(exitStatus: 0))
+    }
+
+    func testHexWithTrailingGarbageIsUnavailable() async throws {
+        for line in [#"password: 0x61ZZ  "aZZ""#, #"password: 0x616  "a""#, #"password: 0x  """#, "password: 0x61\"a\""] {
+            let (result, _) = try await lookup(dashG(line), .password)
+            XCTAssertEqual(result, .unavailable(exitStatus: 0), line)
+        }
+    }
+
+    func testLowercaseHexIsDecoded() async throws {
+        let (result, _) = try await lookup(dashG(#"password: 0x636166c3a9  "caf\303\251""#), .password)
+        XCTAssertEqual(result, .found("café"))
     }
 
     func testAToolThatCannotStartFailsAtOnce() async throws {
