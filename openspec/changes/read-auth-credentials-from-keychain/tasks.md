@@ -12,8 +12,8 @@
 
 ## 3. auth_run
 
-- [ ] 3.1 先寫失敗的測試：在 `AuthRunHandlerTests` 逐列涵蓋 spec〈source precedence〉表（電話與密碼各一組），並驗證 `waitingForCode` 與 `waitingForParameters` 時 `keychainPhone`／`keychainPassword` 被忽略。對應 Requirement「`auth_run` MCP tool drives the state machine」。驗證：`swift test --skip E2ETests --filter AuthRunHandlerTests` 因 `decideAuthRunAction` 沒有新參數而失敗。
-- [ ] 3.2 [after: 3.1, 2.3] 依 design〈auth_run 的取值順序：呼叫端引數、環境變數、Keychain〉為 `decideAuthRunAction`（`che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/AuthResponses.swift`）加上兩個 Keychain 參數；`Server` 的 `auth_run` 只在等電話或等密碼、且引數與環境變數都沒有值時才 `await tdlib.lookUpKeychainCredential(...)`；`auth_run` 的工具說明改寫為「呼叫端引數、環境變數、Keychain」三個來源。驗證：3.1 的測試全過，`swift test --skip E2ETests` 全過。
+- [x] 3.1 先寫失敗的測試：在 `AuthRunHandlerTests` 逐列涵蓋 spec〈source precedence〉表（電話與密碼各一組），並驗證 `waitingForCode` 與 `waitingForParameters` 時 `keychainPhone`／`keychainPassword` 被忽略。對應 Requirement「`auth_run` MCP tool drives the state machine」。驗證：`swift test --skip E2ETests --filter AuthRunHandlerTests` 因 `decideAuthRunAction` 沒有新參數而失敗。
+- [x] 3.2 [after: 3.1, 2.3] 依 design〈auth_run 的取值順序：呼叫端引數、環境變數、Keychain〉為 `decideAuthRunAction`（`che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/AuthResponses.swift`）加上兩個 Keychain 參數；`Server` 的 `auth_run` 只在等電話或等密碼、且引數與環境變數都沒有值時才 `await tdlib.lookUpKeychainCredential(...)`；`auth_run` 的工具說明改寫為「呼叫端引數、環境變數、Keychain」三個來源。驗證：3.1 的測試全過，`swift test --skip E2ETests` 全過。
 
 ## 4. wrapper 回歸測試
 

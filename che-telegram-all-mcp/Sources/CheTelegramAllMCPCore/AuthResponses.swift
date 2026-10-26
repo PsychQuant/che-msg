@@ -125,7 +125,8 @@ internal enum AuthRunAction: Equatable {
 /// Pure routing function for the `auth_run` MCP tool.
 ///
 /// - Caller-supplied args take precedence over env vars (caller knows
-///   what they want; env vars are convenience defaults).
+///   what they want; env vars are convenience defaults), and env vars over
+///   the Keychain values the server looked up (PsychQuant/che-msg#49).
 /// - For `waitingForCode`, env vars MUST NOT be honored — the SMS code
 ///   is one-shot delivery. Caller arg is required.
 internal func decideAuthRunAction(
@@ -136,7 +137,9 @@ internal func decideAuthRunAction(
     envApiId: Int?,
     envApiHash: String?,
     envPhone: String?,
-    envPassword: String?
+    envPassword: String?,
+    keychainPhone: String? = nil,
+    keychainPassword: String? = nil
 ) -> AuthRunAction {
     switch state {
     case .waitingForParameters:
@@ -148,6 +151,7 @@ internal func decideAuthRunAction(
     case .waitingForPhoneNumber:
         if let arg = phone { return .callSendPhone(arg) }
         if let env = envPhone { return .callSendPhone(env) }
+        if let stored = keychainPhone { return .callSendPhone(stored) }
         return .needsArgs(["phone"])
 
     case .waitingForCode:
@@ -157,6 +161,7 @@ internal func decideAuthRunAction(
     case .waitingForPassword:
         if let arg = password { return .callSendPassword(arg) }
         if let env = envPassword { return .callSendPassword(env) }
+        if let stored = keychainPassword { return .callSendPassword(stored) }
         return .needsArgs(["password"])
 
     case .ready:
@@ -164,5 +169,21 @@ internal func decideAuthRunAction(
 
     case .closed:
         return .errorClosed
+    }
+}
+
+/// Which credential `auth_run` must read from the Keychain before deciding,
+/// if any (PsychQuant/che-msg#49): only for the phone number or the 2FA
+/// password, and only when neither the caller's argument nor the environment
+/// provides it. Never for the SMS code.
+internal func authRunKeychainLookup(state: TDLibClient.AuthState, phone: String?, password: String?,
+                                    envPhone: String?, envPassword: String?) -> KeychainCredential? {
+    switch state {
+    case .waitingForPhoneNumber where phone == nil && envPhone == nil:
+        return .phone
+    case .waitingForPassword where password == nil && envPassword == nil:
+        return .password
+    default:
+        return nil
     }
 }

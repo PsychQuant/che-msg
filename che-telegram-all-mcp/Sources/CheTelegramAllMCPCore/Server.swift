@@ -180,7 +180,7 @@ public final class CheTelegramAllMCPServer {
                  properties: [:], required: []),
 
             tool("auth_run",
-                 description: "Drive the authentication state machine by one step. Call repeatedly with optional args until state == 'ready'. Auto-fires from env vars (TELEGRAM_API_ID/HASH, TELEGRAM_PHONE, TELEGRAM_2FA_PASSWORD) when present; otherwise returns next_step.required_args identifying what to provide. SMS verification code MUST be supplied via the 'code' arg (never auto-fired).",
+                 description: "Drive the authentication state machine by one step. Call repeatedly with optional args until state == 'ready'. Takes each value from the caller's argument, then the environment (TELEGRAM_API_ID/HASH, TELEGRAM_PHONE, TELEGRAM_2FA_PASSWORD), then, for the phone number and the 2FA password only, the Keychain item the plugin README sets up; otherwise returns next_step.required_args identifying what to provide. SMS verification code MUST be supplied via the 'code' arg (never auto-fired, never read from the environment or the Keychain).",
                  properties: [
                     "phone": prop("string", "Phone number (international format) — only honored when state == waitingForPhoneNumber"),
                     "code": prop("string", "SMS verification code — only honored when state == waitingForCode"),
@@ -498,15 +498,25 @@ public final class CheTelegramAllMCPServer {
 
             case "auth_run":
                 let env = ProcessInfo.processInfo.environment
+                let state: TDLibClient.AuthState = tdlib.getAuthState()
+                let phoneArg = args["phone"]?.stringValue
+                let passwordArg = args["password"]?.stringValue
+                // The Keychain is the last source and is read only when needed (#49).
+                let needed = authRunKeychainLookup(state: state, phone: phoneArg, password: passwordArg,
+                                                   envPhone: env["TELEGRAM_PHONE"],
+                                                   envPassword: env["TELEGRAM_2FA_PASSWORD"])
+                let stored = if let needed { await tdlib.lookUpKeychainCredential(needed) } else { String?.none }
                 let action = decideAuthRunAction(
-                    state: tdlib.getAuthState(),
-                    phone: args["phone"]?.stringValue,
+                    state: state,
+                    phone: phoneArg,
                     code: args["code"]?.stringValue,
-                    password: args["password"]?.stringValue,
+                    password: passwordArg,
                     envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init),
                     envApiHash: env["TELEGRAM_API_HASH"],
                     envPhone: env["TELEGRAM_PHONE"],
-                    envPassword: env["TELEGRAM_2FA_PASSWORD"]
+                    envPassword: env["TELEGRAM_2FA_PASSWORD"],
+                    keychainPhone: needed == .phone ? stored : nil,
+                    keychainPassword: needed == .password ? stored : nil
                 )
                 switch action {
                 case .callSetParameters(let apiId, let apiHash):

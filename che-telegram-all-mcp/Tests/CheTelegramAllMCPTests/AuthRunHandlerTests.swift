@@ -171,4 +171,83 @@ final class AuthRunHandlerTests: XCTestCase {
         XCTAssertEqual(action, .callSendPassword("callerSecret"),
                        "Caller-supplied password MUST take precedence over env var")
     }
+
+    // MARK: - Keychain as the third source (PsychQuant/che-msg#49; spec example "source precedence")
+
+    private func phoneAction(arg: String?, env: String?, keychain: String?) -> AuthRunAction {
+        decideAuthRunAction(state: .waitingForPhoneNumber, phone: arg, code: nil, password: nil,
+                            envApiId: nil, envApiHash: nil, envPhone: env, envPassword: nil,
+                            keychainPhone: keychain, keychainPassword: nil)
+    }
+
+    private func passwordAction(arg: String?, env: String?, keychain: String?) -> AuthRunAction {
+        decideAuthRunAction(state: .waitingForPassword, phone: nil, code: nil, password: arg,
+                            envApiId: nil, envApiHash: nil, envPhone: nil, envPassword: env,
+                            keychainPhone: nil, keychainPassword: keychain)
+    }
+
+    func testPhonePrecedence_callerArgumentWins() {
+        XCTAssertEqual(phoneAction(arg: "+886911111111", env: "+886922222222", keychain: "+886933333333"),
+                       .callSendPhone("+886911111111"))
+    }
+
+    func testPhonePrecedence_environmentBeatsKeychain() {
+        XCTAssertEqual(phoneAction(arg: nil, env: "+886922222222", keychain: "+886933333333"),
+                       .callSendPhone("+886922222222"))
+    }
+
+    func testPhonePrecedence_keychainWhenNothingElse() {
+        XCTAssertEqual(phoneAction(arg: nil, env: nil, keychain: "+886933333333"), .callSendPhone("+886933333333"))
+    }
+
+    func testPhonePrecedence_nothingAnywhereNeedsTheArgument() {
+        XCTAssertEqual(phoneAction(arg: nil, env: nil, keychain: nil), .needsArgs(["phone"]))
+    }
+
+    func testPasswordPrecedence() {
+        XCTAssertEqual(passwordAction(arg: "from-arg", env: "from-env", keychain: "from-keychain"), .callSendPassword("from-arg"))
+        XCTAssertEqual(passwordAction(arg: nil, env: "from-env", keychain: "from-keychain"), .callSendPassword("from-env"))
+        XCTAssertEqual(passwordAction(arg: nil, env: nil, keychain: "from-keychain"), .callSendPassword("from-keychain"))
+        XCTAssertEqual(passwordAction(arg: nil, env: nil, keychain: nil), .needsArgs(["password"]))
+    }
+
+    /// Spec: the Keychain is never consulted for the SMS code.
+    func testCodeIgnoresKeychainValues() {
+        let action = decideAuthRunAction(state: .waitingForCode, phone: nil, code: nil, password: nil,
+                                         envApiId: nil, envApiHash: nil, envPhone: nil, envPassword: nil,
+                                         keychainPhone: "+886933333333", keychainPassword: "from-keychain")
+        XCTAssertEqual(action, .needsArgs(["code"]))
+    }
+
+    func testParametersIgnoreKeychainValues() {
+        let action = decideAuthRunAction(state: .waitingForParameters, phone: nil, code: nil, password: nil,
+                                         envApiId: nil, envApiHash: nil, envPhone: nil, envPassword: nil,
+                                         keychainPhone: "+886933333333", keychainPassword: "from-keychain")
+        XCTAssertEqual(action, .needsArgs(["api_id", "api_hash"]))
+    }
+
+    // MARK: - When auth_run reads the Keychain at all
+
+    func testKeychainIsReadOnlyWhenArgumentAndEnvironmentAreBothMissing() {
+        XCTAssertEqual(authRunKeychainLookup(state: .waitingForPhoneNumber, phone: nil, password: nil,
+                                             envPhone: nil, envPassword: nil), .phone)
+        XCTAssertEqual(authRunKeychainLookup(state: .waitingForPassword, phone: nil, password: nil,
+                                             envPhone: nil, envPassword: nil), .password)
+        XCTAssertNil(authRunKeychainLookup(state: .waitingForPhoneNumber, phone: "+886911111111", password: nil,
+                                           envPhone: nil, envPassword: nil))
+        XCTAssertNil(authRunKeychainLookup(state: .waitingForPhoneNumber, phone: nil, password: nil,
+                                           envPhone: "+886922222222", envPassword: nil))
+        XCTAssertNil(authRunKeychainLookup(state: .waitingForPassword, phone: nil, password: "pw",
+                                           envPhone: nil, envPassword: nil))
+        XCTAssertNil(authRunKeychainLookup(state: .waitingForPassword, phone: nil, password: nil,
+                                           envPhone: nil, envPassword: "pw"))
+    }
+
+    func testKeychainIsNeverReadForTheCodeOrOtherStates() {
+        for state in [TDLibClient.AuthState.waitingForCode, .waitingForParameters, .ready, .closed] {
+            XCTAssertNil(authRunKeychainLookup(state: state, phone: nil, password: nil, envPhone: nil, envPassword: nil),
+                         "\(state)")
+        }
+    }
 }
+
