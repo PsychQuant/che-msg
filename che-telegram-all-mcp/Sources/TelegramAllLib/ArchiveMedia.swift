@@ -118,6 +118,9 @@ public enum ArchiveMedia {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// The quarantine given to every media file the archive saves (LSQuarantine.h key and value).
+    static let quarantineProperties: [String: Any] = ["LSQuarantineType": "LSQuarantineTypeInstantMessageAttachment"]
+
     /// Makes sure the message's media directory holds its file.
     public static func ensure(_ message: [String: Any], chatDir: URL, downloader: ArchiveMediaDownloading,
                               maxBytes: Int64?) async -> Outcome {
@@ -136,6 +139,13 @@ public enum ArchiveMedia {
             try fm.copyItem(at: URL(fileURLWithPath: downloaded), to: temporary)
             // Archives hold other people's files: owner-only, whatever mode TDLib's cache had.
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+            // Files received from someone else, marked like a browser download so that Gatekeeper
+            // assesses them when opened from Finder; set before the rename, which keeps it. A file
+            // that cannot be marked is not saved (#75).
+            var values = URLResourceValues()
+            values.quarantineProperties = quarantineProperties
+            var marked = temporary
+            try marked.setResourceValues(values)
             // A symbolic link where the file belongs is not a download (existingFile skips it);
             // remove the link itself, never what it points to.
             if (try? fm.attributesOfItem(atPath: target.path)[.type] as? FileAttributeType) == .typeSymbolicLink {

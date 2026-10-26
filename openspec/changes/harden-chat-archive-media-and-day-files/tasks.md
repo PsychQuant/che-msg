@@ -19,8 +19,8 @@
 
 ## 5. 媒體的 quarantine 屬性（#75 item 2）
 
-- [ ] 5.1 先寫失敗的測試（Requirement: Media download into the archive 的 Scenario: Saved media is quarantined）：`ensure` 新存的檔案有 `com.apple.quarantine`（以 `getxattr` 讀，並以 `URLResourceValues.quarantineProperties` 讀回類型 `LSQuarantineTypeInstantMessageAttachment`）；`downloadOne` 存的檔案也有；目錄裡已存在的檔案（`alreadyPresent`）不會被加上（依設計「預設選項（維護者不在時採用）」的 #75 Q3，只標新檔）。驗證：`swift test --filter ArchiveMediaTests` 先失敗
-- [ ] 5.2 依設計「quarantine：Foundation 的 quarantineProperties，設不上就不存檔」在暫存檔設好 0600 之後、rename 之前設屬性，失敗時走既有的 catch（移除暫存檔、回 `.failed`）。驗證：5.1 的測試與既有的 `ArchiveMediaTests` 通過 [after: 5.1]
+- [x] 5.1 先寫失敗的測試（Requirement: Media download into the archive 的 Scenario: Saved media is quarantined）：`ensure` 新存的檔案有 `com.apple.quarantine`（以 `getxattr` 讀，並以 `URLResourceValues.quarantineProperties` 讀回類型 `LSQuarantineTypeInstantMessageAttachment`）；`downloadOne` 存的檔案也有；目錄裡已存在的檔案（`alreadyPresent`）不會被加上（依設計「預設選項（維護者不在時採用）」的 #75 Q3，只標新檔）。驗證：`swift test --filter ArchiveMediaTests` 先失敗
+- [x] 5.2 依設計「quarantine：Foundation 的 quarantineProperties，設不上就不存檔」在暫存檔設好 0600 之後、rename 之前設屬性，失敗時走既有的 catch（移除暫存檔、回 `.failed`）。驗證：5.1 的測試與既有的 `ArchiveMediaTests` 通過 [after: 5.1]
 
 ## 6. 無日期的訊息計數（#75 item 3）
 

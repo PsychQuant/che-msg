@@ -420,4 +420,49 @@ final class ArchiveMediaTests: XCTestCase {
         XCTAssertNil(try manifest(local)["media_gone_ids"])
         XCTAssertEqual(local.mediaFailedIds, [7100], "the local cache returns the ids unchanged")
     }
+
+    // MARK: - Quarantine (#75)
+
+    private func hasQuarantineAttribute(_ path: String) -> Bool {
+        getxattr(path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) > 0
+    }
+
+    private func quarantineType(_ path: String) -> String? {
+        var url = URL(fileURLWithPath: path)
+        url.removeAllCachedResourceValues()
+        return (try? url.resourceValues(forKeys: [.quarantinePropertiesKey]))?.quarantineProperties?["LSQuarantineType"] as? String
+    }
+
+    // Scenario "Saved media is quarantined".
+    func testSavedMediaIsQuarantined() async throws {
+        let root = scratch(), chatDir = root.appendingPathComponent("777")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        let outcome = await ArchiveMedia.ensure(Self.media(7000, 2, type: "document", fileId: 70, name: "report.pdf"),
+                                                chatDir: chatDir, downloader: downloader, maxBytes: nil)
+        let saved = chatDir.appendingPathComponent("media/7000/report.pdf").path
+        XCTAssertEqual(outcome, .downloaded(path: saved, size: 8))
+        XCTAssertTrue(hasQuarantineAttribute(saved))
+        XCTAssertEqual(quarantineType(saved), "LSQuarantineTypeInstantMessageAttachment")
+        XCTAssertFalse(hasQuarantineAttribute(downloader.cache.appendingPathComponent("file_70.jpg").path),
+                       "TDLib's cache file is not touched")
+    }
+
+    func testDownloadOneQuarantinesAndAFileAlreadyThereIsLeftAsItIs() async throws {
+        let root = scratch(), view = root.appendingPathComponent("view")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        downloader.messages = [5_243_904: Self.media(5_243_904, 1, fileId: 12)]
+        let json = try await ArchiveMedia.downloadOne(chatId: 777, messageId: 5_243_904, outputDir: view,
+                                                      downloader: downloader)
+        let saved = try XCTUnwrap(try object(json)["path"] as? String)
+        XCTAssertTrue(hasQuarantineAttribute(saved))
+        // Saved before this rule (#75 open question 3: new files only): not rewritten, not marked.
+        let chatDir = root.appendingPathComponent("777")
+        let old = ArchiveMedia.directory(chatDir: chatDir, messageId: 7100)
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: old.appendingPathComponent("photo.jpg"))
+        let outcome = await ArchiveMedia.ensure(Self.media(7100, 3, fileId: 71), chatDir: chatDir, downloader: downloader,
+                                                maxBytes: nil)
+        XCTAssertEqual(outcome, .alreadyPresent)
+        XCTAssertFalse(hasQuarantineAttribute(old.appendingPathComponent("photo.jpg").path))
+    }
 }
