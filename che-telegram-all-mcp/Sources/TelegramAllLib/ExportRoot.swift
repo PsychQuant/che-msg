@@ -24,7 +24,7 @@ public enum ExportRoot {
 /// `root` with symlinks resolved, or nil when it is not an absolute path to
 /// an existing directory.
 internal func resolvedExportRoot(_ root: String) -> String? {
-    guard root.hasPrefix("/"), !root.contains("\0"), let resolved = realPath(root) else { return nil }
+    guard ScalarPath.isAbsolute(root), !root.unicodeScalars.contains("\0"), let resolved = realPath(root) else { return nil }
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory), isDirectory.boolValue else {
         return nil
@@ -39,9 +39,10 @@ internal func resolvedExportRoot(_ root: String) -> String? {
 /// a NUL (C would read a shorter path), when `lstat` fails other than with
 /// `ENOENT`, when the prefix cannot be resolved, or when a remaining component
 /// is `..` (it would climb out of a directory that does not exist yet).
+/// Components are split by scalar (`ScalarPath`), as the OS splits them.
 internal func resolvedOnLongestExistingPrefix(_ path: String) -> String? {
-    guard path.hasPrefix("/"), !path.contains("\0") else { return nil }
-    var existing = path.split(separator: "/").map(String.init)
+    guard ScalarPath.isAbsolute(path), !path.unicodeScalars.contains("\0") else { return nil }
+    var existing = ScalarPath.components(of: path)
     var missing: [String] = []
     while true {
         let prefix = "/" + existing.joined(separator: "/")
@@ -49,8 +50,8 @@ internal func resolvedOnLongestExistingPrefix(_ path: String) -> String? {
         let status = lstat(prefix, &info)
         let error = errno
         if status == 0 {
-            guard let resolved = realPath(prefix), !missing.contains("..") else { return nil }
-            let rest = missing.reversed().filter { $0 != "." }
+            guard let resolved = realPath(prefix), !missing.contains(where: ScalarPath.isParent) else { return nil }
+            let rest = missing.reversed().filter { !ScalarPath.isCurrent($0) }
             return rest.isEmpty ? resolved : ([resolved == "/" ? "" : resolved] + rest).joined(separator: "/")
         }
         guard error == ENOENT, let last = existing.popLast() else { return nil }
@@ -59,12 +60,13 @@ internal func resolvedOnLongestExistingPrefix(_ path: String) -> String? {
 }
 
 /// Whether `path` lies strictly inside `root`, compared by path component so
-/// that `/a/rootx` is not inside `/a/root`. Both are already resolved.
+/// that `/a/rootx` is not inside `/a/root`, scalar for scalar (`ScalarPath`).
+/// Both are already resolved.
 internal func isStrictlyInside(_ path: String, root: String) -> Bool {
-    let pathComponents = path.split(separator: "/")
-    let rootComponents = root.split(separator: "/")
+    let pathComponents = ScalarPath.components(of: path)
+    let rootComponents = ScalarPath.components(of: root)
     return pathComponents.count > rootComponents.count
-        && Array(pathComponents.prefix(rootComponents.count)) == rootComponents
+        && zip(pathComponents, rootComponents).allSatisfy { ScalarPath.same($0, $1) }
 }
 
 /// `realpath(3)`, or nil when it fails.

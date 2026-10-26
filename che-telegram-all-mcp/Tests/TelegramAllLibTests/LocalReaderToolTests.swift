@@ -204,6 +204,16 @@ final class LocalReaderToolTests: XCTestCase {
         }
         XCTAssertFalse(fm.fileExists(atPath: refused))
 
+        // `..` + "/" + a combining mark: one Character, but the OS climbs to <base>.
+        let climbing = root.path + "/..\u{2F}\u{301}esc.md"
+        do {
+            _ = try await reader().dumpChatToMarkdown(chatId: 777, outputPath: climbing, exportRoot: root.path)
+            XCTFail("a '..' hidden behind a combining mark must be refused")
+        } catch MarkdownExporter.ExportError.outsideExportRoot(let path, _) {
+            XCTAssertEqual(path, climbing)
+        }
+        XCTAssertFalse(fm.fileExists(atPath: base.path + "/\u{301}esc.md"))
+
         let accepted = root.appendingPathComponent("chat.md")
         let result = try await reader().dumpChatToMarkdown(chatId: 777, outputPath: accepted.path, exportRoot: root.path)
         XCTAssertTrue(result.json.contains("\"message_count\":3"), result.json)

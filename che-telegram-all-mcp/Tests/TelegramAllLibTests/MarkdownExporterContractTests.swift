@@ -87,7 +87,8 @@ final class MarkdownExporterContractTests: XCTestCase {
         let r = root.path
 
         // Inside the root, symlinks resolved.
-        for path in ["\(r)/chat.md", "\(r)/2026/chat.md", "\(r)/inner/chat.md", "\(r)/2026/../chat.md", "\(r)/./chat.md"] {
+        for path in ["\(r)/chat.md", "\(r)/2026/chat.md", "\(r)/inner/chat.md", "\(r)/2026/../chat.md", "\(r)/./chat.md",
+                     "\(r)/\u{301}chat.md", "\(r)/2026/\u{301}chat.md"] {
             XCTAssertNoThrow(try validateOutputPath(path, exportRoot: r), path)
         }
         // The temporary directory sits under /var -> /private/var: either spelling resolves the same.
@@ -110,6 +111,13 @@ final class MarkdownExporterContractTests: XCTestCase {
             r,                                          // the root itself
             "\(r)/chat\u{0}.md",                        // NUL: C would see another path
             "exports/chat.md",                          // relative
+            // "/" + a combining mark is one Character but two scalars: the OS
+            // splits there, so these climb out or follow the link.
+            "\(r)/..\u{2F}\u{301}esc.md",
+            "\(r)/escape\u{2F}\u{301}x.md",
+            "\(r)/missing/..\u{2F}\u{301}..\u{2F}\u{301}x.md",
+            "\(r)/2026/../..\u{2F}\u{200D}x.md",
+            "\(r)/inner/../..\u{2F}\u{FE0F}outside/x.md",
         ]
         for path in refused {
             XCTAssertThrowsError(try validateOutputPath(path, exportRoot: r), path) { error in

@@ -191,16 +191,20 @@ internal func parseDumpChatToMarkdownArgs(_ args: [String: Value], timeZone: Tim
 ///   shell or system files it must not replace (`~/.zshrc`,
 ///   `authorized_keys`, LaunchAgent plists) never end in `.md`
 ///
+/// "/", `..` and the `.md` ending are read by Unicode scalar (`ScalarPath`),
+/// as the OS reads them: a "/" followed by a combining mark is one Character
+/// but still a separator.
+///
 /// The export root (`CHE_TELEGRAM_ALL_EXPORT_ROOT`) is checked later, at the
 /// write path, by `validateOutputPath` in TelegramAllLib.
 internal func validateDumpOutputPath(_ path: String) throws {
-    guard path.hasPrefix("/") else {
+    guard ScalarPath.isAbsolute(path) else {
         throw HandlerArgError(message: "output_path must be an absolute path; got \"\(path)\"")
     }
-    guard !path.split(separator: "/", omittingEmptySubsequences: false).contains("..") else {
+    guard !ScalarPath.components(of: path).contains(where: ScalarPath.isParent) else {
         throw HandlerArgError(message: "output_path must not contain '..' components; got \"\(path)\"")
     }
-    guard path.lowercased().hasSuffix(".md") else {
+    guard String(String.UnicodeScalarView(path.unicodeScalars.suffix(3))).lowercased() == ".md" else {
         throw HandlerArgError(message: "output_path must end in .md; got \"\(path)\"")
     }
 }

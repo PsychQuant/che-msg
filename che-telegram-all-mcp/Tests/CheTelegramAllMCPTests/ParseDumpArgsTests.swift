@@ -101,9 +101,12 @@ final class ParseDumpArgsTests: XCTestCase {
     /// Scenario "Relative path refused": the server's working directory is
     /// not the caller's, and `~` is not expanded.
     func testDumpRejectsRelativePath() {
-        for path in ["chat.md", "./chat.md", "~/chat.md", "exports/chat.md", ""] {
+        for path in ["chat.md", "./chat.md", "~/chat.md", "exports/chat.md", "", "\u{301}/tmp/x.md"] {
             XCTAssertEqual(dumpError(path), "output_path must be an absolute path; got \"\(path)\"", path)
         }
+        // A leading "/" followed by a combining mark is one Character but still
+        // an absolute path to the OS.
+        XCTAssertNil(dumpError("/\u{301}tmp/x.md"))
     }
 
     /// Scenario "Traversal component refused". Only a component that is
@@ -112,7 +115,16 @@ final class ParseDumpArgsTests: XCTestCase {
         for path in ["/tmp/exports/../../Users/me/notes.md", "/tmp/../x.md", "/../tmp/x.md", "/tmp/a/../b/..//c.md"] {
             XCTAssertEqual(dumpError(path), "output_path must not contain '..' components; got \"\(path)\"", path)
         }
-        for path in ["/tmp/..md", "/tmp/a..b/x.md", "/tmp/./x.md", "/tmp/...md"] {
+        // A "/" followed by a combining mark (or ZWJ, a variation selector, CGJ)
+        // fuses into one Character, so a Character split sees no separator; the
+        // OS still separates there, and `..` climbs.
+        for mark in ["\u{301}", "\u{200D}", "\u{FE0F}", "\u{34F}"] {
+            for path in ["/tmp/..\u{2F}\(mark)esc.md", "/..\u{2F}\(mark)esc.md", "/tmp/a/..\u{2F}\(mark)b/x.md"] {
+                XCTAssertEqual(dumpError(path), "output_path must not contain '..' components; got \"\(path)\"",
+                               path.unicodeScalars.map { String(format: "U+%04X", $0.value) }.joined(separator: " "))
+            }
+        }
+        for path in ["/tmp/..md", "/tmp/a..b/x.md", "/tmp/./x.md", "/tmp/...md", "/tmp/..\u{301}/x.md", "/tmp/\u{301}../x.md"] {
             XCTAssertNil(dumpError(path), path)
         }
     }
@@ -120,7 +132,8 @@ final class ParseDumpArgsTests: XCTestCase {
     /// Scenarios "Non-Markdown target refused" and "Upper-case extension accepted".
     func testDumpRejectsNonMarkdownExtension() {
         for path in ["/Users/me/.zshrc", "/Users/me/.ssh/authorized_keys", "/Users/me/Library/LaunchAgents/x.plist",
-                     "/tmp/x.txt", "/tmp/x.mdx", "/tmp/x.md.sh", "/tmp/x.md/", "/tmp/x.md ", "/tmp/xmd", "/tmp/x.m d"] {
+                     "/tmp/x.txt", "/tmp/x.mdx", "/tmp/x.md.sh", "/tmp/x.md/", "/tmp/x.md ", "/tmp/xmd", "/tmp/x.m d",
+                     "/tmp/x.md\u{301}", "/tmp/x.md\u{2F}\u{301}", "/tmp/x.m\u{301}d"] {
             XCTAssertEqual(dumpError(path), "output_path must end in .md; got \"\(path)\"", path)
         }
         for path in ["/tmp/x.md", "/tmp/CHAT.MD", "/tmp/x.Md", "/tmp/x.mD", "/tmp/dir.md/x.md"] {
