@@ -138,6 +138,20 @@ final class LocalReaderToolTests: XCTestCase {
         XCTAssertEqual(seen, [forwarded, helloThere, hello])
     }
 
+    /// The archive's local-cache source over the real reader, one message per page: with an
+    /// inclusive cursor each page would be only the cursor, the archiver would see an empty
+    /// page after the first and stop as if it had reached the start of the history (#73).
+    func testArchivingFromTheRealReaderPageByPageGetsEveryMessage() async throws {
+        let source = LocalCacheHistorySource(reader: try reader())
+        let archiver = ChatArchiver(source: source, sourceKind: .localCache, isSynced: { false }, pageSize: 1)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("local-reader-archive-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let result = try await archiver.archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertEqual(result.newMessages, 3)
+        XCTAssertTrue(result.complete)
+        XCTAssertNil(result.stoppedReason)
+    }
+
     func testBulkHistoryAlsoStartsStrictlyBelowFromMessageId() throws {
         let reader = try reader()
         XCTAssertEqual(try ids(reader.getChatHistory(chatId: 777, fromMessageId: forwarded, maxMessages: 10).json),

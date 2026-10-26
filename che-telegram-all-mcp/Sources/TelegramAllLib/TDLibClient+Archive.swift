@@ -53,8 +53,9 @@ public final class LocalCacheHistorySource: ArchiveHistorySource {
 
     public init(reader: LocalCacheReading) { self.reader = reader }
 
-    /// The reader pages strictly below `fromMessageId`, like TDLib (#73); the filter below
-    /// keeps the protocol's "strictly below" true even if that ever changes.
+    /// The reader pages strictly below `fromMessageId`, like TDLib (#73). The filter below
+    /// only drops the cursor row if a source ever returns it; it does not make up for a
+    /// reader that includes the cursor (a page holding only the cursor would come back empty).
     public func page(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [[String: Any]] {
         let result = try reader.getChatHistory(chatId: chatId, limit: limit,
                                                fromMessageId: fromMessageId, maxMessages: nil,
