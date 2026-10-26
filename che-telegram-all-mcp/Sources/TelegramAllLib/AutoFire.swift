@@ -6,11 +6,21 @@ import Foundation
 /// process environment, calls this pure function, and dispatches based on
 /// the returned action. Extracting the routing decision keeps it unit-testable
 /// (no `ProcessInfo` mocking, no `TDLibClient` instance setup).
-internal enum AutoFireAction: Equatable {
+internal enum AutoFireAction: Equatable, CustomStringConvertible {
     case fireSetParameters(apiId: Int, apiHash: String)
     case fireSendPhone(String)
     case fireSendPassword(String)
     case noOp
+
+    /// Never shows a credential (#96).
+    var description: String {
+        switch self {
+        case .fireSetParameters(let apiId, _): return "fireSetParameters(apiId: \(apiId), apiHash: <redacted>)"
+        case .fireSendPhone: return "fireSendPhone(<redacted>)"
+        case .fireSendPassword: return "fireSendPassword(<redacted>)"
+        case .noOp: return "noOp"
+        }
+    }
 }
 
 /// Pure routing function for auto-fire decisions.

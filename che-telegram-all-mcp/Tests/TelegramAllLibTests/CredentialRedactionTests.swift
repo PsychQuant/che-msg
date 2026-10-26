@@ -13,6 +13,23 @@ final class CredentialRedactionTests: XCTestCase {
         XCTAssertEqual("\(CredentialPlan.nothing)", "nothing")
     }
 
+    func testAnAutoFireActionNeverPrintsItsValue() {
+        let actions: [AutoFireAction] = [.fireSetParameters(apiId: 12345, apiHash: "hash-value"),
+                                         .fireSendPhone("+886900000417"), .fireSendPassword("secret-2fa")]
+        for action in actions {
+            for text in ["\(action)", String(reflecting: action)] {
+                for value in ["hash-value", "886900000417", "secret-2fa"] { XCTAssertFalse(text.contains(value), text) }
+            }
+        }
+        XCTAssertEqual("\(AutoFireAction.fireSetParameters(apiId: 12345, apiHash: "h"))", "fireSetParameters(apiId: 12345, apiHash: <redacted>)")
+    }
+
+    func testAParsedPasswordLineNeverPrintsItsValue() {
+        let line = SecurityCLICredentialSource.PasswordLine.value("secret-2fa")
+        XCTAssertEqual("\(line)", "value(<redacted>)")
+        XCTAssertFalse(String(reflecting: line).contains("secret-2fa"))
+    }
+
     func testTheNoKeychainSourceFindsNothing() async {
         for credential in KeychainCredential.allCases {
             let result = await NoKeychainCredentialSource().lookup(credential)

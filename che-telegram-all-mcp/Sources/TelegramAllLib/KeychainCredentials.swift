@@ -183,9 +183,17 @@ public struct SecurityCLICredentialSource: KeychainCredentialSource {
         }
     }
 
-    enum PasswordLine: Equatable {
+    enum PasswordLine: Equatable, CustomStringConvertible {
         case value(String)
         case unreadable(String)   // why, never the value
+
+        /// Never shows the value (#96).
+        var description: String {
+            switch self {
+            case .value: return "value(<redacted>)"
+            case .unreadable(let why): return "unreadable(\(why))"
+            }
+        }
     }
 
     /// The value on the `password:` line of `security -g`'s stderr: the text
