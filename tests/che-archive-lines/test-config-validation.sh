@@ -236,6 +236,16 @@ reset
 printf '\n250\n' | run calibrate; rc=$?
 if [ "$rc" -ne 0 ] && [ ! -e "$CONFIG" ] && untouched && grep -q '互動式終端機' "$SCRATCH/out.log"; then ok "calibrate piped, no config yet: none is written"
 else bad "calibrate piped, no config (exit $rc, config written: $([ -e "$CONFIG" ] && echo yes || echo no))"; fi
+# At a terminal, input can still end (Ctrl-D): each prompt must say so, not
+# end silently under set -e.
+reset; write_config -40 30 240; cp "$CONFIG" "$SCRATCH/before.json"
+run_pty '' calibrate; rc=$?
+if [ "$rc" -ne 0 ] && unchanged && grep -q '輸入已結束，沒有讀到 Enter' "$SCRATCH/out.log"; then ok "calibrate: input ends at the Enter prompt: says so, config unchanged"
+else bad "calibrate, end of input at Enter (exit $rc, config unchanged: $(unchanged && echo yes || echo no))"; fi
+reset; write_config -40 30 240; cp "$CONFIG" "$SCRATCH/before.json"
+run_pty $'\n' calibrate; rc=$?
+if [ "$rc" -ne 0 ] && unchanged && grep -q '輸入已結束，沒有讀到選單位移' "$SCRATCH/out.log"; then ok "calibrate: input ends at the menu offset prompt: says so, config unchanged"
+else bad "calibrate, end of input at the menu offset (exit $rc, config unchanged: $(unchanged && echo yes || echo no))"; fi
 
 echo
 echo "Results: $PASSED passed, $FAILED failed"

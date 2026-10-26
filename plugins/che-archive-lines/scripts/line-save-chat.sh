@@ -154,7 +154,11 @@ calibrate() {
     echo ""
     echo -e "${YELLOW}請把滑鼠移到 LINE 聊天視窗右上角的「⋮」按鈕上${NC}"
     echo "準備好後按 Enter 鍵..."
-    read -r
+    # 輸入結束（Ctrl-D）時 read 回傳非零；不讓 set -e 在這裡安靜結束，改為說明原因。
+    if ! read -r; then
+        echo -e "${RED}錯誤：輸入已結束，沒有讀到 Enter，設定檔沒有寫入${NC}"
+        exit 1
+    fi
 
     # 取得滑鼠位置
     local pos
@@ -180,7 +184,11 @@ calibrate() {
     # 詢問「儲存聊天」在選單中的位置
     echo "「儲存聊天」選項在「⋮」下方幾個像素？（選單每項約 30px，預設 240 = 第 8 項）"
     echo "按 Enter 使用預設值 240，或輸入像素值（整數，例如 270）："
-    read -r menu_input
+    local menu_input
+    if ! read -r menu_input; then
+        echo -e "${RED}錯誤：輸入已結束，沒有讀到選單位移，設定檔沒有寫入${NC}"
+        exit 1
+    fi
     local menu_offset_y=${menu_input:-240}
     if ! is_int "$menu_offset_y"; then
         echo -e "${RED}錯誤：請輸入整數像素值（例如 240；最多六位數，不能有前導零或正號），設定檔沒有寫入${NC}"
