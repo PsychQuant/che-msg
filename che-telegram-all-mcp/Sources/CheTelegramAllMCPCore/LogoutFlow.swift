@@ -44,7 +44,9 @@ internal func performLocalReset(client: TDLibClosable, directory: URL, now: Date
 /// Lets one `logout` run at a time in a server (#64, finding 3). A second
 /// `logout` that arrives while one is running fails at once rather than
 /// waiting: run later, it would reset the client the first one had already
-/// discarded and could rename the directory of a client opened since.
+/// discarded and could rename the directory of a client opened since. A
+/// logout always returns: its close is bounded even when TDLib never answers
+/// the close request (`TDLibClient.close(timeout:)`).
 internal final class LogoutGate: @unchecked Sendable {
     private let lock = NSLock()
     private var running = false
@@ -55,7 +57,8 @@ internal final class LogoutGate: @unchecked Sendable {
         guard enter() else {
             return CallTool.Result(content: [.text(text: "Error: another logout is already running in this server; "
                                                    + "this call did nothing. Wait for that logout's result before "
-                                                   + "calling logout again.", annotations: nil, _meta: nil)],
+                                                   + "calling logout again; if it never arrives, reconnect "
+                                                   + "telegram-all with /mcp.", annotations: nil, _meta: nil)],
                                    isError: true)
         }
         defer { leave() }

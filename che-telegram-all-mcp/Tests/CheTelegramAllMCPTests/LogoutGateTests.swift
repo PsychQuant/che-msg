@@ -40,7 +40,8 @@ final class LogoutGateTests: XCTestCase {
     }
 
     private static let busyText = "Error: another logout is already running in this server; this call did nothing. "
-        + "Wait for that logout's result before calling logout again."
+        + "Wait for that logout's result before calling logout again; if it never arrives, reconnect telegram-all "
+        + "with /mcp."
 
     private func ok(_ text: String) -> CallTool.Result {
         CallTool.Result(content: [.text(text: text, annotations: nil, _meta: nil)], isError: false)
@@ -104,14 +105,29 @@ final class LogoutGateTests: XCTestCase {
         (try? JSONSerialization.jsonObject(with: Data(text(result).utf8)) as? [String: Any])?["type"] as? String
     }
 
+    private func makeServer() async throws -> CheTelegramAllMCPServer {
+        try await CheTelegramAllMCPServer(lock: TDLibProcessLock(cacheDirectory: cache, pid: getpid()), idleTimeout: 600)
+    }
+
+    /// Each server has its own gate: a logout running in one does not refuse
+    /// a logout in another.
+    func testEachServerHasItsOwnGate() async throws {
+        try holdTDLib()
+        let first = try await makeServer(), second = try await makeServer()
+        XCTAssertFalse(first.logoutGate === second.logoutGate)
+        XCTAssertTrue(first.logoutGate.enter())
+        defer { first.logoutGate.leave() }
+        let logout = await second.handleToolCall(name: "logout", arguments: [:])
+        XCTAssertEqual(type(logout), "tdlib_in_use")
+    }
+
     /// The gate is checked before TDLib is asked for: with a logout running,
     /// a second one is refused even where it would otherwise get `tdlib_in_use`.
     /// Other tools are not gated, and without a running logout `logout`
     /// answers as before.
     func testTheServerRefusesASecondLogoutBeforeAskingForTDLib() async throws {
         try holdTDLib()
-        let server = try await CheTelegramAllMCPServer(lock: TDLibProcessLock(cacheDirectory: cache, pid: getpid()),
-                                                       idleTimeout: 600)
+        let server = try await makeServer()
         XCTAssertTrue(server.logoutGate.enter(), "plays a logout that is running")
         let busy = await server.handleToolCall(name: "logout", arguments: [:])
         XCTAssertEqual(busy.isError, true)

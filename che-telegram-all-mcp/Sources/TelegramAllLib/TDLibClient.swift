@@ -245,14 +245,22 @@ public final class TDLibClient {
     /// Asks TDLib to close and waits for `authorizationStateClosed`. Returns
     /// false if TDLib has not reported it within `timeout` seconds.
     public func close(timeout: TimeInterval) async -> Bool {
-        if getAuthState() == .closed { return true }
-        _ = try? await client.close()
-        let deadline = Date().addingTimeInterval(timeout)
-        while getAuthState() != .closed {
-            guard Date() < deadline else { return false }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-        return true
+        await Self.close(timeout: timeout, now: { Date().timeIntervalSince1970 },
+                         sleep: { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
+                         isClosed: { getAuthState() == .closed },
+                         send: { [weak self] in _ = try? await self?.client.close() })
+    }
+
+    /// Sends the close request without awaiting its answer and waits until
+    /// `isClosed` or `timeout` seconds pass (#64). TDLibKit routes no answer
+    /// to a client it has already dropped, so awaiting the request could
+    /// never return; TDLib reports the close as a state update either way. A
+    /// cancelled call stops at once, like `wait`, and returns false.
+    static func close(timeout: TimeInterval, now: () -> TimeInterval, sleep: (TimeInterval) async -> Void,
+                      isClosed: () -> Bool, send: @escaping @Sendable () async -> Void) async -> Bool {
+        if isClosed() { return true }
+        Task { await send() }
+        return await wait(timeout: timeout, now: now, sleep: sleep, until: isClosed)
     }
 
     // MARK: - Update Handler
