@@ -898,44 +898,7 @@ public final class TDLibClient {
             "sender": senderToDict(msg.senderId),
             "is_outgoing": msg.isOutgoing,
         ]
-        switch msg.content {
-        case .messageText(let text):
-            dict["type"] = "text"
-            dict["text"] = text.text.text
-        case .messagePhoto(let photo):
-            dict["type"] = "photo"
-            dict["caption"] = photo.caption.text
-        case .messageVideo(let video):
-            dict["type"] = "video"
-            dict["caption"] = video.caption.text
-        case .messageDocument(let doc):
-            dict["type"] = "document"
-            dict["file_name"] = doc.document.fileName
-            dict["caption"] = doc.caption.text
-        case .messageSticker(let sticker):
-            dict["type"] = "sticker"
-            dict["emoji"] = sticker.sticker.emoji
-        case .messageVoiceNote(let voice):
-            dict["type"] = "voice_note"
-            dict["caption"] = voice.caption.text
-        case .messageVideoNote:
-            dict["type"] = "video_note"
-        case .messageAnimation(let animation):
-            dict["type"] = "animation"
-            dict["caption"] = animation.caption.text
-        case .messageAudio(let audio):
-            dict["type"] = "audio"
-            dict["caption"] = audio.caption.text
-        case .messageLocation(let loc):
-            dict["type"] = "location"
-            dict["latitude"] = loc.location.latitude
-            dict["longitude"] = loc.location.longitude
-        case .messagePoll(let poll):
-            dict["type"] = "poll"
-            dict["question"] = poll.poll.question.text
-        default:
-            dict["type"] = "other"
-        }
+        dict.merge(messageContentFields(msg.content)) { _, fromContent in fromContent }
         if let file = mediaFileInfo(msg.content) { dict["file"] = file }
         return dict
     }
@@ -982,6 +945,52 @@ public final class TDLibClient {
 }
 
 extension TDLibClient: TDLibClosable {}
+
+/// The `type` of a message's content and the fields that come with it: text, caption, file name,
+/// a sticker's emoji, a location's coordinates, a poll's question and options (#82).
+internal func messageContentFields(_ content: MessageContent) -> [String: Any] {
+    var fields: [String: Any] = [:]
+    switch content {
+    case .messageText(let text):
+        fields["type"] = "text"
+        fields["text"] = text.text.text
+    case .messagePhoto(let photo):
+        fields["type"] = "photo"
+        fields["caption"] = photo.caption.text
+    case .messageVideo(let video):
+        fields["type"] = "video"
+        fields["caption"] = video.caption.text
+    case .messageDocument(let doc):
+        fields["type"] = "document"
+        fields["file_name"] = doc.document.fileName
+        fields["caption"] = doc.caption.text
+    case .messageSticker(let sticker):
+        fields["type"] = "sticker"
+        fields["emoji"] = sticker.sticker.emoji
+    case .messageVoiceNote(let voice):
+        fields["type"] = "voice_note"
+        fields["caption"] = voice.caption.text
+    case .messageVideoNote:
+        fields["type"] = "video_note"
+    case .messageAnimation(let animation):
+        fields["type"] = "animation"
+        fields["caption"] = animation.caption.text
+    case .messageAudio(let audio):
+        fields["type"] = "audio"
+        fields["caption"] = audio.caption.text
+    case .messageLocation(let loc):
+        fields["type"] = "location"
+        fields["latitude"] = loc.location.latitude
+        fields["longitude"] = loc.location.longitude
+    case .messagePoll(let poll):
+        fields["type"] = "poll"
+        fields["question"] = poll.poll.question.text
+        fields["options"] = poll.poll.options.map { $0.text.text }
+    default:
+        fields["type"] = "other"
+    }
+    return fields
+}
 
 /// The downloadable file of a message's content as `{"id","size","name"?}`, or nil when the
 /// content carries no file (PsychQuant/che-msg#69). Photos use their largest size.

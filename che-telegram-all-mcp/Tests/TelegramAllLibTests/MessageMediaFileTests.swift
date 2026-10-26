@@ -49,4 +49,39 @@ final class MessageMediaFileTests: XCTestCase {
         XCTAssertNil(mediaFileInfo(.messageText(MessageText(linkPreview: nil, linkPreviewOptions: nil,
                                                              text: FormattedText(entities: [], text: "hi")))))
     }
+
+    // MARK: - Content fields (#82)
+
+    private func poll(_ question: String, _ options: [String], type: PollType) -> MessageContent {
+        .messagePoll(MessagePoll(poll: Poll(
+            closeDate: 0, id: 1, isAnonymous: true, isClosed: false, openPeriod: 0,
+            options: options.map { PollOption(isBeingChosen: false, isChosen: true,
+                                              text: FormattedText(entities: [], text: $0),
+                                              votePercentage: 50, voterCount: 3) },
+            question: FormattedText(entities: [], text: question), recentVoterIds: [], totalVoterCount: 6, type: type)))
+    }
+
+    // Scenario "Poll options in the message JSON".
+    func testPollCarriesItsQuestionAndOptionsInOrder() throws {
+        let fields = messageContentFields(poll("Lunch?", ["Noodles", "Rice"], type: .pollTypeRegular(.init(allowMultipleAnswers: false))))
+        XCTAssertEqual(fields["type"] as? String, "poll")
+        XCTAssertEqual(fields["question"] as? String, "Lunch?")
+        XCTAssertEqual(fields["options"] as? [String], ["Noodles", "Rice"])
+        // Votes and a quiz's answer are not content to keep.
+        XCTAssertEqual(Set(fields.keys), ["type", "question", "options"])
+        let quiz = messageContentFields(poll("2+2?", ["3", "4"], type: .pollTypeQuiz(.init(
+            correctOptionId: 1, explanation: FormattedText(entities: [], text: "")))))
+        XCTAssertEqual(quiz["options"] as? [String], ["3", "4"])
+        XCTAssertEqual(Set(quiz.keys), ["type", "question", "options"])
+    }
+
+    // Scenario "Location in the message JSON".
+    func testLocationCarriesItsCoordinates() {
+        let fields = messageContentFields(.messageLocation(MessageLocation(
+            expiresIn: 0, heading: 0, livePeriod: 0,
+            location: Location(horizontalAccuracy: 0, latitude: 25.0478, longitude: 121.5319), proximityAlertRadius: 0)))
+        XCTAssertEqual(fields["type"] as? String, "location")
+        XCTAssertEqual(fields["latitude"] as? Double, 25.0478)
+        XCTAssertEqual(fields["longitude"] as? Double, 121.5319)
+    }
 }

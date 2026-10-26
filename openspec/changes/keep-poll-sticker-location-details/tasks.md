@@ -1,7 +1,7 @@
 ## 1. 訊息 JSON 的投票選項
 
-- [ ] 1.1 先寫失敗的測試（Requirement: Message objects carry poll, sticker and location details 的 Scenario: Poll options in the message JSON 與 Scenario: Location in the message JSON）：`messageContentFields(.messagePoll(...))` 有 `type: poll`、`question` 與依序的 `options`（一般投票與測驗都有），`messageContentFields(.messageLocation(...))` 有 `latitude`、`longitude`，回傳的字典沒有票數。驗證：`swift test --filter MessageMediaFileTests` 先失敗（`messageContentFields` 還不存在）
-- [ ] 1.2 依設計「`messageToDict` 的內容欄位抽成 `messageContentFields`」把 `switch msg.content` 抽成 internal 函式並加上 `options`，`messageToDict` 合併它的結果。驗證：1.1 的測試與既有的 `MessageMediaFileTests` 通過 [after: 1.1]
+- [x] 1.1 先寫失敗的測試（Requirement: Message objects carry poll, sticker and location details 的 Scenario: Poll options in the message JSON 與 Scenario: Location in the message JSON）：`messageContentFields(.messagePoll(...))` 有 `type: poll`、`question` 與依序的 `options`（一般投票與測驗都有），`messageContentFields(.messageLocation(...))` 有 `latitude`、`longitude`，回傳的字典沒有票數。驗證：`swift test --filter MessageMediaFileTests` 先失敗（`messageContentFields` 還不存在）
+- [x] 1.2 依設計「`messageToDict` 的內容欄位抽成 `messageContentFields`」把 `switch msg.content` 抽成 internal 函式並加上 `options`，`messageToDict` 合併它的結果。驗證：1.1 的測試與既有的 `MessageMediaFileTests` 通過 [after: 1.1]
 
 ## 2. 共用的 renderer
 
