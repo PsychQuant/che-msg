@@ -91,6 +91,8 @@ if [[ -n "$CHANGES" || -n "$UNTRACKED_SOURCES" ]]; then
         exit 1
     fi
     echo "  ⚠ uncommitted changes: this build is not what commit ${COMMIT:0:12} would produce."
+    echo "    Its binaries are built from the working tree, but its .mcpb bundles hold the"
+    echo "    committed manifest.json and PRIVACY.md of that commit."
 fi
 # Every build uses exactly the dependency versions recorded in the package's
 # tracked Package.resolved (PsychQuant/che-msg#92); swift-sdk and
@@ -195,17 +197,20 @@ for entry in "${PACKAGES[@]}"; do
         sign-only) "$SCRIPT_DIR/sign-and-notarize.sh" --sign-only "$UNIVERSAL" ;;
     esac
 
-    # Pack HEAD's tracked mcpb files plus the binary, so nothing left over in
-    # <pkg>/mcpb and no uncommitted edit ends up in the bundle, and the
-    # tracked directory is never written to.
+    # Pack the mcpb files of commit $COMMIT plus the binary, so nothing left
+    # over in <pkg>/mcpb, no uncommitted edit and nothing committed since the
+    # build started ends up in the bundle, and the tracked directory is never
+    # written to. -z keeps a name git would quote (non-ASCII) as it is.
     BUNDLE="$STAGE/mcpb-$pkg"
     mkdir -p "$BUNDLE/server"
-    while read -r _mode _type sha path; do
+    while IFS= read -r -d '' record; do
+        path=${record#*$'\t'}
+        sha=${record%%$'\t'*}; sha=${sha##* }
         rel=${path#"$pkg/mcpb/"}
         [[ "$rel" == server/.gitkeep ]] && continue
         mkdir -p "$BUNDLE/$(dirname "$rel")"
         git -C "$ROOT" cat-file blob "$sha" > "$BUNDLE/$rel"
-    done < <(git -C "$ROOT" ls-tree -r HEAD -- "$pkg/mcpb")
+    done < <(git -C "$ROOT" ls-tree -r -z "$COMMIT" -- "$pkg/mcpb")
     cp "$UNIVERSAL" "$BUNDLE/server/$bin"
     mcpb validate "$BUNDLE/manifest.json"
     mcpb pack "$BUNDLE" "$STAGE/$pkg.mcpb"

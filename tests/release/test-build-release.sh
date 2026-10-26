@@ -159,6 +159,7 @@ while [ \$# -gt 0 ]; do
     esac
     shift
 done
+if [ "\$product" = CheTelegramBotMCP ] && [ -x "$base/hook" ]; then "$base/hook"; rm -f "$base/hook"; fi
 if [ \$show = 1 ]; then echo "$base/swiftbin"; exit 0; fi
 [ -z "\$arch" ] && arch=arm64             # a build without --arch is for the host
 [ $same_arch = 1 ] && arch=arm64
@@ -195,6 +196,11 @@ run_make() {
         PATH="$repo/../fakebin:/usr/bin:/bin:/usr/sbin:/sbin" ${envs[@]+"${envs[@]}"} \
         make "$@" 2>&1); RC=$?
 }
+# during_build <repo> <command>: the fake swift runs <command> once, right
+# before the bot package is built: after telegram-all was signed and, in the
+# full mode, notarized, as an edit during the notarization wait would be.
+during_build() { printf '#!/bin/bash\n%s\n' "$2" > "$1/../hook"; chmod +x "$1/../hook"; }
+commit_in() { git -C "$1" -c user.name=t -c user.email=t@example.invalid commit -q "${@:2}"; }
 calls() { grep "^$2" "$1/../calls"; }
 expect_no_build() {
     if [ "$RC" -ne 0 ]; then pass "refused (exit $RC)"; else fail "exit 0"; fi
@@ -356,6 +362,34 @@ git -C "$R" add che-telegram-all-mcp/mcpb/EXTRA.md && git -C "$R" -c user.name=t
 build "$R" "${SIGN_ENV[@]}" --
 expect_no_build "$R"
 if printf '%s' "$OUT" | grep -q 'symlink'; then pass "names the symlink"; else fail "no message: $(printf '%s' "$OUT" | tail -3)"; fi
+
+# --------------------------------------------- bundles hold the commit (#94)
+test_case "a non-ASCII file name under mcpb (#94)"
+R=$(make_repo non-ascii); git -C "$R" config core.quotePath true   # git's default, whatever the global config says
+printf 'notes\n' > "$R/che-telegram-all-mcp/mcpb/說明.md"
+git -C "$R" add "che-telegram-all-mcp/mcpb/說明.md" && commit_in "$R" -m "a non-ASCII name"
+build "$R" "${SIGN_ENV[@]}" --
+if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+if [ "$(unzip -p "$R/.build/dist/v$X/che-telegram-all-mcp.mcpb" '說明.md' 2>/dev/null)" = notes ]; then pass "packed under its real name"; else fail "not packed as 說明.md: $(unzip -Z1 "$R/.build/dist/v$X/che-telegram-all-mcp.mcpb" 2>&1 | tr '\n' ' ')"; fi
+
+test_case "a dirty tree's sign-only and unsigned bundles hold the commit's files (#94)"
+for mode in sign-only unsigned; do
+    R=$(make_repo "dirty-pack-$mode")
+    committed=$(cat "$R/che-telegram-bot-mcp/mcpb/PRIVACY.md")
+    echo "an uncommitted line" >> "$R/che-telegram-bot-mcp/mcpb/PRIVACY.md"
+    if [ "$mode" = sign-only ]; then build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; else build "$R" --; fi
+    if [ "$RC" -eq 0 ]; then pass "$mode: exit 0"; else fail "$mode: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+    if [ "$(unzip -p "$R/.build/dist/v$X-$mode/che-telegram-bot-mcp.mcpb" PRIVACY.md 2>/dev/null)" = "$committed" ]; then pass "$mode: the bundle holds the committed PRIVACY.md"; else fail "$mode: the bundle does not hold the committed PRIVACY.md"; fi
+    if printf '%s' "$OUT" | grep -q 'committed manifest'; then pass "$mode: the warning says the bundles hold the committed manifest"; else fail "$mode: no such warning: $(printf '%s' "$OUT" | grep -i uncommitted)"; fi
+done
+
+test_case "a commit made while a sign-only build runs does not reach its bundles (#94)"
+R=$(make_repo moved-sign-only); START=$(git -C "$R" rev-parse HEAD)
+committed=$(cat "$R/che-telegram-bot-mcp/mcpb/PRIVACY.md")
+during_build "$R" "echo 'a later line' >> '$R/che-telegram-bot-mcp/mcpb/PRIVACY.md' && git -C '$R' -c user.name=t -c user.email=t@example.invalid commit -qam later"
+build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only
+if [ "$RC" -eq 0 ] && [ "$(git -C "$R" rev-parse HEAD)" != "$START" ]; then pass "built while HEAD moved (exit 0)"; else fail "exit $RC, or HEAD did not move: $(printf '%s' "$OUT" | tail -3)"; fi
+if [ "$(unzip -p "$R/.build/dist/v$X-sign-only/che-telegram-bot-mcp.mcpb" PRIVACY.md 2>/dev/null)" = "$committed" ]; then pass "the bundle holds the PRIVACY.md of the commit it printed"; else fail "the bundle holds the later commit's PRIVACY.md"; fi
 
 # ----------------------------------------------------------- dist handling
 test_case "the second notarization fails"
