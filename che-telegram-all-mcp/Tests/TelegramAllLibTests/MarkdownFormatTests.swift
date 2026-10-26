@@ -195,4 +195,17 @@ final class MarkdownFormatTests: XCTestCase {
         XCTAssertTrue(md.contains("**14:35 小明**"),
                       "Second message timestamp MUST be preserved (no merging)")
     }
+
+    // MARK: - Gregorian, ASCII digits whatever the Region (#84)
+
+    /// The only guard that works on a Gregorian host: a formatter that took
+    /// the Region's calendar or digits would print era years or native digits
+    /// under another Region, and sort day sections wrongly.
+    func testTheDateFormattersAreGregorianWithASCIIDigits() {
+        for formatter in [DateFormatter.isoDay, DateFormatter.hourMinute, DateFormatter.exportTimestamp] {
+            XCTAssertEqual(formatter.calendar.identifier, .gregorian, formatter.dateFormat)
+            XCTAssertEqual(formatter.locale.identifier, "en_US_POSIX", formatter.dateFormat)
+        }
+    }
 }
+

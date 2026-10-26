@@ -139,6 +139,68 @@ final class DateParsingTests: XCTestCase {
         XCTAssertEqual(try parseUntilDate("2026-04-17"), try parseUntilDate("2026-04-17", timeZone: .current))
     }
 
+    // MARK: - Days without a local midnight, and midnight fall-backs (#85)
+
+    /// A day whose 00:00 is skipped starts at its first instant (01:00 here)
+    /// instead of being rejected as a bad format. Santiago is #28's step 3.
+    func testADayWithoutAMidnightStartsAtItsFirstInstant() throws {
+        let cases: [(zone: String, day: String, start: TimeInterval, end: TimeInterval)] = [
+            ("America/Santiago", "2026-09-06", 1_788_667_200, 1_788_749_999),
+            ("America/Havana", "2026-03-08", 1_772_946_000, 1_773_028_799),
+            ("Asia/Beirut", "2026-03-29", 1_774_735_200, 1_774_817_999),
+            ("Africa/Cairo", "2026-04-24", 1_776_981_600, 1_777_064_399),
+        ]
+        for c in cases {
+            let zone = try XCTUnwrap(TimeZone(identifier: c.zone))
+            let start = try XCTUnwrap(parseISODate(c.day, timeZone: zone)).timeIntervalSince1970
+            let end = try XCTUnwrap(parseUntilDate(c.day, timeZone: zone)).timeIntervalSince1970
+            XCTAssertEqual(start, c.start, c.zone)
+            XCTAssertEqual(end, c.end, c.zone)
+            XCTAssertEqual(end - start + 1, 82_800, "\(c.zone): a 23-hour day")
+            XCTAssertNoThrow(try validateDateRange(Date(timeIntervalSince1970: start), Date(timeIntervalSince1970: end)), c.zone)
+        }
+    }
+
+    /// When the clocks fall back at midnight, 23:00–23:59 happens twice; the
+    /// day ends at its last instant, not at the first 23:59:59 (an hour of
+    /// messages would be missed).
+    func testAMidnightFallBackDayEndsAtItsLastInstant() throws {
+        let cases: [(zone: String, day: String, start: TimeInterval, end: TimeInterval)] = [
+            ("America/Santiago", "2026-04-04", 1_775_271_600, 1_775_361_599),
+            ("Asia/Beirut", "2026-10-24", 1_792_789_200, 1_792_879_199),
+            ("Africa/Cairo", "2026-10-29", 1_793_221_200, 1_793_311_199),
+        ]
+        for c in cases {
+            let zone = try XCTUnwrap(TimeZone(identifier: c.zone))
+            XCTAssertEqual(try parseISODate(c.day, timeZone: zone)?.timeIntervalSince1970, c.start, c.zone)
+            XCTAssertEqual(try parseUntilDate(c.day, timeZone: zone)?.timeIntervalSince1970, c.end, c.zone)
+        }
+    }
+
+    /// Impossible dates stay rejected in every zone; a leap day is accepted.
+    func testImpossibleDatesAreRejectedInEveryZone() throws {
+        for id in ["America/Santiago", "Asia/Taipei", "UTC"] {
+            let zone = try XCTUnwrap(TimeZone(identifier: id))
+            for day in ["2026-02-30", "2025-02-29", "2026-13-01", "2026-00-10", "2026-04-31", "2026-04-00"] {
+                XCTAssertThrowsError(try parseISODate(day, timeZone: zone), "\(id) \(day)")
+                XCTAssertThrowsError(try parseUntilDate(day, timeZone: zone), "\(id) \(day)")
+            }
+            XCTAssertNotNil(try parseISODate("2024-02-29", timeZone: zone), id)
+        }
+    }
+
+    // MARK: - The calendar system does not matter (#84)
+
+    /// Days before 2019-05-01 (the start of the Reiwa era) are where an
+    /// era-relative year round trip went wrong; the oracle is plain epochs.
+    func testDaysBeforeReiwaKeepTheirDate() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Asia/Taipei"))
+        for (day, start, end) in [("2019-04-01", 1_554_048_000.0, 1_554_134_399.0), ("1989-01-07", 600_105_600.0, 600_191_999.0)] {
+            XCTAssertEqual(try parseISODate(day, timeZone: zone)?.timeIntervalSince1970, start, day)
+            XCTAssertEqual(try parseUntilDate(day, timeZone: zone)?.timeIntervalSince1970, end, day)
+        }
+    }
+
     // MARK: - Semantic contract: a message at end of `until_date` day is included
 
     func testMessageAt23_59_59IsIncluded() throws {

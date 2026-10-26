@@ -287,23 +287,21 @@ internal func buildSummaryJSON(
 
 // MARK: - DateFormatter cache (avoid repeated construction in hot paths)
 
-private extension DateFormatter {
-    static let isoDay: DateFormatter = {
+/// Gregorian and `en_US_POSIX`, whatever the Region: the Region's calendar
+/// would print era years (Japanese `0008-04-17`) and its digits native
+/// numerals (`٢٠٢٦`), and the day sections are ordered by these strings (#84).
+/// The locale is what fixes the digits; the calendar alone does not.
+extension DateFormatter {
+    static let isoDay = exportFormatter("yyyy-MM-dd")
+    static let hourMinute = exportFormatter("HH:mm")
+    static let exportTimestamp = exportFormatter("yyyy-MM-dd HH:mm:ss")
+
+    private static func exportFormatter(_ format: String) -> DateFormatter {
         let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = format
         f.timeZone = TimeZone.current
         return f
-    }()
-    static let hourMinute: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        f.timeZone = TimeZone.current
-        return f
-    }()
-    static let exportTimestamp: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        f.timeZone = TimeZone.current
-        return f
-    }()
+    }
 }

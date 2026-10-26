@@ -44,23 +44,36 @@ public func parseISODate(_ s: String?) throws -> Date? {
 }
 
 /// `parseISODate(_:)` in a given zone (#16).
+///
+/// The day is read with a Gregorian calendar pinned to `timeZone`, never the
+/// Region's calendar (#84), and its start is the day's first instant: on a day
+/// whose 00:00 is skipped (America/Santiago 2026-09-06) that is 01:00, where a
+/// strict formatter rejected the day as a bad format (#85). Impossible dates
+/// (2026-02-30, 2026-13-01) are rejected because their components do not
+/// survive the round trip through the calendar.
 public func parseISODate(_ s: String?, timeZone: TimeZone) throws -> Date? {
     guard let s = s, !s.isEmpty else { return nil }
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd"
-    formatter.timeZone = timeZone
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.isLenient = false
-
-    // DateFormatter is surprisingly tolerant even with isLenient=false
-    // (accepts "2026/04/17" and similar). Pre-check with a strict regex
-    // before handing off to the formatter.
-    let pattern = #"^\d{4}-\d{2}-\d{2}$"#
-    guard s.range(of: pattern, options: .regularExpression) != nil,
-          let date = formatter.date(from: s) else {
+    guard let day = calendarDay(s, timeZone: timeZone) else {
         throw DateParseError(input: s, expected: "YYYY-MM-DD")
     }
-    return date
+    return day.calendar.startOfDay(for: day.noon)
+}
+
+/// Noon of the day `s` names, and the calendar that read it. Noon exists on
+/// every day the zone has, so a missing midnight cannot make a real day fail.
+private func calendarDay(_ s: String, timeZone: TimeZone) -> (calendar: Calendar, noon: Date)? {
+    // A strict pattern first: the calendar would otherwise normalise the
+    // pieces of "2026/04/17" or "26-4-17" as well (#5-A2).
+    guard s.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil else { return nil }
+    let parts = s.split(separator: "-").compactMap { Int($0) }
+    guard parts.count == 3 else { return nil }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    let wanted = DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12)
+    guard let noon = calendar.date(from: wanted) else { return nil }
+    let got = calendar.dateComponents([.year, .month, .day], from: noon)
+    guard got.year == parts[0], got.month == parts[1], got.day == parts[2] else { return nil }
+    return (calendar, noon)
 }
 
 /// Parse an ISO date string (`YYYY-MM-DD`) as the **end of the day** (23:59:59)
@@ -73,29 +86,23 @@ public func parseISODate(_ s: String?, timeZone: TimeZone) throws -> Date? {
 /// Without this helper, `until_date: "2026-04-17"` would parse to
 /// 2026-04-17 00:00:00 and exclude all messages later that day (#5-A1).
 ///
-/// Implementation note: constructs end-of-day from wall-clock components
-/// (year/month/day + hour=23/min=59/sec=59) rather than adding 23h59m59s
-/// to start-of-day. The additive approach breaks on DST fall-back days
-/// (e.g. America/New_York 2026-11-01 has 25 hours; +23:59:59 from
-/// 00:00:00 EDT lands at 22:59:59 EST, excluding the real 23:00-23:59
-/// window). Wall-clock construction lets Calendar resolve DST naturally.
-///
-/// The calendar is still `Calendar.current` with only its zone set to
-/// `timeZone`, so both parsers read one zone; the calendar system (#84) and
-/// days without a midnight (#85) are unchanged here.
+/// The end is the day's last instant, from the same calendar and zone as
+/// `parseISODate`. Not wall-clock 23:59:59: on a day whose clocks fall back at
+/// midnight (America/Santiago 2026-04-04) 23:00–23:59 happens twice and
+/// 23:59:59 names the first of them, which would leave an hour out (#85). Nor
+/// start of day plus 23:59:59, which is wrong on every 23- or 25-hour day
+/// (America/New_York 2026-11-01, #28). On every other day all three agree.
 public func parseUntilDate(_ s: String?) throws -> Date? {
     try parseUntilDate(s, timeZone: .current)
 }
 
 /// `parseUntilDate(_:)` in a given zone (#16).
 public func parseUntilDate(_ s: String?, timeZone: TimeZone) throws -> Date? {
-    guard let startOfDay = try parseISODate(s, timeZone: timeZone) else { return nil }
-    var calendar = Calendar.current
-    calendar.timeZone = timeZone
-    var components = calendar.dateComponents([.year, .month, .day], from: startOfDay)
-    components.hour = 23
-    components.minute = 59
-    components.second = 59
-    components.timeZone = timeZone
-    return calendar.date(from: components)
+    guard let s = s, !s.isEmpty else { return nil }
+    guard let day = calendarDay(s, timeZone: timeZone),
+          let interval = day.calendar.dateInterval(of: .day, for: day.noon) else {
+        throw DateParseError(input: s, expected: "YYYY-MM-DD")
+    }
+    // DateInterval's end is the next day's first instant.
+    return interval.end.addingTimeInterval(-1)
 }
