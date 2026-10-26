@@ -152,6 +152,52 @@ final class MarkdownExporterContractTests: XCTestCase {
         XCTAssertNoThrow(try validateOutputPath("\(outside.path)/chat.md", exportRoot: nil))
     }
 
+    /// What the exporter reads, recorded; TDLib in production (#21).
+    private final class RecordingSource: MarkdownExportSource {
+        var calls: [String] = []
+        func getChat(chatId: Int64) async throws -> String {
+            calls.append("getChat")
+            return #"{"title":"T","type":"private"}"#
+        }
+        func getChatHistory(chatId: Int64, limit: Int, fromMessageId: Int64, maxMessages: Int?,
+                            sinceDate: Foundation.Date?, untilDate: Foundation.Date?) async throws -> String {
+            calls.append("getChatHistory")
+            return "[]"
+        }
+        func getUser(userId: Int64) async throws -> String {
+            calls.append("getUser")
+            return "{}"
+        }
+    }
+
+    /// TDLib mode's write path: the root given to `MarkdownExporter` is
+    /// checked before anything is read, and a path inside it is written.
+    func testExporterChecksItsExportRootBeforeReading() async throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("exporter-root-\(UUID().uuidString)")
+        addTeardownBlock { try? fm.removeItem(at: base) }
+        let root = base.appendingPathComponent("exports"), outside = base.appendingPathComponent("outside")
+        for dir in [root, outside] { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
+        let source = RecordingSource()
+        let exporter = MarkdownExporter(client: source, exportRoot: root.path)
+
+        let refused = outside.appendingPathComponent("chat.md").path
+        do {
+            _ = try await exporter.dumpChatToMarkdown(chatId: 1, outputPath: refused)
+            XCTFail("a path outside the export root must be refused")
+        } catch MarkdownExporter.ExportError.outsideExportRoot(let path, let configured) {
+            XCTAssertEqual(path, refused)
+            XCTAssertEqual(configured, root.path)
+        }
+        XCTAssertEqual(source.calls, [], "nothing is read before the root check")
+        XCTAssertFalse(fm.fileExists(atPath: refused))
+
+        let accepted = root.appendingPathComponent("chat.md").path
+        _ = try await exporter.dumpChatToMarkdown(chatId: 1, outputPath: accepted)
+        XCTAssertEqual(source.calls, ["getChat", "getChatHistory"])
+        XCTAssertTrue(fm.fileExists(atPath: accepted))
+    }
+
     func testExportRootErrorsNameThePathAndTheRoot() {
         XCTAssertEqual(
             MarkdownExporter.ExportError.outsideExportRoot(path: "/tmp/chat.md", root: "/Users/me/exports").errorDescription,

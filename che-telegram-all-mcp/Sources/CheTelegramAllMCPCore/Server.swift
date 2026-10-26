@@ -725,15 +725,7 @@ public final class CheTelegramAllMCPServer {
             // History Export
             case "dump_chat_to_markdown":
                 let parsed = try parseDumpChatToMarkdownArgs(args)
-                let exporter = MarkdownExporter(client: tdlib, exportRoot: exportRoot)
-                result = try await exporter.dumpChatToMarkdown(
-                    chatId: parsed.chatId,
-                    outputPath: parsed.outputPath,
-                    maxMessages: parsed.maxMessages,
-                    sinceDate: parsed.sinceDate,
-                    untilDate: parsed.untilDate,
-                    selfLabel: parsed.selfLabel
-                )
+                result = try await dumpInTDLibMode(parsed, source: tdlib)
 
             // Archive (#69)
             case "archive_chat_to_markdown":
@@ -756,6 +748,20 @@ public final class CheTelegramAllMCPServer {
             // A TDLib error with its code and message (#71); see toolErrorResult.
             return toolErrorResult(error)
         }
+    }
+
+    /// `dump_chat_to_markdown` in TDLib mode, reading from `source` (the
+    /// TDLib client) and keeping `output_path` inside the root the server
+    /// read at startup (#21). A seam: tests pass a stand-in for TDLib.
+    func dumpInTDLibMode(_ parsed: DumpChatToMarkdownArgs, source: MarkdownExportSource) async throws -> String {
+        try await MarkdownExporter(client: source, exportRoot: exportRoot).dumpChatToMarkdown(
+            chatId: parsed.chatId,
+            outputPath: parsed.outputPath,
+            maxMessages: parsed.maxMessages,
+            sinceDate: parsed.sinceDate,
+            untilDate: parsed.untilDate,
+            selfLabel: parsed.selfLabel
+        )
     }
 
     // MARK: - While Another Process Holds TDLib

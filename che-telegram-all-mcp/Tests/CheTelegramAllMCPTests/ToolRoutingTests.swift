@@ -375,6 +375,54 @@ final class ToolRoutingTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outside))
     }
 
+    /// Stands in for TDLib in `dumpInTDLibMode` (#21).
+    private final class RecordingSource: MarkdownExportSource {
+        var calls = 0
+        func getChat(chatId: Int64) async throws -> String { calls += 1; return #"{"title":"T"}"# }
+        func getChatHistory(chatId: Int64, limit: Int, fromMessageId: Int64, maxMessages: Int?,
+                            sinceDate: Date?, untilDate: Date?) async throws -> String { calls += 1; return "[]" }
+        func getUser(userId: Int64) async throws -> String { calls += 1; return "{}" }
+    }
+
+    /// TDLib mode gets the root the server was given: outside it is refused
+    /// before TDLib is asked anything, inside it is written.
+    func testTDLibModeDumpUsesTheServersExportRoot() async throws {
+        let root = cache.appendingPathComponent("exports")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let server = try await makeServer(exportRoot: root.path)
+        let source = RecordingSource()
+
+        let outside = cache.appendingPathComponent("chat.md").path
+        let refused = try parseDumpChatToMarkdownArgs(["chat_id": .int(777), "output_path": .string(outside)])
+        do {
+            _ = try await server.dumpInTDLibMode(refused, source: source)
+            XCTFail("a path outside the export root must be refused")
+        } catch MarkdownExporter.ExportError.outsideExportRoot(_, let configured) {
+            XCTAssertEqual(configured, root.path)
+        }
+        XCTAssertEqual(source.calls, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside))
+
+        let inside = root.appendingPathComponent("chat.md").path
+        _ = try await server.dumpInTDLibMode(
+            try parseDumpChatToMarkdownArgs(["chat_id": .int(777), "output_path": .string(inside)]), source: source)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inside))
+    }
+
+    /// Source pin: the TDLib branch of `dump_chat_to_markdown` needs a live
+    /// TDLibClient, so no test reaches it; it must go through
+    /// `dumpInTDLibMode`, the only place Server.swift builds a
+    /// `MarkdownExporter`, and that one passes the root.
+    func testTDLibModeDumpGoesThroughTheTestedSeam() throws {
+        let server = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheTelegramAllMCPCore/Server.swift")
+        let source = try String(contentsOf: server, encoding: .utf8)
+        XCTAssertEqual(source.components(separatedBy: "MarkdownExporter(").count - 1, 1,
+                       "Server.swift builds a MarkdownExporter only in dumpInTDLibMode")
+        XCTAssertTrue(source.contains("MarkdownExporter(client: source, exportRoot: exportRoot)"))
+        XCTAssertTrue(source.contains("result = try await dumpInTDLibMode(parsed, source: tdlib)"))
+    }
+
     // MARK: - Source note
 
     private let utcPlus8 = TimeZone(secondsFromGMT: 8 * 3600)!

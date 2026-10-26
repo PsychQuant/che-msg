@@ -1,5 +1,16 @@
 import Foundation
 
+/// What `MarkdownExporter` reads: `TDLibClient` in production, a stand-in in
+/// tests, so the export root check is testable without TDLib (#21).
+public protocol MarkdownExportSource {
+    func getChat(chatId: Int64) async throws -> String
+    func getChatHistory(chatId: Int64, limit: Int, fromMessageId: Int64, maxMessages: Int?,
+                        sinceDate: Foundation.Date?, untilDate: Foundation.Date?) async throws -> String
+    func getUser(userId: Int64) async throws -> String
+}
+
+extension TDLibClient: MarkdownExportSource {}
+
 /// Orchestrates exporting a Telegram chat's history to a Markdown file.
 ///
 /// Workflow:
@@ -36,12 +47,12 @@ public struct MarkdownExporter {
         }
     }
 
-    private let client: TDLibClient
+    private let client: MarkdownExportSource
     /// `CHE_TELEGRAM_ALL_EXPORT_ROOT` as the server read it; nil means no
     /// root (the CLI passes none).
     private let exportRoot: String?
 
-    public init(client: TDLibClient, exportRoot: String? = nil) {
+    public init(client: MarkdownExportSource, exportRoot: String? = nil) {
         self.client = client
         self.exportRoot = exportRoot
     }
