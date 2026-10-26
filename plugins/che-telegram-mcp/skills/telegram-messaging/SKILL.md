@@ -55,7 +55,7 @@ Answers from read tools may carry a second text item starting `sync: not-synced`
 | `get_chats` | List recent conversations (`limit` param) |
 | `search_chats` | Find chat by name |
 | `get_chat` | Get details of a specific chat |
-| `get_contacts` | List saved contacts |
+| `get_contacts` | List saved contacts (`limit`, default 200; more are cut off without notice) |
 | `get_me` | Your own profile |
 | `get_user` | Look up another user by ID |
 

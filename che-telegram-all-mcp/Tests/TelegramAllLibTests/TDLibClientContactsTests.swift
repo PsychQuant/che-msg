@@ -53,5 +53,19 @@ final class TDLibClientContactsTests: XCTestCase {
         XCTAssertEqual(boundedContactIds(ids, limit: 0), [])
         XCTAssertEqual(boundedContactIds(ids, limit: 100_000).count, 10_000)
     }
+
+    /// The handler and the library call cannot run without TDLib, so their
+    /// wiring is pinned in the source: the handler parses `limit` with the
+    /// 200 default and passes it on, and getContacts bounds the ids it loops
+    /// over (verify of #34: each of these could change with every test green).
+    func testTheLimitIsWiredFromTheHandlerToTheLoop() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let server = try String(contentsOf: root.appendingPathComponent("Sources/CheTelegramAllMCPCore/Server.swift"), encoding: .utf8)
+        let handler = try XCTUnwrap(server.range(of: #"case "get_contacts":\s*let limit = try parseLimit\(args, default: 200\)\s*result = try await tdlib\.getContacts\(limit: limit\)"#, options: .regularExpression))
+        XCTAssertFalse(handler.isEmpty)
+        let client = try String(contentsOf: root.appendingPathComponent("Sources/TelegramAllLib/TDLibClient.swift"), encoding: .utf8)
+        XCTAssertNotNil(client.range(of: #"for userId in boundedContactIds\(result\.userIds, limit: limit\)"#, options: .regularExpression))
+        XCTAssertNotNil(server.range(of: #""limit": prop\("integer", "Max contacts to return \(default 200, max 10000\)"\)"#, options: .regularExpression))
+    }
 }
 
