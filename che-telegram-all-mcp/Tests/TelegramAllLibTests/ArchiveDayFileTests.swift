@@ -458,6 +458,35 @@ final class ArchiveDayFileTests: XCTestCase {
         }
     }
 
+    /// A day file with a carriage return and a provisional block of the call's message would be
+    /// rewritten by a TDLib run's upgrade, so that run is refused like one that adds a message; a
+    /// cache run would change nothing and leaves it as it is (#72, #76).
+    func testCarriageReturnFileIsRefusedWhenAProvisionalBlockWouldBeUpgraded() throws {
+        let dir = try scratchDir()
+        let file = dir.appendingPathComponent("2026-10-11.md")
+        let text = validHead + "<!-- msg:5 -->\r\n<!-- provisional: local-cache -->\r\n**09:00 User 1001**：\r\na\r\n\r\n"
+            + "<!-- msg:6 -->\n**09:01 Alex**：\nb\n\n"
+        try Data(text.utf8).write(to: file)
+        let before = try Data(contentsOf: file)
+        let five = ArchiveMessage(id: 5, date: utc(2026, 10, 11, 1, 0), sender: "Alex", body: "a")
+        let six = ArchiveMessage(id: 6, date: utc(2026, 10, 11, 1, 1), sender: "Alex", body: "b")
+        let fromCache = try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                 messages: [five, six], provisional: true)
+        XCTAssertEqual(fromCache.added + fromCache.upgraded, [])
+        XCTAssertEqual(try Data(contentsOf: file), before)
+        XCTAssertEqual(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                messages: [six]).added, [], "no provisional block of the call's messages")
+        XCTAssertThrowsError(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                      messages: [five, six])) { error in
+            XCTAssertEqual(error as? ArchiveDayFile.WriteError, .carriageReturn(day: "2026-10-11"))
+        }
+        XCTAssertEqual(try Data(contentsOf: file), before)
+        // The same file with LF line ends is upgraded.
+        try Data(text.replacingOccurrences(of: "\r\n", with: "\n").utf8).write(to: file)
+        XCTAssertEqual(try ArchiveDayFile.write(directory: dir, chatId: 1, day: "2026-10-11", utcOffset: "+08:00",
+                                                messages: [five, six]).upgraded, [5])
+    }
+
     /// A day file with a carriage return that already holds every message of the call is left as it
     /// is, so a first archive or a since_date re-run does not stop on an old CRLF file. Anchors are
     /// read with CRLF as a line end only: a lone CR cannot make text look like an anchor.

@@ -50,6 +50,14 @@ Diagnosis 第 1 點：issue 原本提議把標記放進錨點（`<!-- msg:<id> p
 
 帶標記的區塊屬於工具：升級換掉整個區塊，使用者手動加在裡面的內容會消失。spec 寫明這點；沒有標記的區塊照舊一字不動。
 
+### 含 CR 的日檔：會被升級就算寫入，一樣拒絕
+
+#76 的 verify 修正（`8b277b9`）讓含 CR 的日檔只在「這次會加訊息進去」時才拒絕，已經有每則訊息的就原樣保留。升級也會重寫整個檔案，而合併以 LF 切行，對含 CR 的檔案重寫是不安全的，所以「會不會重寫」的判斷要把升級算進去：`write` 遇到含 CR 的日檔時，先把 CRLF 換成 LF、用同一個 `merged` 算一次這次會加什麼、升級什麼，兩者都空才原樣保留，否則丟 `carriageReturn`。這樣拒絕的條件和實際會不會寫檔完全一致，不必另外維護一份規則：
+
+- 來源是本機快取的呼叫從不升級，含 CR、但已經有每則訊息的日檔照舊原樣保留。
+- 來源是 TDLib 的呼叫，若這個日檔有它讀到的訊息的暫時區塊，就會被拒絕；使用者把檔案改成 LF 之後重跑，升級照常發生。
+- 標記行和錨點一樣以 CRLF 當行尾來讀；單獨的 CR 留在行內，讓那一行不等於標記，所以不會被當成暫時區塊（也就不會因此被拒絕）。
+
 ### manifest：`upgraded_messages`，`files` 含升級的日檔
 
 Diagnosis 第 3 點：`new_messages`、`media_messages`、`newest_message_file` 與書籤的意義不能因為升級而改變。所以升級另外計數，`upgraded_messages` 一律出現（0 也寫，和 `undated_messages_skipped` 一樣）。`files` 的定義從「加了訊息的日檔」改成「加了訊息或升級了區塊的日檔」：skill 的結尾核對檢查 `files` 裡每個檔案存在、frontmatter 是這個聊天的，被重寫過的日檔正是需要這項檢查的檔案。舊 skill 配新 binary 時，多出來的檔案一樣會通過核對（它們本來就是有效的日檔）。
@@ -87,6 +95,6 @@ Diagnosis 第 3 點：`new_messages`、`media_messages`、`newest_message_file` 
   - manifest 一律有 `upgraded_messages`；`files` 含有升級的日檔；`new_messages`、`media_messages`、書籤規則不變。
   - 內文行恰為標記字串時照舊加反斜線，不會被當成標記。
 - **介面**：`ArchiveDayFile.provisionalMarker`；`ArchiveDayFile.block(_:offsetSeconds:provisional:)`；`ArchiveDayFile.isProvisional(_:)`（internal）；`ArchiveDayFile.merged(existing:chatId:day:utcOffset:messages:provisional:) -> (content: String, added: [Int64], upgraded: [Int64])`；`ArchiveDayFile.write(directory:chatId:day:utcOffset:messages:provisional:) -> (added: [Int64], upgraded: [Int64])`；`ChatArchiver.Result.upgradedMessages: Int`，manifest 鍵 `upgraded_messages`。
-- **錯誤與邊界**：錯誤處理（offset、不是一般檔案、CR）與現在相同，升級前就會拒絕。同一批訊息裡同一個 id 出現兩次時只處理第一次。標記只認第二行；標記出現在其他位置的區塊不是暫時的。
-- **驗收**：`ArchiveDayFileTests`（快取區塊的第二行是標記、`parseBlocks` 的 id 不因標記改變、TDLib 合併換掉帶標記的區塊、快取合併不換、不帶標記與 preamble 位元組不變、偽造的標記行被跳脫、升級後再寫一次位元組不變、升級後 0600）、`ChatArchiverTests`（TDLib 呼叫在快取呼叫之後升級：名稱、說明文字、`upgraded_messages`、`files`；快取呼叫在 TDLib 呼叫之後位元組不變；manifest 一般情況 `upgraded_messages: 0`）、`LocalCacheArchiveTests`（快取呼叫寫出標記）；`swift test --skip E2ETests` 全過；`tests/che-telegram-mcp/*.sh` 全過。
+- **錯誤與邊界**：offset 與不是一般檔案的錯誤與現在相同，升級前就會拒絕。含 CR 的日檔在這次會加訊息或會升級暫時區塊時拒絕（`carriageReturn`），兩者都不會發生時原樣保留。同一批訊息裡同一個 id 出現兩次時只處理第一次。標記只認第二行；標記出現在其他位置的區塊不是暫時的。
+- **驗收**：`ArchiveDayFileTests`（含 CR 的日檔有暫時區塊時，TDLib 的寫入被拒、快取的寫入原樣保留、改成 LF 後照常升級；快取區塊的第二行是標記、`parseBlocks` 的 id 不因標記改變、TDLib 合併換掉帶標記的區塊、快取合併不換、不帶標記與 preamble 位元組不變、偽造的標記行被跳脫、升級後再寫一次位元組不變、升級後 0600）、`ChatArchiverTests`（TDLib 呼叫在快取呼叫之後升級：名稱、說明文字、`upgraded_messages`、`files`；快取呼叫在 TDLib 呼叫之後位元組不變；manifest 一般情況 `upgraded_messages: 0`）、`LocalCacheArchiveTests`（快取呼叫寫出標記）；`swift test --skip E2ETests` 全過；`tests/che-telegram-mcp/*.sh` 全過。
 - **範圍外**：`refresh` 參數、移除快取路徑、猜測 v0.8.0 的快取區塊、編輯與刪除、快取解碼。

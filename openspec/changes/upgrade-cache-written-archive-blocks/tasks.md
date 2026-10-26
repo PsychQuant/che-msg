@@ -11,3 +11,7 @@
 ## 3. 工具說明、skill 與文件
 
 - [x] 3.1 依設計「skill 與文件」改 `Server.swift` 的 `archive_chat_to_markdown` 說明（快取寫的區塊是暫時的、之後 TDLib 會換掉）；SKILL.md 的 Step 3 理由、Step 6 的 `last_run.upgraded_messages`、Step 7 的報告行與 `local-cache` 那一列（Requirement: archive-telegram end-of-run check and report 的 Scenario: Report after an upgrade）；all-mcp README 的「Other sessions」與日檔段落寫出標記的確切格式、升級規則、`upgraded_messages`、v0.8.0 的快取區塊不升級、帶標記的區塊屬於工具；plugin README 的快取段落；兩份 CHANGELOG 的 `[Unreleased]` 記 #72，寫出依設計「預設選項（維護者不在時採用）」選定的行為（標記加升級、沒有 `refresh` 參數）；決策過程只留在 proposal、design 與 commit message，不寫進使用者看的文件。驗證：`for t in tests/che-telegram-mcp/*.sh; do bash "$t" | tail -1; done` 全過；人工核對 README 的標記字串與 `provisionalMarker` 一致；`swift test --skip E2ETests` 全過 [after: 2.2]
+
+## 4. 與 #76 的 CR 規則合併
+
+- [x] 4.1 先寫失敗的測試（Requirement: Merge and idempotent rewrite 的 Scenario: Carriage return in a day file with a provisional block 與 Example: day files the call refuses）：CRLF 日檔有訊息 5 的暫時區塊時，快取寫入 5、6 原樣保留；TDLib 只寫 6 原樣保留；TDLib 寫 5、6 丟 `carriageReturn` 且位元組不變；改成 LF 後同一個寫入把 5 升級。依設計「含 CR 的日檔：會被升級就算寫入，一樣拒絕」，`write` 對含 CR 的日檔用 CRLF 換成 LF 後的 `merged` 判斷會不會寫。驗證：只看 `added` 的 #76 規則下這個測試失敗（沒有丟錯誤），合併後的實作下 `swift test --filter ArchiveDayFileTests` 通過 [after: 3.1]
