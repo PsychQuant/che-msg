@@ -54,6 +54,10 @@
 #      is refused too, not repaired, even with a genuine partial file in it,
 #      and once it is removed the next start creates it anew with mode 700.
 #      ~/bin holds no temporary file afterwards.
+#  14. With a usable binary installed, a wrapper that starts no download (the
+#      lock is held by another download, or the staging directory is
+#      refused) says so and why, and does not say the next start will use
+#      the new version.
 #  13. An HTTP error the server may get over (503, 429) keeps the partial
 #      file for the next start; one that says there is no such asset (404,
 #      410) removes it. Either way nothing is installed and the reason says
@@ -348,7 +352,13 @@ n=$(asset_calls "$H")
 if [ "$n" = 1 ]; then pass "the asset was downloaded once"; else fail "the asset was downloaded $n times"; fi
 expect_installed "$H" "$ALL" "$DESIRED_VERSION"
 if [ -z "$(partials "$H")" ]; then pass "no partial file left"; else fail "left: $(partials "$H")"; fi
-if grep -q 'download already running' "$(log_of "$H" "$ALL")" 2>/dev/null; then pass "the second download says the download is already running"; else fail "log: $(cat "$(log_of "$H" "$ALL")" 2>/dev/null | tr '\n' ' ')"; fi
+# The second wrapper either finds the lock held before it starts a download
+# (it says so on stderr) or starts one that finds it held (its log says so).
+if grep -q 'download already running' "$(log_of "$H" "$ALL")" 2>/dev/null || grep -q 'another process is downloading' "$H/err1" "$H/err2"; then
+    pass "the second one says another download is running"
+else
+    fail "log: $(cat "$(log_of "$H" "$ALL")" 2>/dev/null | tr '\n' ' ') stderr: $(cat "$H/err1" "$H/err2" | tr '\n' ' ')"
+fi
 if has_pids "$H" 1; then pass "a binary was started"; else fail "no binary started: $(cat "$H/err1" "$H/err2" | tr '\n' ' ')"; fi
 stop "$W1"; stop "$W2"
 
@@ -361,7 +371,7 @@ wait_until 5 test -e "$LOCK" || fail "the holder did not take the lock"
 CHE_TELEGRAM_MCP_INSTALL_WAIT=1 run "$H" all
 wait_no_fetch "$H"
 if [ "$(asset_calls "$H")" = 0 ]; then pass "nothing was downloaded"; else fail "downloaded $(asset_calls "$H") time(s) while another process held the lock"; fi
-if grep -q 'download already running' "$(log_of "$H" "$ALL")" 2>/dev/null; then pass "the log says the download is already running"; else fail "log: $(tail -2 "$(log_of "$H" "$ALL")" 2>/dev/null | tr '\n' ' ')"; fi
+if grep -q 'another process is downloading' "$H/err"; then pass "it says another process is downloading"; else fail "stderr: $(grep "$ALL:" "$H/err" | tr '\n' ' ')"; fi
 if [ ! -e "$H/bin/$ALL" ]; then pass "nothing installed"; else fail "installed while another process held the lock"; fi
 if [ -f "$LOCK" ] && [ ! -L "$LOCK" ]; then pass "the held lock file is left alone"; else fail "the held lock file was removed or replaced"; fi
 kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
@@ -407,6 +417,8 @@ for kind in link file; do
         *".che-telegram-mcp-download"*) pass "the reason names the staging directory" ;;
         *) fail "the reason does not name it: $(reason "$H" all)" ;;
     esac
+    if [ "$kind" = link ]; then want="is a symbolic link"; else want="is not a directory"; fi
+    expect_reason_text "$H" "$want" "the reason says it $want"
 done
 
 for mode in 777 755; do
@@ -427,6 +439,7 @@ for mode in 777 755; do
         *) fail "the reason does not say so: $(reason "$H" all)" ;;
     esac
     if grep -q "mode $mode" "$H/err"; then pass "stderr gives its mode"; else fail "stderr: $(grep -i staging "$H/err" | head -2)"; fi
+    expect_reason_text "$H" "has mode $mode, not 700" "the reason gives its mode"
     rm -rf "$(stage_of "$H")"
     run "$H" all
     expect_installed "$H" "$ALL" "$DESIRED_VERSION"
@@ -476,6 +489,26 @@ for pair in 503:kept 429:kept 404:removed 410:removed; do
     fi
     if grep -q "HTTP $code" "$(log_of "$H" "$ALL")" 2>/dev/null; then pass "the log gives HTTP $code"; else fail "log: $(tail -2 "$(log_of "$H" "$ALL")" 2>/dev/null | tr '\n' ' ')"; fi
 done
+
+# ------------------------------- 14. hand-over messages when nothing downloads
+test_case "telegram-all: a usable binary with the download lock held elsewhere"
+H="$SCRATCH/all-handover-held"; make_home "$H" yes "$MIN_ALL"; serve "$H" all
+make_stage "$H"; HOLDER=$(hold_lock "$(lock_of "$H" "$ALL")"); STARTED+=("$HOLDER")
+wait_until 5 test -e "$(lock_of "$H" "$ALL")"
+run "$H" all
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+if [ "$RC" = started ]; then pass "the installed binary started"; else fail "not started ($RC)"; fi
+if grep -q "another process is downloading" "$H/err"; then pass "stderr says another process is downloading"; else fail "stderr: $(grep "$ALL:" "$H/err" | tail -2 | tr '\n' ' ')"; fi
+if grep -q "the first start after the download" "$H/err"; then fail "it still promises the next start the new version"; else pass "no promise about the next start"; fi
+if [ "$(asset_calls "$H")" = 0 ]; then pass "nothing was downloaded"; else fail "downloaded"; fi
+
+test_case "telegram-all: a usable binary with the staging directory refused"
+H="$SCRATCH/all-handover-stage"; make_home "$H" yes "$MIN_ALL"; serve "$H" all
+mkdir -p "$SCRATCH/elsewhere-handover"; ln -s "$SCRATCH/elsewhere-handover" "$(stage_of "$H")"
+run "$H" all
+if [ "$RC" = started ]; then pass "the installed binary started"; else fail "not started ($RC)"; fi
+if grep -q "is not downloaded: its staging directory ~/bin/.che-telegram-mcp-download is a symbolic link" "$H/err"; then pass "stderr says why nothing is downloaded"; else fail "stderr: $(grep "$ALL:" "$H/err" | tail -2 | tr '\n' ' ')"; fi
+if grep -q "the first start after the download" "$H/err"; then fail "it still promises the next start the new version"; else pass "no promise about the next start"; fi
 
 H="$SCRATCH/all-resume"
 extra=$(cd "$H/bin" && ls -A | grep -v -x -e "$ALL" -e ".$ALL.version" -e "$(basename "$(stage_of "$H")")" || true)

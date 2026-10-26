@@ -159,10 +159,14 @@ DOWNLOAD_RUNNING=false
 BINARY_VERSION=""
 PROBED=""
 if $NEED_DOWNLOAD; then
-    echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO in the background (log: ~/bin/.che-telegram-mcp-download/$BINARY_NAME.log)" >&2
     DOWNLOAD_STARTED=true
     download_start "$BINARY_NAME" "$DESIRED_VERSION" "$DOWNLOAD_URL" "$INSTALL_DIR" \
         "$SHA256_PIN_VERSION" "$SHA256_PIN" || DOWNLOAD_STARTED=false
+    if $DOWNLOAD_STARTED; then
+        echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO in the background (log: ~/bin/.che-telegram-mcp-download/$BINARY_NAME.log)" >&2
+    else
+        echo "$BINARY_NAME: $REASON — v$DESIRED_VERSION is not downloaded: $(download_failure "$DOWNLOAD_START_STATUS" "$DESIRED_VERSION")" >&2
+    fi
     if [[ -n "$BINARY" ]]; then
         BINARY_VERSION=$(probe_version "$BINARY"); PROBED=$BINARY
     fi
@@ -170,7 +174,7 @@ if $NEED_DOWNLOAD; then
         if $DOWNLOAD_STARTED; then
             echo "$BINARY_NAME: running the installed v$BINARY_VERSION meanwhile; the first start after the download uses v$DESIRED_VERSION" >&2
         else
-            echo "$BINARY_NAME: v$DESIRED_VERSION is not downloaded: $(download_failure "$DOWNLOAD_START_STATUS" "$DESIRED_VERSION"). Running the installed v$BINARY_VERSION." >&2
+            echo "$BINARY_NAME: running the installed v$BINARY_VERSION" >&2
         fi
     else
         download_wait "$BINARY_NAME" "$DESIRED_VERSION" "$INSTALL_DIR" "$FIRST_INSTALL_WAIT"

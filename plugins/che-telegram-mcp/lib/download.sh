@@ -92,8 +92,10 @@ download_pin_status() {
 
 # download_start <binary name> <version> <url> <install dir> <pin version>
 # <pin>: starts downloading and installing that version in the background and
-# returns at once; sets DOWNLOAD_PID. Without a usable pin it starts nothing,
-# returns 1 and sets DOWNLOAD_START_STATUS (download_pin_status's). perl (which macOS
+# returns at once; sets DOWNLOAD_PID. It starts nothing, returns 1 and sets
+# DOWNLOAD_START_STATUS without a usable pin (download_pin_status's status),
+# when the staging directory or a file in it is refused (42), and when another
+# download holds the lock (10). perl (which macOS
 # ships, and which shasum needs anyway) puts the download in a session of its
 # own (macOS has no setsid command), takes the download lock without waiting
 # (exit 10 when it is held: "download already running"), keeps the lock's file
@@ -103,13 +105,23 @@ download_start() {
     DOWNLOAD_PID=""
     DOWNLOAD_START_STATUS=""
     download_pin_status "$2" "$5" "$6" || { DOWNLOAD_START_STATUS=$?; return 1; }
-    if ! stage=$(download_stage "$4"); then DOWNLOAD_START_STATUS=42; return 1; fi
+    download_stage "$4" || { DOWNLOAD_START_STATUS=42; return 1; }
+    stage=$DOWNLOAD_STAGE
     log="$stage/$1.log"
     lock="$stage/$1.lock"
     if ! _dl_clear_nonregular "$log" || ! _dl_clear_nonregular "$lock"; then
+        DOWNLOAD_STAGE_PROBLEM="holds a $1 file that is not a regular file and cannot be removed"
         DOWNLOAD_START_STATUS=42
         return 1
     fi
+    # Whether another download holds the lock, so that the wrapper can say so
+    # instead of starting one that would stop at once. The download takes the
+    # lock itself below, so a download starting in between is still caught.
+    perl -MFcntl=:flock,O_WRONLY,O_APPEND,O_CREAT,O_NOFOLLOW -e '
+        sysopen(my $fh, $ARGV[0], O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0600) or exit 0;
+        flock($fh, LOCK_EX | LOCK_NB) or exit 10;
+        exit 0;' "$lock" 2>/dev/null
+    if [[ $? == 10 ]]; then DOWNLOAD_START_STATUS=10; return 1; fi
     nohup perl -MPOSIX -MFcntl=:flock,F_SETFD,O_WRONLY,O_APPEND,O_CREAT,O_NOFOLLOW -e '
         POSIX::setsid();
         my $lock = shift;
@@ -132,11 +144,11 @@ download_wait() {
     DOWNLOAD_STATUS=""
     if [[ -z "$DOWNLOAD_PID" ]]; then
         DOWNLOAD_STATUS=${DOWNLOAD_START_STATUS:-42}
-        DOWNLOAD_STATE=failed
-        return 0
+        # Another download holds the lock: wait for it as for our own.
+        [[ "$DOWNLOAD_STATUS" == 10 ]] || { DOWNLOAD_STATE=failed; return 0; }
     fi
     while :; do
-        if [[ -z "$DOWNLOAD_STATUS" ]] && ! kill -0 "$DOWNLOAD_PID" 2>/dev/null; then
+        if [[ -z "$DOWNLOAD_STATUS" ]] && [[ -n "$DOWNLOAD_PID" ]] && ! kill -0 "$DOWNLOAD_PID" 2>/dev/null; then
             wait "$DOWNLOAD_PID" 2>/dev/null
             DOWNLOAD_STATUS=$?
         fi
@@ -177,7 +189,7 @@ download_progress() {
 download_failure() {
     local v=${2:+v$2}
     case "$1" in
-        10) echo "another session is downloading it" ;;
+        10) echo "another process is downloading it already" ;;
         70|71) echo "the download could not be started (see its log)" ;;
         127) echo "perl, which the download needs, was not found" ;;
         20) echo "the transfer was interrupted; the next start resumes it" ;;
@@ -188,7 +200,7 @@ download_failure() {
         32) echo "the sha256 this plugin pins for ${v:-this version} is malformed (not 64 lowercase hex digits), so it downloads nothing: update or reinstall the che-telegram-mcp plugin" ;;
         31) echo "the downloaded file does not match its sha256, so it was removed" ;;
         40) echo "the downloaded file could not be put in place in ~/bin" ;;
-        42) echo "its staging directory ~/bin/$DOWNLOAD_STAGE_NAME, or a file in it, is not safe to use: remove the directory and reconnect, and the download creates it anew" ;;
+        42) echo "its staging directory ~/bin/$DOWNLOAD_STAGE_NAME ${DOWNLOAD_STAGE_PROBLEM:-or a file in it is not safe to use}: remove the directory (rm -rf ~/bin/$DOWNLOAD_STAGE_NAME) and reconnect, and the download creates it anew" ;;
         *)  echo "the download stopped with status $1" ;;
     esac
 }
@@ -208,36 +220,37 @@ download_manual_hint() {
 
 # ---------------------------------------------------- the staging directory
 
-# download_stage <install dir>: prints the private staging directory
-# <install dir>/.che-telegram-mcp-download, creating it with mode 700. Fails,
-# saying why on stderr, when it is a symbolic link, not a directory, not the
-# user's, or has any mode but 700. Such a directory is refused, never
-# repaired: while it was open to others, anyone could have left a file in it
-# and kept that file open for writing, and making the directory or the file
-# private afterwards does not take back a descriptor already open. Removing
-# it lets the next start create it anew, empty.
+# download_stage <install dir>: sets DOWNLOAD_STAGE to the private staging
+# directory <install dir>/.che-telegram-mcp-download, creating it with mode
+# 700. Fails, setting DOWNLOAD_STAGE_PROBLEM (a phrase for the wrappers'
+# messages, without double quotes or backslashes) and saying it on stderr,
+# when it is a symbolic link, not a directory, not the user's, or has any mode
+# but 700. Such a directory is refused, never repaired: while it was open to
+# others, anyone could have left a file in it and kept that file open for
+# writing, and making the directory or the file private afterwards does not
+# take back a descriptor already open. Removing it lets the next start create
+# it anew, empty.
 download_stage() {
     local stage="$1/$DOWNLOAD_STAGE_NAME" mode
+    DOWNLOAD_STAGE=""
+    DOWNLOAD_STAGE_PROBLEM=""
     mkdir -p "$1" 2>/dev/null
     [[ -e "$stage" || -L "$stage" ]] || mkdir -m 700 "$stage" 2>/dev/null
     if [[ -L "$stage" ]]; then
-        echo "che-telegram-mcp: $stage is a symbolic link; the download does not use it. Remove it and reconnect." >&2
+        DOWNLOAD_STAGE_PROBLEM="is a symbolic link"
+    elif [[ ! -d "$stage" ]]; then
+        DOWNLOAD_STAGE_PROBLEM="is not a directory"
+    elif [[ ! -O "$stage" ]]; then
+        DOWNLOAD_STAGE_PROBLEM="belongs to another user"
+    else
+        mode=$(stat -f %Lp "$stage" 2>/dev/null)
+        [[ "$mode" == 700 ]] || DOWNLOAD_STAGE_PROBLEM="has mode ${mode:-unknown}, not 700, so files in it may not be the download's own"
+    fi
+    if [[ -n "$DOWNLOAD_STAGE_PROBLEM" ]]; then
+        echo "che-telegram-mcp: $stage $DOWNLOAD_STAGE_PROBLEM; the download does not use it. Remove it (rm -rf ~/bin/$DOWNLOAD_STAGE_NAME) and reconnect: it is created anew." >&2
         return 1
     fi
-    if [[ ! -d "$stage" ]]; then
-        echo "che-telegram-mcp: $stage is not a directory; the download does not use it. Remove it and reconnect." >&2
-        return 1
-    fi
-    if [[ ! -O "$stage" ]]; then
-        echo "che-telegram-mcp: $stage belongs to another user; the download does not use it." >&2
-        return 1
-    fi
-    mode=$(stat -f %Lp "$stage" 2>/dev/null)
-    if [[ "$mode" != 700 ]]; then
-        echo "che-telegram-mcp: $stage has mode ${mode:-unknown}, not 700, so files in it may not be the download's own; the download does not use it. Remove the directory (rm -rf ~/bin/$DOWNLOAD_STAGE_NAME) and reconnect: it is created anew." >&2
-        return 1
-    fi
-    printf '%s' "$stage"
+    DOWNLOAD_STAGE=$stage
 }
 
 # _dl_regular <path>: a regular file, not a symbolic link.
@@ -286,7 +299,8 @@ download_fetch() {
     local binary="$dir/$name" record="$dir/.$name.version"
     local stage part f rc expected checked_against attempt tmp code code_file
 
-    stage=$(download_stage "$dir") || return 42
+    download_stage "$dir" || return 42
+    stage=$DOWNLOAD_STAGE
     part="$stage/$name.$version.part"
     # curl and the pauses between attempts are stopped with this process.
     # They hold the lock too (they inherit its descriptor), so a transfer
