@@ -165,6 +165,18 @@ wait_no_fetch() {
     wait_until "${2:-10}" bash -c "! pgrep -f 'download\\.sh fetch .* $1/bin( |\$)' >/dev/null"
 }
 
+# Where a download keeps its files, for a HOME and a binary name.
+lock_of() { echo "$1/bin/.$2.download.lock"; }
+log_of() { echo "$1/bin/.$2.download.log"; }
+part_of() { echo "$1/bin/.$2.$3.part"; }   # <home> <name> <version>
+
+# hold_lock <lock file>: a process that holds the download lock the way a
+# running download does (flock), until it is killed; prints its PID.
+hold_lock() {
+    perl -MFcntl=:flock -e 'open(my $f, ">>", $ARGV[0]) or die "open: $!"; flock($f, LOCK_EX) or die "flock: $!"; sleep 120' "$1" >/dev/null 2>&1 &
+    echo $!
+}
+
 # alive <pid>: true while the process exists and is not a zombie.
 alive() {
     local state

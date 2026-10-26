@@ -34,8 +34,12 @@
 #      reason says the transfer was interrupted.
 #   And for telegram-all:
 #   8. Two wrappers started together with nothing installed: the asset is
-#      downloaded once, the installed binary is identical to it, and no
-#      partial file or lock is left.
+#      downloaded once, the other download says it is already running, the
+#      installed binary is identical to the asset, and no partial file is left.
+#   9. A process holding the download lock (flock, as a running download
+#      does): a start downloads nothing, says the download is already
+#      running, and leaves the lock alone; once the holder is gone the lock
+#      file it leaves is no obstacle and the next start installs.
 #
 # Usage:
 #   bash tests/che-telegram-mcp/test-wrapper-download.sh
@@ -137,7 +141,7 @@ uses() {
     return 1
 }
 
-asset_calls() { grep -c '/releases/download/' "$1/curl.calls" 2>/dev/null || true; }
+asset_calls() { if [ -f "$1/curl.calls" ]; then grep -c '/releases/download/' "$1/curl.calls" || true; else echo 0; fi; }
 nth_asset_call() { grep '/releases/download/' "$1/curl.calls" 2>/dev/null | sed -n "${2}p"; }
 partials() { find "$1/bin" -name '*.part' 2>/dev/null | sort; }
 
@@ -300,9 +304,26 @@ n=$(asset_calls "$H")
 if [ "$n" = 1 ]; then pass "the asset was downloaded once"; else fail "the asset was downloaded $n times"; fi
 expect_installed "$H" "$ALL" "$DESIRED_VERSION"
 if [ -z "$(partials "$H")" ]; then pass "no partial file left"; else fail "left: $(partials "$H")"; fi
-if [ ! -e "$H/bin/.$ALL.download.lock" ] && [ ! -L "$H/bin/.$ALL.download.lock" ]; then pass "no lock left"; else fail "a lock was left: $(ls -la "$H/bin/.$ALL.download.lock")"; fi
+if grep -q 'download already running' "$(log_of "$H" "$ALL")" 2>/dev/null; then pass "the second download says the download is already running"; else fail "log: $(cat "$(log_of "$H" "$ALL")" 2>/dev/null | tr '\n' ' ')"; fi
 if has_pids "$H" 1; then pass "a binary was started"; else fail "no binary started: $(cat "$H/err1" "$H/err2" | tr '\n' ' ')"; fi
 stop "$W1"; stop "$W2"
+
+# ---------------------------------------- 9. a lock held by a running download
+test_case "telegram-all: a download another process is running is left to it"
+H="$SCRATCH/all-held"; empty_home "$H" all; serve "$H" all
+LOCK=$(lock_of "$H" "$ALL"); mkdir -p "$(dirname "$LOCK")"
+HOLDER=$(hold_lock "$LOCK"); STARTED+=("$HOLDER")
+wait_until 5 test -e "$LOCK" || fail "the holder did not take the lock"
+CHE_TELEGRAM_MCP_INSTALL_WAIT=1 run "$H" all
+wait_no_fetch "$H"
+if [ "$(asset_calls "$H")" = 0 ]; then pass "nothing was downloaded"; else fail "downloaded $(asset_calls "$H") time(s) while another process held the lock"; fi
+if grep -q 'download already running' "$(log_of "$H" "$ALL")" 2>/dev/null; then pass "the log says the download is already running"; else fail "log: $(tail -2 "$(log_of "$H" "$ALL")" 2>/dev/null | tr '\n' ' ')"; fi
+if [ ! -e "$H/bin/$ALL" ]; then pass "nothing installed"; else fail "installed while another process held the lock"; fi
+if [ -f "$LOCK" ] && [ ! -L "$LOCK" ]; then pass "the held lock file is left alone"; else fail "the held lock file was removed or replaced"; fi
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+run "$H" all
+expect_installed "$H" "$ALL" "$DESIRED_VERSION"
+if [ "$RC" = started ]; then pass "with the holder gone, the next start installs and starts it"; else fail "next start: $RC"; fi
 
 echo ""
 echo "Ran $TOTAL test cases, $FAIL failure(s)."

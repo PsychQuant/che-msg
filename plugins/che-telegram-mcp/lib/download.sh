@@ -28,11 +28,17 @@
 #   at 234 KB/s. An HTTP error is not retried (curl's --retry-all-errors would
 #   retry a 404 too, for seconds that a first install does not wait), so a
 #   release without the asset is reported at once.
-# - It has one writer. A lock, a symlink ~/bin/.<Binary>.download.lock whose
-#   target is the downloading process's PID, lets one process at a time write
-#   the partial file. Two wrappers started together both wrote
-#   ~/bin/<Binary>.tmp before, and curl truncates its output file when it
-#   opens it, so the second emptied what the first was still writing.
+# - It has one writer. The download runs holding an flock on
+#   ~/bin/.<Binary>.download.lock, taken by perl before it execs the download,
+#   so the downloading process and everything it starts (curl, shasum, mv)
+#   hold it: the partial file is written, hashed, made executable and moved
+#   into place under the same lock. A second download that finds the lock
+#   held exits at once ("download already running"). The kernel releases an
+#   flock when the last process holding it exits, so a lock can never be left
+#   behind by a download that was killed and there is nothing to take over.
+#   Two wrappers started together both wrote ~/bin/<Binary>.tmp before, and
+#   curl truncates its output file when it opens it, so the second emptied
+#   what the first was still writing.
 # - It installs nothing it has not checked (PsychQuant/che-msg#50). The
 #   finished file's sha256 must equal the one the wrapper pins next to
 #   DESIRED_VERSION (SHA256_PIN, used only while SHA256_PIN_VERSION equals the
@@ -65,18 +71,22 @@ read_version_record() {
 
 # download_start <binary name> <version> <url> <install dir> <pin version>
 # <pin> <release API url>: starts downloading and installing that version in
-# the background and returns at once; sets DOWNLOAD_PID. perl's setsid puts it
-# in a session of its own (macOS has no setsid command); without perl it still
-# runs under nohup, in the wrapper's process group.
+# the background and returns at once; sets DOWNLOAD_PID. perl (which macOS
+# ships, and which shasum needs anyway) puts the download in a session of its
+# own (macOS has no setsid command), takes the download lock without waiting
+# (exit 10 when it is held: "download already running"), keeps the lock's file
+# descriptor open across exec, and execs `download.sh fetch`.
 download_start() {
-    local log="$4/.$1.download.log"
+    local log="$4/.$1.download.log" lock="$4/.$1.download.lock"
     mkdir -p "$4" 2>/dev/null
-    if command -v perl >/dev/null 2>&1; then
-        nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' \
-            /bin/bash "$DOWNLOAD_LIB" fetch "$@" </dev/null >>"$log" 2>&1 &
-    else
-        nohup /bin/bash "$DOWNLOAD_LIB" fetch "$@" </dev/null >>"$log" 2>&1 &
-    fi
+    nohup perl -MPOSIX -MFcntl=:flock,F_SETFD -e '
+        POSIX::setsid();
+        my $lock = shift;
+        open(my $fh, ">>", $lock) or do { print STDERR "cannot open the download lock $lock: $!\n"; exit 70 };
+        flock($fh, LOCK_EX | LOCK_NB) or do { print STDERR "download already running: another process holds $lock\n"; exit 10 };
+        fcntl($fh, F_SETFD, 0) or exit 71;
+        exec @ARGV or exit 71;
+    ' "$lock" /bin/bash "$DOWNLOAD_LIB" fetch "$@" </dev/null >>"$log" 2>&1 &
     DOWNLOAD_PID=$!
 }
 
@@ -131,6 +141,8 @@ download_progress() {
 download_failure() {
     case "$1" in
         10) echo "another session is downloading it" ;;
+        70|71) echo "the download could not be started (see its log)" ;;
+        127) echo "perl, which the download needs, was not found" ;;
         20) echo "the transfer was interrupted; the next start resumes it" ;;
         21) echo "the server answered with an HTTP error, so the release or its asset may not exist" ;;
         23) echo "GitHub could not be reached to look up its sha256; the next start tries again" ;;
@@ -152,38 +164,6 @@ download_manual_hint() {
     echo "    curl -fL -C - $url -o ~/bin/$name.new" >&2
     echo "    shasum -a 256 ~/bin/$name.new    # must print $expected" >&2
     echo "    chmod +x ~/bin/$name.new && mv ~/bin/$name.new ~/bin/$name && echo $version > ~/bin/.$name.version" >&2
-}
-
-# ---------------------------------------------------------------- the lock
-
-# _dl_live_owner <lock>: true when the lock names a running download. A PID
-# that the system has given to another program since does not count.
-_dl_live_owner() {
-    local owner
-    owner=$(readlink "$1" 2>/dev/null) || return 1
-    [[ "$owner" =~ ^[0-9]+$ ]] || return 1
-    kill -0 "$owner" 2>/dev/null || return 1
-    ps -o command= -p "$owner" 2>/dev/null | grep -q 'download\.sh fetch'
-}
-
-# _dl_take_lock <lock>: true when this process now holds the lock. A lock left
-# by a download that no longer runs is taken over. Two processes that find the
-# same stale lock at the same moment can both end up downloading; the partial
-# file may then be damaged, which is why #50 checks the result before it is
-# installed.
-_dl_take_lock() {
-    local owner
-    ln -s "$$" "$1" 2>/dev/null && return 0
-    _dl_live_owner "$1" && return 1
-    owner=$(readlink "$1" 2>/dev/null)
-    [ "$(readlink "$1" 2>/dev/null)" = "$owner" ] && rm -f "$1"
-    ln -s "$$" "$1" 2>/dev/null
-}
-
-# _dl_release_lock <lock>: removes the lock if this process holds it.
-_dl_release_lock() {
-    [ "$(readlink "$1" 2>/dev/null)" = "$$" ] && rm -f "$1"
-    return 0
 }
 
 # ------------------------------------------------------------ the checksum
@@ -214,10 +194,10 @@ _dl_api_digest() {
 # ------------------------------------------------------------ the download
 
 # download_fetch <binary name> <version> <url> <install dir> <pin version>
-# <pin> <release API url>: runs in the process `download.sh fetch` starts.
-# Exit status:
+# <pin> <release API url>: runs in the process download_start starts, which
+# holds the download lock (status 10, "download already running", comes from
+# download_start when it does not get it). Exit status:
 #   0   installed, or another process installed this version meanwhile
-#   10  another download holds the lock; nothing was done
 #   20  the transfer failed; the partial file is kept for the next attempt
 #   21  the server answered with an HTTP error; the partial file is removed
 #   23  the release API could not be reached; nothing was downloaded
@@ -230,24 +210,19 @@ download_fetch() {
     local part="$dir/.$name.$version.part" f rc expected checked_against attempt
 
     mkdir -p "$dir" || return 40
-    DL_LOCK="$dir/.$name.download.lock"
-    if ! _dl_take_lock "$DL_LOCK"; then
-        echo "$name: another process is downloading $name; not starting a second download" >&2
-        DL_LOCK=""
-        return 10
-    fi
-    # The lock goes when this process does, also when it is stopped; curl is
-    # stopped with it, so no transfer outlives the lock it was started under.
+    # curl and the pauses between attempts are stopped with this process.
+    # They hold the lock too (they inherit its descriptor), so a transfer
+    # that outlived this process would keep any other download out.
     DL_CURL=""
-    trap '[ -n "$DL_CURL" ] && kill "$DL_CURL" 2>/dev/null; [ -n "$DL_LOCK" ] && _dl_release_lock "$DL_LOCK"' EXIT
+    trap '[ -n "$DL_CURL" ] && kill "$DL_CURL" 2>/dev/null' EXIT
     trap 'exit 143' TERM INT
     # The log collects every session's downloads; keep it short.
     f="$dir/.$name.download.log"
     [[ -f "$f" ]] && [[ "$(wc -c < "$f" 2>/dev/null)" -gt 262144 ]] && : > "$f"
     echo "$(date '+%Y-%m-%d %H:%M:%S %z') $name: downloading v$version (process $$)" >&2
 
-    # The wrapper decided to download before this process took the lock;
-    # another process may have installed this version since.
+    # The wrapper decided to download before the lock was taken; another
+    # process may have installed this version since.
     if [[ -x "$binary" ]] && version_at_least "$(read_version_record "$record")" "$version"; then
         return 0
     fi
