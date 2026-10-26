@@ -4,7 +4,7 @@ import MCP
 import TelegramAllLib
 
 /// The #33 grouped-id parsers: `parseChatMessageIds`, `parseChatUserIds`, `parseChatForwardIds`, `parseSendMessageIds`.
-/// Moved out of ServerHandlerLogicTests.swift (#26) without changes.
+/// Split out of ServerHandlerLogicTests.swift (#26).
 final class ParseGroupedIdsTests: XCTestCase {
 
     // MARK: - #33: parseChatMessageIds (pin_message / unpin_message / edit_message)

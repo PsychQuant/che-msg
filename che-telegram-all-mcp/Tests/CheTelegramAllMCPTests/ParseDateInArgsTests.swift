@@ -4,7 +4,7 @@ import MCP
 import TelegramAllLib
 
 /// `since_date` / `until_date`: #10 range sanity, #4 date parsing, and the dump's date arguments.
-/// Moved out of ServerHandlerLogicTests.swift (#26) without changes.
+/// Split out of ServerHandlerLogicTests.swift (#26).
 final class ParseDateInArgsTests: XCTestCase {
 
     // MARK: - #10 C2: since_date / until_date range sanity check

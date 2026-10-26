@@ -4,7 +4,7 @@ import MCP
 import TelegramAllLib
 
 /// `parseGetChatHistoryArgs`: #3 auto-pagination when `from_message_id` is 0, required fields, defaults, and #12 numeric-string ids.
-/// Moved out of ServerHandlerLogicTests.swift (#26) without changes.
+/// Split out of ServerHandlerLogicTests.swift (#26).
 final class ParseGetChatHistoryArgsTests: XCTestCase {
 
     // MARK: - #3 regression: fromMsgId==0 auto-pagination

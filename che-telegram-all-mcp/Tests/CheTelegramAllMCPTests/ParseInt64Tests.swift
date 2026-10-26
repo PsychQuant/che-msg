@@ -4,7 +4,7 @@ import MCP
 import TelegramAllLib
 
 /// `int64ArgValueStrict` (#22) and `requiredInt64` (#33), including the #33 verify follow-up on fractional doubles.
-/// Moved out of ServerHandlerLogicTests.swift (#26) without changes.
+/// Split out of ServerHandlerLogicTests.swift (#26).
 final class ParseInt64Tests: XCTestCase {
 
     // MARK: - #22 verify F7: int64ArgValueStrict branch coverage

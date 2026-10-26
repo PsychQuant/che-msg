@@ -4,7 +4,7 @@ import MCP
 import TelegramAllLib
 
 /// `parseLimit` (#25): numeric strictness, the upper cap, and the verify follow-ups.
-/// Moved out of ServerHandlerLogicTests.swift (#26) without changes.
+/// Split out of ServerHandlerLogicTests.swift (#26).
 final class ParseLimitTests: XCTestCase {
 
     // MARK: - #25: parseLimit (numeric arg strictness)

@@ -4,7 +4,7 @@ import MCP
 import TelegramAllLib
 
 /// `parseDumpChatToMarkdownArgs` (#13): required arguments, defaults and caps.
-/// Moved out of ServerHandlerLogicTests.swift (#26) without changes.
+/// Split out of ServerHandlerLogicTests.swift (#26).
 final class ParseDumpArgsTests: XCTestCase {
 
     // MARK: - #13: parseDumpChatToMarkdownArgs

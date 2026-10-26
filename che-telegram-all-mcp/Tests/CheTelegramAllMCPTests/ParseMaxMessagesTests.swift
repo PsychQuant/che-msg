@@ -4,7 +4,7 @@ import MCP
 import TelegramAllLib
 
 /// `max_messages`: #4 explicit override, #8 type enforcement, and #23 the dump's default cap.
-/// Moved out of ServerHandlerLogicTests.swift (#26) without changes.
+/// Split out of ServerHandlerLogicTests.swift (#26).
 final class ParseMaxMessagesTests: XCTestCase {
 
     // MARK: - #4: max_messages explicit override
