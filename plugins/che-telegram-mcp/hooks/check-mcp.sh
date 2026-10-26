@@ -13,6 +13,19 @@ GITHUB_REPO="PsychQuant/che-msg"
 
 # Search locations — MUST match the wrapper's `for loc in ...` list.
 # See bin/che-telegram-{all,bot}-mcp-wrapper.sh.
+PLAIN_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+# read_version_record <file>: its content with surrounding whitespace removed
+# (a trailing CR included); whitespace inside is kept, so "0. 9.0" stays
+# malformed. The same rule as the wrappers' read on #83's branch.
+read_version_record() {
+    local v
+    v=$(cat "$1" 2>/dev/null || true)
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    printf '%s' "$v"
+}
+
 check_binary() {
     local name="$1" pkg_dir="$2" label="$3"
     local found=""
@@ -32,8 +45,9 @@ check_binary() {
         # Read sidecar version (only present for $HOME/bin installs).
         local version_file="$HOME/bin/.${name}.version"
         local installed_version=""
-        [[ -f "$version_file" ]] && installed_version=$(tr -d '[:space:]' < "$version_file" 2>/dev/null || true)
-        if [[ -n "$installed_version" ]]; then
+        [[ -f "$version_file" ]] && installed_version=$(read_version_record "$version_file")
+        # A record that is not x.y.z is reported by notify_if_outdated, not shown here.
+        if [[ "$installed_version" =~ $PLAIN_VERSION ]]; then
             echo "✓ $label v$installed_version installed: $found"
         else
             echo "✓ $label installed: $found"
@@ -52,22 +66,23 @@ fetch_latest_tag() {
         | grep '"tag_name"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/'
 }
 
-# Compares like the wrappers (PsychQuant/che-msg#83, #89): the record trimmed of
-# surrounding whitespace only, both sides plain x.y.z, ordered with sort -V. Since
-# #83 a binary newer than the latest release is kept, so "different" is not "older".
+# Compares the way the wrappers' version check on #83's branch does
+# (PsychQuant/che-msg#83, #89): the record trimmed of surrounding whitespace
+# only, both sides plain x.y.z, ordered with sort -V. The installed binary can be
+# newer than the latest release (a hand-installed build today; any newer binary
+# once the wrappers keep it, #83), so "different" is not "older".
 notify_if_outdated() {
     local name="$1" label="$2" latest="$3"
-    local plain='^[0-9]+\.[0-9]+\.[0-9]+$'
-    [[ "$latest" =~ $plain ]] || return  # API failed / offline / rate-limited / odd tag; stay quiet
     local version_file="$HOME/bin/.${name}.version"
-    local installed=""
-    [[ -f "$version_file" ]] && installed=$(cat "$version_file" 2>/dev/null || true)
-    installed="${installed#"${installed%%[![:space:]]*}"}"
-    installed="${installed%"${installed##*[![:space:]]}"}"
-    [[ -z "$installed" ]] && return  # not a managed install (source build / manual)
-    if [[ ! "$installed" =~ $plain ]]; then
+    [[ -f "$version_file" ]] || return  # not a managed install (source build / manual)
+    local installed
+    installed=$(read_version_record "$version_file")
+    if [[ ! "$installed" =~ $PLAIN_VERSION ]]; then
         echo "⚠️  $label: version record ~/bin/.${name}.version is not a plain x.y.z version"
-    elif [[ "$installed" == "$latest" ]]; then
+        return
+    fi
+    [[ "$latest" =~ $PLAIN_VERSION ]] || return  # API failed / offline / rate-limited / odd tag; stay quiet
+    if [[ "$installed" == "$latest" ]]; then
         return
     elif [[ "$(printf '%s\n%s\n' "$installed" "$latest" | sort -V | head -1)" == "$installed" ]]; then
         echo "⬆️  $label v$installed → v$latest available (wrapper auto-upgrades on next plugin update)"

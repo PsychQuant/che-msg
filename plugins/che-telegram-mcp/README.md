@@ -124,7 +124,7 @@ A **SessionStart hook** (`hooks/check-mcp.sh`) verifies on every session that:
 
 - Both binaries are installed (or buildable from source) — printing the installed version next to `✓`
 - Required Keychain entries exist
-- Compares the sidecar against `releases/latest` and prints `⬆️` when a newer release is available (silent when offline / rate-limited)
+- Compares the sidecar against `releases/latest` and prints `⬆️` when a newer release is available (silent when offline / rate-limited), `ℹ` when the installed binary is newer than the latest release, and `⚠️` when the sidecar is not a plain `x.y.z` version
 
 It prints `⚠️` warnings with copy-pasteable fix commands when something is missing. If you've disabled a server via `disabledMcpjsonServers`, you can ignore its warnings (the hook checks both servers regardless of disable state).
 
