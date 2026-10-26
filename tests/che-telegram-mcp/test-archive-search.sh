@@ -815,6 +815,29 @@ def _case_fold_exact():
     want = E + "x" * 6 + "Needle" + "y" * 6 + E
     check(got == [want, want], f"exact snippets: {got}")
 
+def _case_order_key():
+    case("newest first is date, time, message id; the chat id only breaks a final tie")
+    A = archive()
+    day(A, 100, "2026-09-20", blk(999, "09:00", "Alex", "tie word"), blk(5, "09:00", "Alex", "tie five"))
+    day(A, 200, "2026-09-20", blk(1, "09:00", "Bea", "tie word"), blk(5, "09:00", "Bea", "tie five"))
+    rc, raw, d, err = run(["--archive", A, "--text", "tie word", "--max-results", "1"])
+    check(rc == 0 and cites(d) == ["telegram:100/999"], f"message 999 outranks message 1: {cites(d)}")
+    rc, raw, d, err = run(["--archive", A, "--text", "tie"])
+    check(rc == 0 and cites(d) == ["telegram:100/999", "telegram:200/5", "telegram:100/5", "telegram:200/1"], f"full order: {cites(d)}")
+
+def _case_surrogate():
+    case("an undecodable byte in a path reaches the output as an escape, never raw")
+    # APFS refuses such names, so the path is one that does not exist; the error echoes it.
+    p = subprocess.run([PY, "-I", SEARCH, b"--archive=" + os.fsencode(SCRATCH) + b"/no-\xff-dir/telegram", "--text", "x"],
+                       capture_output=True, timeout=20, cwd=SCRATCH, env=env())
+    try:
+        text = p.stdout.decode("utf-8")
+        d = json.loads(text)
+    except ValueError:
+        text, d = None, None
+    check(p.returncode == 4 and text is not None and b"\xff" not in p.stdout, f"valid UTF-8: rc={p.returncode} {p.stdout[:200]!r}")
+    check(d is not None and chr(0xdcff) in d.get("error", {}).get("message", ""), f"decodes to U+DCFF: {d}")
+
 def _case_nits():
     case("an unreadable archive says it cannot be listed; --chat naming a file is reported")
     A = archive()
@@ -977,7 +1000,7 @@ def _case_28():
     check(listing(os.path.dirname(A)) == before, "archive listing unchanged")
     check(listing(work) == before_cwd == [], "working directory still empty")
 
-CASES = [_case_after_recheck, _case_archive_recheck, _case_inode_recheck, _case_dir_flag, _case_dayfile_swap, _case_fd_limit, _case_topn_memory, _case_budget, _case_caps_more, _case_parse_more, _case_heap_order, _case_fold_exact, _case_nits, _case_82, _case_grapheme, _case_writer_agreement, _case_race, _case_gitenv, _case_globalignore, _case_annotation_cap, _case_rendered_width, _case_digits, _case_memory, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
+CASES = [_case_after_recheck, _case_archive_recheck, _case_inode_recheck, _case_dir_flag, _case_dayfile_swap, _case_fd_limit, _case_topn_memory, _case_budget, _case_caps_more, _case_parse_more, _case_heap_order, _case_fold_exact, _case_order_key, _case_surrogate, _case_nits, _case_82, _case_grapheme, _case_writer_agreement, _case_race, _case_gitenv, _case_globalignore, _case_annotation_cap, _case_rendered_width, _case_digits, _case_memory, _case_0, _case_1, _case_2, _case_3, _case_4, _case_5, _case_6, _case_7, _case_8, _case_9, _case_10, _case_11, _case_12, _case_13, _case_14, _case_15, _case_16, _case_17, _case_18, _case_19, _case_20, _case_21, _case_22, _case_23, _case_24, _case_25, _case_26, _case_27, _case_28]
 for fn in CASES:
     try:
         fn()
