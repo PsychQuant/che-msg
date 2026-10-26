@@ -194,7 +194,7 @@ download_failure() {
         127) echo "perl, which the download needs, was not found" ;;
         20) echo "the transfer was interrupted; the next start resumes it" ;;
         21) echo "the server answered with an HTTP error: there is no such release asset (HTTP 404 or 410)" ;;
-        25) echo "the server answered with an HTTP error it may get over (a 5xx or 429); what was downloaded is kept and the next start tries again" ;;
+        25) echo "the server answered with an HTTP error other than 404 or 410 (for example a 5xx, 429, 401 or 403; the download log has the code); what was downloaded is kept and the next start tries again" ;;
         24) echo "the download failed for a reason other than the network (see its log)" ;;
         30) echo "this plugin has no sha256 for ${v:-this version}, so it downloads nothing it could not check: update or reinstall the che-telegram-mcp plugin" ;;
         32) echo "the sha256 this plugin pins for ${v:-this version} is malformed (not 64 lowercase hex digits), so it downloads nothing: update or reinstall the che-telegram-mcp plugin" ;;
@@ -285,7 +285,7 @@ _dl_sha256() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'; }
 #   20  the transfer failed; the partial file is kept for the next attempt
 #   21  the server has no such asset (HTTP 404 or 410); the partial file is
 #       removed
-#   25  another HTTP error (5xx, 429 after curl's own retries); the partial
+#   25  any other HTTP error (5xx, 429, 401, 403, …; 5xx and 429 after curl's own retries); the partial
 #       file is kept for the next attempt
 #   24  curl failed for a reason other than the network; the partial file
 #       is kept
