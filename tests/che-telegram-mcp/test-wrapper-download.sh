@@ -54,6 +54,10 @@
 #      is refused too, not repaired, even with a genuine partial file in it,
 #      and once it is removed the next start creates it anew with mode 700.
 #      ~/bin holds no temporary file afterwards.
+#  13. An HTTP error the server may get over (503, 429) keeps the partial
+#      file for the next start; one that says there is no such asset (404,
+#      410) removes it. Either way nothing is installed and the reason says
+#      which.
 #  12. A partial file left read-only (a download stopped after making it so,
 #      before moving it into place) is resumed, not refused for good: the
 #      fake curl fails with 23 on a file it cannot write, as curl does.
@@ -167,6 +171,14 @@ uses() {
         esac
     done
     return 1
+}
+
+# expect_reason_text <home> <substring> <what>: telegram-all's answer says so.
+expect_reason_text() {
+    case "$(reason "$1" all)" in
+        *"$2"*) pass "$3" ;;
+        *) fail "$3, it does not: $(reason "$1" all)" ;;
+    esac
 }
 
 asset_calls() { if [ -f "$1/curl.calls" ]; then grep -c '/releases/download/' "$1/curl.calls" || true; else echo 0; fi; }
@@ -444,6 +456,26 @@ run "$H" all
 expect_installed "$H" "$ALL" "$DESIRED_VERSION"
 case "$(nth_asset_call "$H" 1)" in *"-C -"*) pass "the transfer resumed it (-C -)" ;; *) fail "no resumed transfer: $(nth_asset_call "$H" 1)" ;; esac
 if [ "$RC" = started ]; then pass "and the binary started"; else fail "not started ($RC): $(reason "$H" all)"; fi
+
+# --------------------------------------- 13. which HTTP errors keep the partial
+for pair in 503:kept 429:kept 404:removed 410:removed; do
+    code=${pair%%:*}; want=${pair#*:}
+    test_case "telegram-all: HTTP $code: the partial file is $want"
+    H="$SCRATCH/all-http-$code"; empty_home "$H" all; serve "$H" all
+    make_stage "$H"; PART=$(part_of "$H" "$ALL" "$DESIRED_VERSION")
+    head -c 100 "$ASSETS/$ALL" > "$PART"
+    echo "$code" > "$H/fake-curl/asset.status"
+    run "$H" all
+    if [ "$RC" = 1 ] && [ ! -e "$H/bin/$ALL" ]; then pass "nothing installed (exit 1)"; else fail "exit $RC"; fi
+    if [ "$want" = kept ]; then
+        if [ "$(wc -c < "$PART" 2>/dev/null | tr -d ' ')" = 100 ]; then pass "the 100 bytes received are kept"; else fail "the partial file is gone or changed"; fi
+        expect_reason_text "$H" "tries again" "the reason says the next start tries again"
+    else
+        if [ ! -e "$PART" ]; then pass "the partial file is removed"; else fail "the partial file is still there"; fi
+        expect_reason_text "$H" "no such release asset" "the reason says there is no such asset"
+    fi
+    if grep -q "HTTP $code" "$(log_of "$H" "$ALL")" 2>/dev/null; then pass "the log gives HTTP $code"; else fail "log: $(tail -2 "$(log_of "$H" "$ALL")" 2>/dev/null | tr '\n' ' ')"; fi
+done
 
 H="$SCRATCH/all-resume"
 extra=$(cd "$H/bin" && ls -A | grep -v -x -e "$ALL" -e ".$ALL.version" -e "$(basename "$(stage_of "$H")")" || true)

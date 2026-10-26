@@ -23,16 +23,21 @@
 # on, appended. An -o file it cannot write makes it exit 23, as curl does. At or past the end it writes nothing and exits 0, as curl does
 # when a server answers 416 to a resumed request.
 #
+# With -w containing %{http_code} it prints that call's HTTP status (200, the
+# <route>.status, 416 for a resume at the end, 000 when nothing was served) on
+# stdout when it ends, after the body when there is no -o.
+#
 # A route without a body file, and any other URL, exits 1 with no output, so
 # by default every call fails, as the harness's curl did before #56.
 
 echo "$*" >> "$HOME/curl.calls"
 echo $$ >> "$HOME/curl.pids"
 
-out="" url="" fail=no resume=no
+out="" url="" fail=no resume=no wfmt=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -o|--output) out=${2:-}; shift ;;
+        -w|--write-out) wfmt=${2:-}; shift ;;
         -C|--continue-at) [ "${2:-}" = - ] && resume=yes; shift ;;
         --fail|--fail-with-body) fail=yes ;;
         --*) ;;
@@ -42,14 +47,20 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# finish <exit status> <http code>: prints the -w output, then exits.
+finish() {
+    case "$wfmt" in *'%{http_code}'*) printf '%s\n' "$2" ;; esac
+    exit "$1"
+}
+
 case "$url" in
     https://api.github.com/*) route=api ;;
     */releases/download/*)    route=asset ;;
-    *)                        exit 1 ;;
+    *)                        finish 1 000 ;;
 esac
 conf="$HOME/fake-curl"
 body="$conf/$route"
-[ -f "$body" ] || exit 1
+[ -f "$body" ] || finish 1 000
 
 # The k-th call of this route (1-based).
 count_file="$conf/$route.count"
@@ -70,13 +81,14 @@ write() {
 }
 
 if [ -f "$conf/$route.exit" ]; then
-    exit "$(cat "$conf/$route.exit")"
+    finish "$(cat "$conf/$route.exit")" 000
 fi
 
 if [ -f "$conf/$route.status" ]; then
-    [ "$fail" = yes ] && exit 22
+    status=$(cat "$conf/$route.status")
+    [ "$fail" = yes ] && finish 22 "$status"
     write printf 'Not Found'
-    exit 0
+    finish 0 "$status"
 fi
 
 size=$(wc -c < "$body" | tr -d ' ')
@@ -84,7 +96,7 @@ offset=0
 if [ "$resume" = yes ] && [ -n "$out" ] && [ -f "$out" ]; then
     offset=$(wc -c < "$out" | tr -d ' ')
 fi
-[ "$offset" -ge "$size" ] && exit 0
+[ "$offset" -ge "$size" ] && finish 0 416
 
 end=$size cut=no
 limit=$(sed -n "${calls}p" "$conf/$route.cuts" 2>/dev/null)
@@ -94,5 +106,5 @@ case "$limit" in
 esac
 slice() { tail -c +"$((offset + 1))" "$body" | head -c "$((end - offset))"; }
 [ "$end" -gt "$offset" ] && write slice
-[ "$cut" = yes ] && exit 56
-exit 0
+[ "$cut" = yes ] && finish 56 200
+finish 0 200
