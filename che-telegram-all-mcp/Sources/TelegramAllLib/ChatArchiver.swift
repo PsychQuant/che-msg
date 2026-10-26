@@ -60,6 +60,8 @@ public struct ChatArchiver {
         public var mediaSkipped: [SkippedMedia] = []
         public var mediaFailedIds: [Int64] = []
         public var mediaPendingLocalCache = 0
+        /// Messages in range not written because the source gave them no date (local cache only; #75).
+        public var undatedMessagesSkipped = 0
         public var mediaRetriedIds: [Int64]?
         /// Retried ids whose message TDLib says no longer exists (#75); set with `mediaRetriedIds`.
         public var mediaGoneIds: [Int64]?
@@ -93,6 +95,7 @@ public struct ChatArchiver {
                                                           "size": NSNumber(value: $0.size)] }
             object["media_failed_ids"] = mediaFailedIds.map { NSNumber(value: $0) }
             object["media_pending_local_cache"] = mediaPendingLocalCache
+            object["undated_messages_skipped"] = undatedMessagesSkipped
             if let mediaRetriedIds { object["media_retried_ids"] = mediaRetriedIds.map { NSNumber(value: $0) } }
             if let mediaGoneIds { object["media_gone_ids"] = mediaGoneIds.map { NSNumber(value: $0) } }
             if let stoppedReason { object["stopped_reason"] = stoppedReason }
@@ -257,7 +260,10 @@ public struct ChatArchiver {
         var byDay: [String: [ArchiveMessage]] = [:]
         var media: [Int64: Bool] = [:]
         for message in messages {
-            guard let id = Self.id(of: message), let date = messageDate(message) else { continue }
+            guard let id = Self.id(of: message) else { continue }
+            // Without a date there is no day to file it under. Only the local cache gives such a
+            // message, and that run never advances the bookmark, so a later TDLib run adds it.
+            guard let date = messageDate(message) else { result.undatedMessagesSkipped += 1; continue }
             let type = (message["type"] as? String) ?? "other"
             let body = ArchiveDayFile.body(type: type, text: message["text"] as? String,
                                            caption: message["caption"] as? String, messageId: id)

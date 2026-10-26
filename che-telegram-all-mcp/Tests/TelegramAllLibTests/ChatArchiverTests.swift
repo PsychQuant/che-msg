@@ -177,6 +177,7 @@ final class ChatArchiverTests: XCTestCase {
         XCTAssertEqual(object["complete"] as? Bool, true)
         XCTAssertEqual(object["bookmark_safe"] as? Bool, true)
         XCTAssertNil(object["bookmark_unsafe_reason"])
+        XCTAssertEqual(object["undated_messages_skipped"] as? Int, 0, "always present (#75)")
         for secret in ["secret caption", "secret text", "Secret Name"] {
             XCTAssertFalse(json.contains(secret), secret)
         }

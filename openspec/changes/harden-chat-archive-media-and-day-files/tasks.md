@@ -24,8 +24,8 @@
 
 ## 6. 無日期的訊息計數（#75 item 3）
 
-- [ ] 6.1 先寫失敗的測試（Requirement: Archive from the local cache 的 Scenario: Cache record without a date；Requirement: Content-free manifest 的 Scenario: Manifest after a first run 的 `undated_messages_skipped`）：本機快取回 30 與沒有日期的 20 時，只寫 30，`undatedMessagesSkipped` 為 1、`new_messages` 為 1、manifest JSON 有 `undated_messages_skipped: 1`；一般的 TDLib 呼叫 manifest 有 `undated_messages_skipped: 0`。驗證：`swift test --filter LocalCacheArchiveTests` 與 `--filter ChatArchiverTests` 先失敗
-- [ ] 6.2 依設計「無日期的訊息：計數，不改書籤規則」實作計數與 manifest 欄位。驗證：6.1 的測試通過 [after: 6.1]
+- [x] 6.1 先寫失敗的測試（Requirement: Archive from the local cache 的 Scenario: Cache record without a date；Requirement: Content-free manifest 的 Scenario: Manifest after a first run 的 `undated_messages_skipped`）：本機快取回 30 與沒有日期的 20 時，只寫 30，`undatedMessagesSkipped` 為 1、`new_messages` 為 1、manifest JSON 有 `undated_messages_skipped: 1`；一般的 TDLib 呼叫 manifest 有 `undated_messages_skipped: 0`。驗證：`swift test --filter LocalCacheArchiveTests` 與 `--filter ChatArchiverTests` 先失敗
+- [x] 6.2 依設計「無日期的訊息：計數，不改書籤規則」實作計數與 manifest 欄位。驗證：6.1 的測試通過 [after: 6.1]
 
 ## 7. skill 與文件
 

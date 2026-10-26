@@ -71,4 +71,21 @@ final class LocalCacheArchiveTests: XCTestCase {
         let text = try String(contentsOf: dir.appendingPathComponent("777/2026-10-11.md"), encoding: .utf8)
         XCTAssertTrue(text.contains("**08:03 User 1001**："), text)
     }
+
+    // Scenario "Cache record without a date" (#75): not written (its day is unknown), but counted.
+    func testUndatedCacheRecordIsCountedAndNotWritten() async throws {
+        var undated = local(20, 2)
+        undated["date"] = nil
+        let reader = StrictReader([local(30, 3), undated])
+        let dir = outputDir()
+        let result = try await ChatArchiver.localCache(LocalCacheHistorySource(reader: reader))
+            .archive(.init(chatId: 777, outputDir: dir, utcOffset: "+08:00"))
+        XCTAssertEqual(result.newMessages, 1)
+        XCTAssertEqual(result.undatedMessagesSkipped, 1)
+        XCTAssertFalse(result.bookmarkSafe, "a later TDLib run of the same range adds it")
+        let text = try String(contentsOf: dir.appendingPathComponent("777/2026-10-11.md"), encoding: .utf8)
+        XCTAssertEqual(ArchiveDayFile.parseBlocks(text).map(\.id), [30])
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.manifestJSON().utf8)) as? [String: Any])
+        XCTAssertEqual(object["undated_messages_skipped"] as? Int, 1)
+    }
 }
