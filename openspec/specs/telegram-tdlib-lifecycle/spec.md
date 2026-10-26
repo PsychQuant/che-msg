@@ -546,7 +546,13 @@ code:
 ---
 ### Requirement: Wrapper reports why it did not start
 
-The wrapper SHALL exit before starting the server in exactly three cases: the API credentials `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are missing from the Keychain; the server binary is neither installed nor obtainable (no release asset found, or the download failed); or the binary it would run is older than 0.6.0, judged by the binary's own answer to `--version`, run without Telegram credentials and stopped after 5 seconds (binaries before 0.6.0 give no answer and open TDLib without the server-side lock). In all three cases it SHALL exit with status 1 without starting the server and SHALL write to stdout one JSON-RPC 2.0 error answering the pending `initialize` request: the request's `id`, `error.code` -32000, an `error.message` naming the cause, and `error.data.docsUrl` pointing at the section "When telegram-all does not start" of the plugin README.
+The wrapper SHALL exit before starting the server in exactly three cases: the API credentials `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` are missing from the Keychain; no server binary it can run is installed and none could be installed before it answers (no release asset found, the download failed, or the download is still running in the background when the first-install wait ends); or the binary it would run is older than 0.7.0, judged by the binary's own answer to `--version`, run without Telegram credentials and stopped after 5 seconds (binaries before 0.6.0 give no answer and open TDLib without the server-side lock; 0.6.x binaries send Telegram's log-out from `logout`, which makes TDLib delete its local database). In all three cases it SHALL exit with status 1 without starting the server, SHALL write the cause to stderr, and SHALL answer the first message it reads on stdin as follows:
+
+- an `initialize` request, or a first line without a method: one JSON-RPC 2.0 error with the request's `id` (`null` when there is none), `error.code` -32000, an `error.message` naming the cause, and `error.data.docsUrl` pointing at the section "When telegram-all does not start" of the plugin README;
+- a request for any other method, such as `server/discover`: one JSON-RPC 2.0 error with that request's `id` and `error.code` -32601 (method not found), and not the -32000 error;
+- a notification for any other method: no answer.
+
+What the client displays of either answer is outside this requirement.
 
 #### Scenario: Missing credentials answer the initialize request
 
@@ -564,6 +570,25 @@ The wrapper SHALL exit before starting the server in exactly three cases: the AP
 
 - **WHEN** the installed binary is 0.5.0, the download of the pinned version fails, and Claude Code sends an `initialize` request
 - **THEN** the wrapper does not start the 0.5.0 binary as the server, answers the request with the JSON-RPC error carrying `error.data.docsUrl`, and exits with status 1
+
+#### Scenario: Only a 0.6.x binary after a failed upgrade
+
+- **WHEN** the installed binary is 0.6.0, the download of the pinned version fails, and Claude Code sends an `initialize` request
+- **THEN** the wrapper does not start the 0.6.0 binary as the server, answers the request with the JSON-RPC error carrying `error.data.docsUrl` and a message that says its `logout` deletes the local TDLib database, and exits with status 1
+
+#### Scenario: A first request other than initialize
+
+- **WHEN** the Keychain holds no `TELEGRAM_API_ID` and the first message Claude Code sends is a `server/discover` request with id 1
+- **THEN** the only line on stdout is a JSON-RPC 2.0 error with `id` 1 and `error.code` -32601, no -32000 error is written, the cause is on stderr, the wrapper exits with status 1, and no server process is started
+
+##### Example: first messages
+
+| First message on stdin | Answer on stdout |
+| ---------------------- | ---------------- |
+| `initialize` request, id 7 | -32000 error, id 7, with `error.data.docsUrl` |
+| `server/discover` request, id 1 | -32601 error, id 1 |
+| `server/discover` request, id `"probe-1"` | -32601 error, id `"probe-1"` |
+| notification `notifications/initialized` | none |
 
 <!-- @trace
 source: telegram-all-sqlite-reader
