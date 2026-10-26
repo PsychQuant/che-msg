@@ -214,8 +214,14 @@ download_manual_hint() {
     [[ "$4" == "$2" && -n "$5" ]] && expected=$5
     echo "  To install it by hand (see Manual install in the che-telegram-mcp README):" >&2
     echo "    curl -fL -C - $url -o ~/bin/$name.new" >&2
-    echo "    shasum -a 256 ~/bin/$name.new    # must print $expected" >&2
-    echo "    chmod +x ~/bin/$name.new && mv ~/bin/$name.new ~/bin/$name && echo $version > ~/bin/.$name.version" >&2
+    if [[ "$4" == "$2" && -n "$5" ]]; then
+        # The move happens only when the hash matches, so pasting all lines is safe.
+        echo "    [ \"\$(shasum -a 256 ~/bin/$name.new | cut -d' ' -f1)\" = $expected ] && chmod +x ~/bin/$name.new && mv ~/bin/$name.new ~/bin/$name && echo $version > ~/bin/.$name.version" >&2
+    else
+        echo "    shasum -a 256 ~/bin/$name.new    # compare with $expected" >&2
+        echo "  and only if it matches:" >&2
+        echo "    chmod +x ~/bin/$name.new && mv ~/bin/$name.new ~/bin/$name && echo $version > ~/bin/.$name.version" >&2
+    fi
 }
 
 # ---------------------------------------------------- the staging directory
