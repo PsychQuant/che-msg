@@ -36,12 +36,13 @@
 #
 # The .mcpb bundles hold the mcpb files of the commit printed at the start,
 # whatever the working tree holds or HEAD becomes; a package with no mcpb
-# directory at that commit gets no bundle. Before signing, otool checks that
-# no binary needs a Swift back-deployment library at launch, which the
-# release does not ship (PsychQuant/che-msg#91). The --version of telegram-all
-# and of CheSlackMCP is checked before signing and, in the signing modes, once
-# more on the signed binary, so every signed build launches each of those
-# hardened-runtime binaries once (the bot has no --version).
+# directory at that commit gets no bundle. Every binary is built and checked
+# before any is signed: otool checks that every library they need at launch
+# comes with macOS, since the release ships no library (it caught Swift's
+# back-deployment library, PsychQuant/che-msg#91), and the --version of
+# telegram-all and of CheSlackMCP is checked (the bot has no --version). In
+# the signing modes that --version is checked once more on the signed binary,
+# so every signed build launches each of those hardened-runtime binaries once.
 # Before the full mode writes .build/dist/vX it checks again that HEAD is that
 # commit and the tree passes the same gate; an edit made and undone while the
 # build runs is not noticed (PsychQuant/che-msg#94). The output directory
@@ -89,7 +90,7 @@ esac
 
 echo "=== build-release: v$X, mode $MODE ==="
 echo ""
-echo "[1/4] Checking versions..."
+echo "[1/5] Checking versions..."
 if [[ "$MODE" == full ]]; then
     "$SCRIPT_DIR/check-versions.sh" --root "$ROOT"
 else
@@ -97,7 +98,7 @@ else
 fi
 
 echo ""
-echo "[2/4] Checking the commit and the signing setup..."
+echo "[2/5] Checking the commit and the signing setup..."
 COMMIT=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null) || { echo "Error: $ROOT has no commit to build from." >&2; exit 1; }
 SOURCE_PATHS=()
 for entry in "${PACKAGES[@]}"; do SOURCE_PATHS+=("${entry%%:*}/Sources" ":(glob)${entry%%:*}/Package*.swift"); done
@@ -208,13 +209,14 @@ build_arch() {
     [[ "$archs" == "$arch" ]] || { echo "Error: the $arch build of $bin contains '$archs'" >&2; exit 1; }
 }
 
-# check_load_commands <binary> <name>: no architecture of the binary needs one
-# of Swift's back-deployment libraries (@rpath/libswiftCompatibility*.dylib) at
-# launch. The toolchain links one when the deployment target is older than the
-# macOS that has it built in (libswiftCompatibilitySpan: macOS 26). The release
-# does not ship it, so dyld stops the binary on an older macOS, though it starts
-# on the build machine, whose /usr/lib/swift has it (PsychQuant/che-msg#91).
-# A weak load (LC_LOAD_WEAK_DYLIB) does not stop the binary and is allowed.
+# check_load_commands <binary> <name>: every library the binary needs at
+# launch comes with macOS (its path starts with /usr/lib/ or /System/Library/),
+# because the release ships the binary alone. What went wrong before: with a
+# deployment target older than macOS 26, the toolchain links Swift's
+# back-deployment library @rpath/libswiftCompatibilitySpan.dylib, which macOS
+# 26 has built in and older systems do not, and the binary still starts on the
+# build machine (PsychQuant/che-msg#91). A weak load (LC_LOAD_WEAK_DYLIB) does
+# not stop the binary when the library is missing, and is allowed.
 check_load_commands() {
     local listing="$STAGE/load-commands-$2" archs slices needed
     # From a file, so a failed otool stops the build instead of reading as
@@ -230,17 +232,20 @@ check_load_commands() {
         echo "Error: otool lists load commands for $slices of the $archs architectures in $2:" >&2
         tail -n 5 "$listing" | sed 's/^/         /' >&2; exit 1; }
     # Every dylib load but the weak one: dyld needs the library at launch (a
-    # lazy load, where the binary first uses it).
+    # lazy load, where the binary first uses it). The name is everything
+    # between "name " and " (offset N)", spaces included.
     needed=$(awk '
         / \(architecture [^ ]+\):$/ { arch = $NF; sub(/\):$/, "", arch) }
         $1 == "cmd" { cmd = $2 }
-        $1 == "name" && cmd ~ /^LC_(LOAD|REEXPORT|LOAD_UPWARD|LAZY_LOAD)_DYLIB$/ && $2 ~ /^@rpath\/libswiftCompatibility/ {
-            print "         " $2 " (" cmd (arch == "" ? "" : ", " arch) ")" }' "$listing")
+        $1 == "name" && cmd ~ /^LC_(LOAD|REEXPORT|LOAD_UPWARD|LAZY_LOAD)_DYLIB$/ {
+            name = $0; sub(/^[ \t]*name /, "", name); sub(/ \(offset [0-9]+\)$/, "", name)
+            if (name !~ /^\/(usr\/lib|System\/Library)\//)
+                print "         " name " (" cmd (arch == "" ? "" : ", " arch) ")" }' "$listing")
     [[ -z "$needed" ]] || {
-        echo "Error: $2 loads a Swift back-deployment library that the release does not ship:" >&2
+        echo "Error: $2 loads a library that macOS does not provide and the release does not ship:" >&2
         printf '%s\n' "$needed" >&2
-        echo "       dyld stops it at launch on a macOS that does not have the library built in," >&2
-        echo "       though it starts on this machine (PsychQuant/che-msg#91)." >&2
+        echo "       dyld stops it at launch on a Mac without that library, even if it starts on" >&2
+        echo "       this one (PsychQuant/che-msg#91)." >&2
         exit 1; }
 }
 
@@ -261,8 +266,10 @@ check_version() {
         echo "Error: $2 reports \"$reported\" and exits with $status within ${VERSION_CHECK_TIMEOUT}s, expected \"$expected\" and 0" >&2; exit 1; }
 }
 
+# Every binary is built and checked before any is signed, so a wrong build
+# of one is never sent to Apple (PsychQuant/che-msg#91).
 echo ""
-echo "[3/4] Building, signing and packing..."
+echo "[3/5] Building and checking the binaries..."
 for entry in "${PACKAGES[@]}"; do
     pkg=${entry%%:*}
     bin=${entry#*:}
@@ -279,13 +286,20 @@ for entry in "${PACKAGES[@]}"; do
     chmod +x "$UNIVERSAL"
     archs=$(lipo -archs "$UNIVERSAL" | tr ' ' '\n' | sort | tr '\n' ' ')
     [[ "$archs" == "arm64 x86_64 " ]] || { echo "Error: $bin has architectures '$archs'" >&2; exit 1; }
-
-    # Checked before signing, so a wrong build is not sent to Apple first.
     check_load_commands "$UNIVERSAL" "$bin"
     if [[ "$VERSION_CHECKED" == *" $bin "* ]]; then
         check_version "$UNIVERSAL" "$bin" "$pkg"
     fi
+done
 
+echo ""
+echo "[4/5] Signing and packing..."
+for entry in "${PACKAGES[@]}"; do
+    pkg=${entry%%:*}
+    bin=${entry#*:}
+    UNIVERSAL="$STAGE/$bin"
+    echo ""
+    echo "--- $pkg ($bin) ---"
     case "$MODE" in
         full)      "$SCRIPT_DIR/sign-and-notarize.sh" "$UNIVERSAL" ;;
         sign-only) "$SCRIPT_DIR/sign-and-notarize.sh" --sign-only "$UNIVERSAL" ;;
@@ -338,10 +352,11 @@ for entry in "${PACKAGES[@]}"; do
     if [[ -f "$OUT/$pkg.mcpb" ]]; then write_sha256 "$OUT/$pkg.mcpb"; fi
 done
 
-# The checkout stays open through the notarization waits: a commit, a branch
-# switch or an edit there reaches a later package's build while the output
-# still names commit $COMMIT. So before anything appears in .build/dist/vX,
-# the full mode checks again that HEAD is that commit and the tree clean.
+# The checkout stays open while the packages build and through the
+# notarization waits: a commit, a branch switch or an edit while a later
+# package builds reaches its binary while the output still names commit
+# $COMMIT. So before anything appears in .build/dist/vX, the full mode checks
+# again that HEAD is that commit and the tree clean.
 if [[ "$MODE" == full ]]; then
     HEAD_NOW=$(git -C "$ROOT" rev-parse HEAD)
     CHANGES=$(uncommitted_changes)
@@ -359,7 +374,7 @@ mkdir -p "$(dirname "$DIST")"
 mv "$OUT" "$DIST"
 
 echo ""
-echo "[4/4] Release files in ${DIST#"$ROOT/"}, built from commit $COMMIT:"
+echo "[5/5] Release files in ${DIST#"$ROOT/"}, built from commit $COMMIT:"
 (cd "$DIST" && for f in *; do [[ "$f" == *.sha256 ]] || printf '  %-28s %s\n' "$f" "$(cat "$f.sha256")"; done)
 echo ""
 case "$MODE" in

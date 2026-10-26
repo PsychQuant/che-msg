@@ -60,7 +60,8 @@
 #      they hold the committed manifest; a commit made during a --sign-only
 #      build does not reach its bundles.
 #  17. The checkout changes during a full build (a commit, an edit to a tracked
-#      file, an untracked file in Sources): refused after all three notarizations,
+#      file, an untracked file in Sources), while the bot package builds or
+#      during the first notarization: refused after all three notarizations,
 #      naming the change, with no .build/dist/vX and no staging left (#94).
 #  18. A git ls-tree that starts listing and then fails, for the symlink scan
 #      or for packing: refused, nothing in dist, no temporary file left (#94).
@@ -72,14 +73,19 @@
 #      its Package.resolved, its Sources and a symlink in it are checked like
 #      the Telegram packages'; a Slack pin that disagrees with X stops the
 #      build before anything is built.
-#  20. A binary that loads @rpath/libswiftCompatibilitySpan.dylib, not weakly,
-#      though it starts on this machine and answers --version: refused before
-#      it is signed, naming the library and each architecture that loads it,
-#      nothing in dist; for telegram-all in the full mode, with --sign-only
-#      and unsigned, for the bot binary, and for a bot binary whose x86_64
-#      slice alone loads it. Binaries that load it weakly are released. An
-#      otool that fails, or lists no load commands and exits 0, stops the
-#      build before anything is signed (#91).
+#  20. A binary that needs, at launch, a library macOS does not provide (#91):
+#      @rpath/libswiftCompatibilitySpan.dylib loaded with LC_LOAD_DYLIB, though
+#      the binary starts on this machine and answers --version, by telegram-all
+#      in the full mode, with --sign-only and unsigned, by the bot binary, and
+#      by the x86_64 slice alone of the bot binary; the same library re-exported
+#      (LC_REEXPORT_DYLIB) by telegram-all; and, in the bot binary,
+#      @rpath/libswiftCompatibility56.dylib, an absolute path outside
+#      /usr/lib and /System/Library (with a space in it) and an @loader_path
+#      library. Each is refused before anything is signed or notarized, also
+#      when only the bot binary needs one, naming each library with its load
+#      command and architecture, and nothing is in dist. Binaries that load
+#      the library weakly are released. An otool that fails, or lists no load
+#      commands and exits 0, stops the build before anything is signed.
 #
 # Usage:
 #   bash tests/release/test-build-release.sh
@@ -134,13 +140,24 @@ printf 'int main(void) { return 0; }\n' > "$PROGS/bot.c"
 # toolchain links (#91). The programs that load it find it through an rpath,
 # as the real binaries find it in /usr/lib/swift on a build machine with
 # macOS 26 or later, so they start here and pass the --version check.
-mkdir -p "$PROGS/swiftlib"
-printf 'int span_stand_in(void) { return 1; }\n' > "$PROGS/swiftlib/span.c"
-cc -arch arm64 -arch x86_64 -dynamiclib -install_name @rpath/libswiftCompatibilitySpan.dylib \
-    -o "$PROGS/swiftlib/libswiftCompatibilitySpan.dylib" "$PROGS/swiftlib/span.c" ||
-    { echo "ERROR: cc cannot build a dylib" >&2; exit 1; }
+# The other libraries stand in for what else macOS does not provide: another
+# back-deployment library, an absolute path outside the system (with a space,
+# so the whole name has to be read) and one next to the binary.
+mkdir -p "$PROGS/swiftlib" "$PROGS/other libs"
+printf 'int stand_in(void) { return 1; }\n' > "$PROGS/swiftlib/stand_in.c"
+make_dylib() { cc -arch arm64 -arch x86_64 -dynamiclib -install_name "$1" -o "$2" "$PROGS/swiftlib/stand_in.c" ||
+    { echo "ERROR: cc cannot build a dylib" >&2; exit 1; }; }
+make_dylib @rpath/libswiftCompatibilitySpan.dylib "$PROGS/swiftlib/libswiftCompatibilitySpan.dylib"
+make_dylib @rpath/libswiftCompatibility56.dylib "$PROGS/swiftlib/libswiftCompatibility56.dylib"
+# ld drops a doubled slash from an install name (TMPDIR often ends in /).
+OTHER_LIB="$(cd "$PROGS/other libs" && pwd -P)/libextra.dylib"
+make_dylib "$OTHER_LIB" "$OTHER_LIB"
+make_dylib @loader_path/libnext.dylib "$PROGS/swiftlib/libnext.dylib"
 NEEDS_SPAN=("-Wl,-rpath,$PROGS/swiftlib" "$PROGS/swiftlib/libswiftCompatibilitySpan.dylib")
+REEXPORTS_SPAN=("-Wl,-rpath,$PROGS/swiftlib" "-Wl,-reexport_library,$PROGS/swiftlib/libswiftCompatibilitySpan.dylib")
 WEAK_SPAN=("-Wl,-weak_library,$PROGS/swiftlib/libswiftCompatibilitySpan.dylib")
+NEEDS_OTHERS=("-Wl,-rpath,$PROGS/swiftlib" "$PROGS/swiftlib/libswiftCompatibility56.dylib"
+              "$OTHER_LIB" "$PROGS/swiftlib/libnext.dylib")
 for arch in arm64 x86_64; do
     ALL=-DNAME='"che-telegram-all-mcp"' SLACK=-DNAME='"che-slack-mcp"'
     if ! { cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/CheTelegramAllMCP-$arch" "$PROGS/all.c" &&
@@ -149,12 +166,14 @@ for arch in arm64 x86_64; do
            cc -arch "$arch" "$ALL" -DHANG=0 -DEXIT=3 -DVERSION="\"$X\"" -o "$PROGS/FailsAfterVersion-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/AllNeedsSpan-$arch" "$PROGS/all.c" "${NEEDS_SPAN[@]}" &&
            cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/AllWeakSpan-$arch" "$PROGS/all.c" "${WEAK_SPAN[@]}" &&
+           cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/AllReexportsSpan-$arch" "$PROGS/all.c" "${REEXPORTS_SPAN[@]}" &&
            cc -arch "$arch" "$SLACK" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/CheSlackMCP-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" "$SLACK" -DHANG=0 -DVERSION="\"0.0.1\"" -o "$PROGS/SlackWrongVersion-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" "$SLACK" -DHANG=1 -DVERSION="\"$X\"" -o "$PROGS/SlackHang-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" -o "$PROGS/CheTelegramBotMCP-$arch" "$PROGS/bot.c" &&
            cc -arch "$arch" -o "$PROGS/BotNeedsSpan-$arch" "$PROGS/bot.c" "${NEEDS_SPAN[@]}" &&
-           cc -arch "$arch" -o "$PROGS/BotWeakSpan-$arch" "$PROGS/bot.c" "${WEAK_SPAN[@]}"; }; then
+           cc -arch "$arch" -o "$PROGS/BotWeakSpan-$arch" "$PROGS/bot.c" "${WEAK_SPAN[@]}" &&
+           cc -arch "$arch" -o "$PROGS/BotNeedsOthers-$arch" "$PROGS/bot.c" "${NEEDS_OTHERS[@]}"; }; then
         echo "ERROR: cc cannot build for $arch" >&2; exit 1
     fi
 done
@@ -207,6 +226,11 @@ PINNED=(
 #                           @rpath/libswiftCompatibilitySpan.dylib, not weakly
 #            bot-needs-span  the bot build does
 #            bot-x86-needs-span  only the x86_64 build of the bot binary does
+#            all-reexports-span  the telegram-all build re-exports it
+#            bot-needs-others  the bot build loads
+#                           @rpath/libswiftCompatibility56.dylib, a library by an
+#                           absolute path outside the system and an
+#                           @loader_path one
 #            weak-span      both builds load it weakly
 # FAKE_MODE, when set, is passed to the fake signing tools.
 make_repo() {
@@ -224,6 +248,8 @@ make_repo() {
         all-needs-span) all_prog=AllNeedsSpan ;;
         bot-needs-span) bot_prog=BotNeedsSpan ;;
         bot-x86-needs-span) bot_prog=BotNeedsSpanX86 ;;
+        all-reexports-span) all_prog=AllReexportsSpan ;;
+        bot-needs-others) bot_prog=BotNeedsOthers ;;
         weak-span) all_prog=AllWeakSpan; bot_prog=BotWeakSpan ;;
     esac
     mkdir -p "$repo/scripts/release" "$base/swiftbin"
@@ -243,6 +269,13 @@ make_repo() {
     git clone -q --bare "$repo" "$base/origin.git" && git -C "$repo" remote add origin "$base/origin.git" || exit 1
     : > "$base/calls"
     make_fake_signing_tools "$base/fakebin" "$base/calls" "${FAKE_MODE:-}"
+    mv "$base/fakebin/xcrun" "$base/fakebin/xcrun-fake"
+    cat > "$base/fakebin/xcrun" <<EOF
+#!/bin/bash
+if [ "\$1 \$2" = "notarytool submit" ] && [ -x "$base/hook-notarize" ]; then "$base/hook-notarize"; rm -f "$base/hook-notarize"; fi
+exec "$base/fakebin/xcrun-fake" "\$@"
+EOF
+    chmod +x "$base/fakebin/xcrun"
     if [ -n "$signed_bin" ]; then
         mv "$base/fakebin/codesign" "$base/fakebin/codesign-fake"
         cat > "$base/fakebin/codesign" <<EOF
@@ -312,9 +345,12 @@ run_make() {
         make "$@" 2>&1); RC=$?
 }
 # during_build <repo> <command>: the fake swift runs <command> once, right
-# before the bot package is built: after telegram-all was signed and, in the
-# full mode, notarized, as an edit during the notarization wait would be.
+# before the bot package is built: after telegram-all was built and checked,
+# before anything is signed, as an edit while the build runs would be.
 during_build() { printf '#!/bin/bash\n%s\n' "$2" > "$1/../hook"; chmod +x "$1/../hook"; }
+# during_notarization <repo> <command>: the fake xcrun runs <command> once, at
+# the first notarization submission, as an edit during that wait would be.
+during_notarization() { printf '#!/bin/bash\n%s\n' "$2" > "$1/../hook-notarize"; chmod +x "$1/../hook-notarize"; }
 commit_in() { git -C "$1" -c user.name=t -c user.email=t@example.invalid commit -q "${@:2}"; }
 calls() { grep "^$2" "$1/../calls"; }
 expect_no_build() {
@@ -464,15 +500,25 @@ build "$R" "${SIGN_ENV[@]}" --
 if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'x86_64'; then pass "refused, naming x86_64"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
 
 # ------------------------------------------ back-deployment libraries (#91)
-test_case "a binary that loads a Swift back-deployment library, not weakly (#91)"
+test_case "a binary that needs a library macOS does not provide (#91)"
 SPAN=@rpath/libswiftCompatibilitySpan.dylib
-if [ "$("$PROGS/AllNeedsSpan-arm64" --version 2>&1)" = "che-telegram-all-mcp $X" ]; then pass "fixture: a telegram-all binary that loads it starts here"; else fail "fixture: it does not start: $("$PROGS/AllNeedsSpan-arm64" --version 2>&1 | head -2)"; fi
-for run in all-needs-span:full all-needs-span:sign-only all-needs-span:unsigned bot-needs-span:full bot-x86-needs-span:full; do
+for prog in AllNeedsSpan AllReexportsSpan; do
+    if [ "$("$PROGS/$prog-arm64" --version 2>&1)" = "che-telegram-all-mcp $X" ]; then pass "fixture: $prog starts here"; else fail "fixture: $prog does not start: $("$PROGS/$prog-arm64" --version 2>&1 | head -2)"; fi
+done
+if otool -l "$PROGS/AllReexportsSpan-arm64" | grep -q 'cmd LC_REEXPORT_DYLIB'; then pass "fixture: AllReexportsSpan re-exports it"; else fail "fixture: no LC_REEXPORT_DYLIB in AllReexportsSpan"; fi
+for run in all-needs-span:full all-needs-span:sign-only all-needs-span:unsigned bot-needs-span:full bot-x86-needs-span:full \
+           all-reexports-span:full bot-needs-others:full; do
     variant=${run%%:*}; mode=${run#*:}
+    # named: "<library>|<load command>|<architectures>", one per library
     case "$variant" in
-        all-needs-span)     bin=CheTelegramAllMCP; loads="arm64 x86_64"; clean="" ;;
-        bot-needs-span)     bin=CheTelegramBotMCP; loads="arm64 x86_64"; clean="" ;;
-        bot-x86-needs-span) bin=CheTelegramBotMCP; loads=x86_64; clean=arm64 ;;
+        all-needs-span)     bin=CheTelegramAllMCP; named=("$SPAN|LC_LOAD_DYLIB|arm64 x86_64"); clean="" ;;
+        bot-needs-span)     bin=CheTelegramBotMCP; named=("$SPAN|LC_LOAD_DYLIB|arm64 x86_64"); clean="" ;;
+        bot-x86-needs-span) bin=CheTelegramBotMCP; named=("$SPAN|LC_LOAD_DYLIB|x86_64"); clean=arm64 ;;
+        all-reexports-span) bin=CheTelegramAllMCP; named=("$SPAN|LC_REEXPORT_DYLIB|arm64 x86_64"); clean="" ;;
+        bot-needs-others)   bin=CheTelegramBotMCP; clean=""
+                            named=("@rpath/libswiftCompatibility56.dylib|LC_LOAD_DYLIB|arm64 x86_64"
+                                   "$OTHER_LIB|LC_LOAD_DYLIB|arm64 x86_64"
+                                   "@loader_path/libnext.dylib|LC_LOAD_DYLIB|arm64 x86_64") ;;
     esac
     R=$(make_repo "$variant-$mode" "$variant")
     case "$mode" in
@@ -480,14 +526,20 @@ for run in all-needs-span:full all-needs-span:sign-only all-needs-span:unsigned 
         sign-only) build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; DIST="$R/.build/dist/v$X-sign-only" ;;
         unsigned)  build "$R" --; DIST="$R/.build/dist/v$X-unsigned" ;;
     esac
-    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF "$bin loads a Swift back-deployment library"; then pass "$variant, $mode: refused, naming $bin"; else fail "$variant, $mode: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
-    for a in $loads; do
-        if printf '%s' "$OUT" | grep -qF "$SPAN (LC_LOAD_DYLIB, $a)"; then pass "$variant, $mode: names the library in $a"; else fail "$variant, $mode: does not name the library in $a"; fi
+    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF "$bin loads a library that macOS does not provide"; then pass "$variant, $mode: refused, naming $bin"; else fail "$variant, $mode: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+    for entry in "${named[@]}"; do
+        lib=${entry%%|*}; rest=${entry#*|}; cmd=${rest%%|*}
+        for a in ${rest#*|}; do
+            if printf '%s' "$OUT" | grep -qF "$lib ($cmd, $a)"; then pass "$variant, $mode: names $lib ($cmd, $a)"; else fail "$variant, $mode: does not name $lib ($cmd, $a)"; fi
+        done
     done
     for a in $clean; do
         if printf '%s' "$OUT" | grep -qF "$SPAN (LC_LOAD_DYLIB, $a)"; then fail "$variant, $mode: names $a, which does not load it"; else pass "$variant, $mode: does not name $a"; fi
     done
-    if calls "$R" "codesign --force" | grep -q "/$bin\$"; then fail "$variant, $mode: $bin was signed"; else pass "$variant, $mode: $bin was not signed"; fi
+    # Both binaries are checked before either is signed, so a refusal of the
+    # bot binary comes before telegram-all is signed or notarized as well.
+    if calls "$R" "codesign --force" >/dev/null; then fail "$variant, $mode: something was signed"; else pass "$variant, $mode: nothing was signed"; fi
+    if calls "$R" "xcrun notarytool submit" >/dev/null; then fail "$variant, $mode: something was sent to Apple"; else pass "$variant, $mode: nothing was sent to Apple"; fi
     if [ -e "$DIST" ]; then fail "$variant, $mode: left ${DIST#"$R/"}"; else pass "$variant, $mode: nothing in dist"; fi
 done
 
@@ -671,25 +723,32 @@ if [ "$RC" -eq 0 ] && [ "$(git -C "$R" rev-parse HEAD)" != "$START" ]; then pass
 if [ "$(unzip -p "$R/.build/dist/v$X-sign-only/che-telegram-bot-mcp.mcpb" PRIVACY.md 2>/dev/null)" = "$committed" ]; then pass "the bundle holds the PRIVACY.md of the commit it printed"; else fail "the bundle holds the later commit's PRIVACY.md"; fi
 
 test_case "the checkout changes while a full build runs (#94)"
+# While the bot package builds (the edit reaches its binary) and during the
+# first notarization wait (it reaches nothing, but the tree is no longer the
+# commit's).
+for when in build notarization; do
 for change in commit edit untracked; do
-    R=$(make_repo "moved-full-$change")
+    R=$(make_repo "moved-full-$when-$change")
     mkdir -p "$R/.build/dist/v$X"; echo old > "$R/.build/dist/v$X/old-asset"
     case "$change" in
-        commit)    during_build "$R" "echo 'a later line' >> '$R/che-telegram-bot-mcp/mcpb/PRIVACY.md' && git -C '$R' -c user.name=t -c user.email=t@example.invalid commit -qam later"
+        commit)    cmd="echo 'a later line' >> '$R/che-telegram-bot-mcp/mcpb/PRIVACY.md' && git -C '$R' -c user.name=t -c user.email=t@example.invalid commit -qam later"
                    want="HEAD is now" ;;
-        edit)      during_build "$R" "echo 'local edit' >> '$R/plugins/che-telegram-mcp/README.md'"
+        edit)      cmd="echo 'local edit' >> '$R/plugins/che-telegram-mcp/README.md'"
                    want="plugins/che-telegram-mcp/README.md" ;;
-        untracked) during_build "$R" "echo '// local' > '$R/che-telegram-bot-mcp/Sources/Extra.swift'"
+        untracked) cmd="echo '// local' > '$R/che-telegram-bot-mcp/Sources/Extra.swift'"
                    want="che-telegram-bot-mcp/Sources/Extra.swift" ;;
     esac
+    "during_$when" "$R" "$cmd"
     build "$R" "${SIGN_ENV[@]}" --
-    if [ "$RC" -ne 0 ]; then pass "$change: refused (exit $RC)"; else fail "$change: exit 0"; fi
+    if [ "$RC" -ne 0 ]; then pass "$when, $change: refused (exit $RC)"; else fail "$when, $change: exit 0"; fi
+    if [ -e "$R/../hook" ] || [ -e "$R/../hook-notarize" ]; then fail "$when, $change: the change was never made"; else pass "$when, $change: the change was made"; fi
     # All three packages were notarized, so the refusal is the check at the end.
     n=$(calls "$R" "xcrun notarytool submit" | wc -l | tr -d ' ')
-    if [ "$n" -eq 3 ]; then pass "$change: refused after all three notarizations"; else fail "$change: $n notarization submissions: $(printf '%s' "$OUT" | tail -3)"; fi
-    if printf '%s' "$OUT" | grep -q 'changed while' && printf '%s' "$OUT" | grep -qF "$want"; then pass "$change: says what changed ($want)"; else fail "$change: no message: $(printf '%s' "$OUT" | tail -4)"; fi
-    if [ -e "$R/.build/dist/v$X" ]; then fail "$change: left .build/dist/v$X: $(ls "$R/.build/dist/v$X" | tr '\n' ' ')"; else pass "$change: no .build/dist/v$X"; fi
-    if ! ls -d "$R"/.build/release-stage* >/dev/null 2>&1; then pass "$change: staging directory removed"; else fail "$change: staging left"; fi
+    if [ "$n" -eq 3 ]; then pass "$when, $change: refused after all three notarizations"; else fail "$when, $change: $n notarization submissions: $(printf '%s' "$OUT" | tail -3)"; fi
+    if printf '%s' "$OUT" | grep -q 'changed while' && printf '%s' "$OUT" | grep -qF "$want"; then pass "$when, $change: says what changed ($want)"; else fail "$when, $change: no message: $(printf '%s' "$OUT" | tail -4)"; fi
+    if [ -e "$R/.build/dist/v$X" ]; then fail "$when, $change: left .build/dist/v$X: $(ls "$R/.build/dist/v$X" | tr '\n' ' ')"; else pass "$when, $change: no .build/dist/v$X"; fi
+    if ! ls -d "$R"/.build/release-stage* >/dev/null 2>&1; then pass "$when, $change: staging directory removed"; else fail "$when, $change: staging left"; fi
+done
 done
 
 # ------------------------------------------------------- che-slack-mcp (#114)
