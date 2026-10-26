@@ -85,15 +85,17 @@ final class ParseDateInArgsTests: XCTestCase {
     }
 
     func testUntilDateUsesEndOfDay() throws {
-        let parsed = try parseGetChatHistoryArgs([
-            "chat_id": .int(100),
-            "until_date": .string("2026-04-17"),
-        ])
-        // The handler uses the shared parser; what that parser returns in a
-        // given time zone is pinned once, with absolute epochs, in
-        // DateParsingTests (#16, #19). Comparing through Calendar.current here
-        // would pass for a producer and an oracle that drift together.
-        XCTAssertEqual(parsed.untilDate, try parseUntilDate("2026-04-17"))
+        // Literal epochs in two zones: whatever the host's zone, at least one
+        // differs from it, so a handler that ignores the zone it is given, or
+        // pins UTC, fails here (#16, #19).
+        for (zone, end) in [("Asia/Taipei", 1_776_441_599.0), ("UTC", 1_776_470_399.0)] {
+            let parsed = try parseGetChatHistoryArgs(["chat_id": .int(100), "until_date": .string("2026-04-17")],
+                                                     timeZone: XCTUnwrap(TimeZone(identifier: zone)))
+            XCTAssertEqual(parsed.untilDate?.timeIntervalSince1970, end, zone)
+        }
+        // Without a zone, the server's.
+        let parsed = try parseGetChatHistoryArgs(["chat_id": .int(100), "until_date": .string("2026-04-17")])
+        XCTAssertEqual(parsed.untilDate, try parseUntilDate("2026-04-17", timeZone: .current))
     }
 
     func testInvalidDateFormatThrows() {
@@ -128,11 +130,32 @@ final class ParseDateInArgsTests: XCTestCase {
 
     /// Parity with get_chat_history: the dump uses the same until_date parser.
     func testDumpUntilDateUsesEndOfDay() throws {
-        let parsed = try parseDumpChatToMarkdownArgs([
-            "chat_id": .int(100),
-            "output_path": .string("/tmp/x.md"),
-            "until_date": .string("2026-04-17"),
-        ])
-        XCTAssertEqual(parsed.untilDate, try parseUntilDate("2026-04-17"), "the shared parser, as for get_chat_history (#19)")
+        for (zone, end) in [("Asia/Taipei", 1_776_441_599.0), ("UTC", 1_776_470_399.0)] {
+            let parsed = try parseDumpChatToMarkdownArgs(
+                ["chat_id": .int(100), "output_path": .string("/tmp/x.md"), "until_date": .string("2026-04-17")],
+                timeZone: XCTUnwrap(TimeZone(identifier: zone)))
+            XCTAssertEqual(parsed.untilDate?.timeIntervalSince1970, end, zone)
+        }
+        let parsed = try parseDumpChatToMarkdownArgs(
+            ["chat_id": .int(100), "output_path": .string("/tmp/x.md"), "until_date": .string("2026-04-17")])
+        XCTAssertEqual(parsed.untilDate, try parseUntilDate("2026-04-17", timeZone: .current))
+    }
+
+    /// #28 through the real path: a DST day as both since_date and until_date
+    /// passes validateDateRange and keeps its whole wall-clock day.
+    func testADSTDayPassesTheDateRangeCheck() throws {
+        let cases: [(zone: String, day: String, start: TimeInterval, end: TimeInterval)] = [
+            ("America/New_York", "2026-11-01", 1_793_505_600, 1_793_595_599),
+            ("Australia/Sydney", "2026-10-04", 1_791_036_000, 1_791_118_799),
+        ]
+        for c in cases {
+            let zone = try XCTUnwrap(TimeZone(identifier: c.zone))
+            let args: [String: Value] = ["chat_id": .int(100), "since_date": .string(c.day), "until_date": .string(c.day)]
+            let history = try parseGetChatHistoryArgs(args, timeZone: zone)
+            XCTAssertEqual(history.sinceDate?.timeIntervalSince1970, c.start, c.zone)
+            XCTAssertEqual(history.untilDate?.timeIntervalSince1970, c.end, c.zone)
+            var dumpArgs = args; dumpArgs["output_path"] = .string("/tmp/x.md")
+            XCTAssertNoThrow(try parseDumpChatToMarkdownArgs(dumpArgs, timeZone: zone), c.zone)
+        }
     }
 }

@@ -93,15 +93,17 @@ internal func preflightArgumentError(name: String, arguments args: [String: Valu
 ///   first-page issue (#3).
 /// - `since_date` / `until_date` parse via `parseISODate` / `parseUntilDate`
 ///   which throw `DateParseError` on invalid format (#5).
-internal func parseGetChatHistoryArgs(_ args: [String: Value]) throws -> GetChatHistoryArgs {
+/// `timeZone` is the zone `since_date` / `until_date` are read in: the
+/// server's in production, fixed in tests (#16, #19).
+internal func parseGetChatHistoryArgs(_ args: [String: Value], timeZone: TimeZone = .current) throws -> GetChatHistoryArgs {
     guard let chatId = try int64ArgValueStrict(args, "chat_id") else {
         throw HandlerArgError(message: "chat_id is required")
     }
     let limit = try parseLimit(args, default: 50)
     let fromMessageId = try int64ArgValueStrict(args, "from_message_id") ?? 0
 
-    let sinceDate = try parseISODate(args["since_date"]?.stringValue)
-    let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
+    let sinceDate = try parseISODate(args["since_date"]?.stringValue, timeZone: timeZone)
+    let untilDate = try parseUntilDate(args["until_date"]?.stringValue, timeZone: timeZone)
     try validateDateRange(sinceDate, untilDate)
 
     let explicit = try parseMaxMessages(args)
@@ -145,7 +147,8 @@ internal struct DumpChatToMarkdownArgs {
 /// - `since_date` / `until_date` parse via `parseISODate` /
 ///   `parseUntilDate` which throw `DateParseError` on invalid format
 /// - `self_label` defaults to `"我"` (Mandarin "I/me")
-internal func parseDumpChatToMarkdownArgs(_ args: [String: Value]) throws -> DumpChatToMarkdownArgs {
+/// `timeZone`: as in `parseGetChatHistoryArgs`.
+internal func parseDumpChatToMarkdownArgs(_ args: [String: Value], timeZone: TimeZone = .current) throws -> DumpChatToMarkdownArgs {
     guard let chatId = try int64ArgValueStrict(args, "chat_id") else {
         throw HandlerArgError(message: "chat_id is required")
     }
@@ -161,8 +164,8 @@ internal func parseDumpChatToMarkdownArgs(_ args: [String: Value]) throws -> Dum
     // tightens to e.g. 1000 for paid tier, this default-5000 path will throw.
     let maxMessages = try parseMaxMessagesWithDefault(args, default: 5000)
 
-    let sinceDate = try parseISODate(args["since_date"]?.stringValue)
-    let untilDate = try parseUntilDate(args["until_date"]?.stringValue)
+    let sinceDate = try parseISODate(args["since_date"]?.stringValue, timeZone: timeZone)
+    let untilDate = try parseUntilDate(args["until_date"]?.stringValue, timeZone: timeZone)
     try validateDateRange(sinceDate, untilDate)
 
     let selfLabel = args["self_label"]?.stringValue ?? "我"

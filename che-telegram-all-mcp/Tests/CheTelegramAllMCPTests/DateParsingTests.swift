@@ -115,7 +115,7 @@ final class DateParsingTests: XCTestCase {
     /// #28: a DST day is a whole wall-clock day, 25 or 23 hours long, built
     /// from components rather than by adding 23:59:59 (which drops the last
     /// hour of a fall-back day and adds one of the next day after a spring
-    /// forward). `start <= end` is validateDateRange's precondition.
+    /// forward). The validator accepts the pair.
     func testDSTDaysAreWholeWallClockDays() throws {
         let cases: [(zone: String, day: String, start: TimeInterval, end: TimeInterval, length: TimeInterval)] = [
             ("America/New_York", "2026-11-01", 1_793_505_600, 1_793_595_599, 90_000),   // fall back
@@ -128,7 +128,7 @@ final class DateParsingTests: XCTestCase {
             XCTAssertEqual(start, c.start, c.zone)
             XCTAssertEqual(end, c.end, c.zone)
             XCTAssertEqual(end - start + 1, c.length, c.zone)
-            XCTAssertLessThanOrEqual(start, end, c.zone)
+            XCTAssertNoThrow(try validateDateRange(Date(timeIntervalSince1970: start), Date(timeIntervalSince1970: end)), c.zone)
         }
     }
 
