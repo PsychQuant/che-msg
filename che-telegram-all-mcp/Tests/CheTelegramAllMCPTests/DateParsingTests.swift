@@ -189,6 +189,19 @@ final class DateParsingTests: XCTestCase {
         }
     }
 
+    /// Only ASCII `YYYY-MM-DD` is accepted. Without the strict pattern the
+    /// calendar would read "26-04-17" as the year 26; full-width and
+    /// Arabic-Indic digits match `\d` in the pattern and are refused by the
+    /// ASCII number parse (verify of #84/#85).
+    func testOnlyASCIIFourTwoTwoDigitsAreAccepted() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Asia/Taipei"))
+        for day in ["2026-4-17", "26-04-17", "2026-04-7", "2026-04-17-", "2026-04-17\n", " 2026-04-17",
+                    "２０２６-０４-１７", "٢٠٢٦-٠٤-١٧", "2026-04-17\u{200B}"] {
+            XCTAssertThrowsError(try parseISODate(day, timeZone: zone), day.debugDescription)
+            XCTAssertThrowsError(try parseUntilDate(day, timeZone: zone), day.debugDescription)
+        }
+    }
+
     // MARK: - The calendar system does not matter (#84)
 
     /// Days before 2019-05-01 (the start of the Reiwa era) are where an

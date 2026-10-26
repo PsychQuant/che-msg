@@ -61,6 +61,8 @@ public func parseISODate(_ s: String?, timeZone: TimeZone) throws -> Date? {
 
 /// Noon of the day `s` names, and the calendar that read it. Noon exists on
 /// every day the zone has, so a missing midnight cannot make a real day fail.
+/// Digits must be ASCII: `\d` in the pattern also matches full-width and
+/// Arabic-Indic digits, which `Int` then refuses.
 private func calendarDay(_ s: String, timeZone: TimeZone) -> (calendar: Calendar, noon: Date)? {
     // A strict pattern first: the calendar would otherwise normalise the
     // pieces of "2026/04/17" or "26-4-17" as well (#5-A2).
@@ -92,6 +94,11 @@ private func calendarDay(_ s: String, timeZone: TimeZone) -> (calendar: Calendar
 /// 23:59:59 names the first of them, which would leave an hour out (#85). Nor
 /// start of day plus 23:59:59, which is wrong on every 23- or 25-hour day
 /// (America/New_York 2026-11-01, #28). On every other day all three agree.
+///
+/// Two exceptions no Telegram date reaches: a day whose local date is split in
+/// two by a clock change (Newfoundland before 2011 set its clocks back from
+/// 00:01 to 23:01) ends at the end of its first part, and dates before the
+/// Gregorian reform (1582) follow Foundation's Julian/Gregorian calendar.
 public func parseUntilDate(_ s: String?) throws -> Date? {
     try parseUntilDate(s, timeZone: .current)
 }

@@ -171,7 +171,7 @@ extension TelegramAll {
         /// Wraps `TelegramAllLib.parseISODate` / `parseUntilDate` so CLI shares
         /// the same regex pre-check + DST-safe end-of-day logic as MCP (#8 A2).
         /// The `endOfDay` flag selects between since-bound (start-of-day) and
-        /// until-bound (23:59:59 inclusive) semantics — fixes prior CLI bug
+        /// until-bound (the day's last instant, inclusive) semantics — fixes prior CLI bug
         /// where `--until 2026-04-17` parsed to 00:00:00 and dropped the day's
         /// later messages.
         private func parseCLIDate(_ s: String?, flagName: String, endOfDay: Bool) throws -> Foundation.Date? {
