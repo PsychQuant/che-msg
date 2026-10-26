@@ -389,6 +389,23 @@ build "$R" "${SIGN_ENV[@]}" --
 expect_no_build "$R"
 if printf '%s' "$OUT" | grep -q 'symlink'; then pass "names the symlink"; else fail "no message: $(printf '%s' "$OUT" | tail -3)"; fi
 
+test_case "a symlink tracked anywhere in a package, in every mode (#94)"
+echo "outside" > "$SCRATCH/outside.swift"
+for link in che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Linked.swift che-telegram-bot-mcp/Package.swift che-telegram-bot-mcp/mcpb/EXTRA.md; do
+    for mode in full sign-only unsigned; do
+        R=$(make_repo "symlink-${link//\//-}-$mode")
+        ln -s "$SCRATCH/outside.swift" "$R/$link"
+        git -C "$R" add "$link" && commit_in "$R" -m "add a symlink"
+        case "$mode" in
+            full)      build "$R" "${SIGN_ENV[@]}" -- ;;
+            sign-only) build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only ;;
+            unsigned)  build "$R" -- ;;
+        esac
+        if [ "$RC" -ne 0 ] && ! calls "$R" "swift build" >/dev/null; then pass "$mode, $link: refused before any build"; else fail "$mode, $link: exit $RC"; fi
+        if printf '%s' "$OUT" | grep -q symlink && printf '%s' "$OUT" | grep -qF "$link"; then pass "$mode, $link: names it"; else fail "$mode, $link: no message: $(printf '%s' "$OUT" | tail -2)"; fi
+    done
+done
+
 # --------------------------------------------- bundles hold the commit (#94)
 test_case "a non-ASCII file name under mcpb (#94)"
 R=$(make_repo non-ascii); git -C "$R" config core.quotePath true   # git's default, whatever the global config says

@@ -129,12 +129,19 @@ for entry in "${PACKAGES[@]}"; do
     echo "       run swift package update in $pkg, run its tests, and commit the file." >&2
     exit 1
 done
-# The bundles are packed from HEAD's files; a symlink there would pull in
-# whatever it points at, possibly from outside the repository.
+# A symlink a package tracks is followed by SwiftPM (in Sources or as
+# Package.swift) or packed by its target (in mcpb), so a file from outside the
+# repository would end up in the release while git stays clean. No mode builds
+# a commit that tracks one anywhere in a package.
 for entry in "${PACKAGES[@]}"; do
     pkg=${entry%%:*}
-    if git -C "$ROOT" ls-tree -r HEAD -- "$pkg/mcpb" | awk '$1 == "120000" { found = 1; print "         " $4 } END { exit !found }' >&2; then
-        echo "Error: $pkg/mcpb contains a symlink (listed above); the bundle takes regular files only." >&2
+    LINKS=""
+    while IFS= read -r -d '' record; do
+        if [[ "${record%% *}" == 120000 ]]; then LINKS+="         ${record#*$'\t'}"$'\n'; fi
+    done < <(git -C "$ROOT" ls-tree -r -z "$COMMIT" -- "$pkg")
+    if [[ -n "$LINKS" ]]; then
+        echo "Error: $pkg tracks a symlink, which the build would follow, possibly out of the repository:" >&2
+        printf '%s' "$LINKS" >&2
         exit 1
     fi
 done
