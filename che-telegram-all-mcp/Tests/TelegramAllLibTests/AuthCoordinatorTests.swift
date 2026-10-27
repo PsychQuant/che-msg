@@ -16,7 +16,8 @@ final class AuthCoordinatorTests: XCTestCase {
     /// Records every request handed over, with the authorization generation
     /// current at the end of the hand-off, and answers it at once
     /// (asynchronously, like TDLibKit); with `holdFirst`, the first request is
-    /// answered only when the test says.
+    /// answered only when the test says; with `inline`, inside the hand-off,
+    /// as TDLibKit does when `send` throws.
     private final class FakeRequests: CredentialRequestSending, @unchecked Sendable {
         struct HandOff: Equatable {
             let method: String
@@ -29,14 +30,16 @@ final class AuthCoordinatorTests: XCTestCase {
         private var completions: [@Sendable (Result<Void, Swift.Error>) -> Void] = []
         private let answer: Result<Void, Swift.Error>
         private let holdFirst: Bool
+        private let inline: Bool
         /// Where the generation is read; set once the coordinator exists.
         var tracker: CredentialLookupTracker?
         /// Runs inside the hand-off, before it ends.
         var duringHandOff: (@Sendable () -> Void)?
 
-        init(answer: Result<Void, Swift.Error>, holdFirst: Bool = false) {
+        init(answer: Result<Void, Swift.Error>, holdFirst: Bool = false, inline: Bool = false) {
             self.answer = answer
             self.holdFirst = holdFirst
+            self.inline = inline
         }
 
         func setAuthenticationPhoneNumber(_ phoneNumber: String,
@@ -58,7 +61,8 @@ final class AuthCoordinatorTests: XCTestCase {
                 completions.append(completion)
                 return holdFirst && handOffList.count == 1
             }
-            if !held { DispatchQueue.global().async { [answer] in completion(answer) } }
+            if held { return }
+            if inline { completion(answer) } else { DispatchQueue.global().async { [answer] in completion(answer) } }
         }
 
         var handOffs: [HandOff] { lock.withLock { handOffList } }
@@ -213,6 +217,52 @@ final class AuthCoordinatorTests: XCTestCase {
                           "\(method): the explicit caller gets the automatic request's answer")
             XCTAssertTrue(Self.isRejected(coordinator.lastAutoFireError), "\(method): recorded for auth_status")
         }
+    }
+
+    // MARK: - TDLib's answer and the update handler
+
+    /// TDLibKit runs update handlers and request completions on one serial
+    /// queue, and TDLib reports the new state before it answers the request
+    /// that caused it. The state change neither blocks the answer nor changes
+    /// it: every caller of the coalesced task gets it, and no request is sent
+    /// again.
+    func testAnUpdateBeforeTheAnswerLeavesTheAnswerToEveryCaller() async {
+        let fake = FakeRequests(answer: .success(()), holdFirst: true)
+        let box = Box()
+        let explicit = Outcome()
+        let coordinator = AuthCoordinator(credentials: NoKeychainCredentialSource(), requests: fake,
+                                          afterAutomaticClaim: {
+            do {
+                try await box.coordinator?.sendPhoneNumber("+886911111111")
+                explicit.record(nil)
+            } catch {
+                explicit.record(error)
+            }
+        })
+        box.coordinator = coordinator
+        let automatic = coordinator.enterCredentialState(.waitingForPhoneNumber, plan: .fire("+886900000417"))
+        await fake.waitForHandOffs(1)
+        let updateHandlerQueue = DispatchQueue(label: "update-handler")
+        updateHandlerQueue.async { coordinator.enter(.waitingForCode) }
+        updateHandlerQueue.async { fake.complete(0, with: .failure(Self.rejected)) }
+        await automatic?.value
+        XCTAssertEqual(fake.handOffs.map(\.value), ["+886900000417"])
+        XCTAssertEqual(coordinator.state, .waitingForCode)
+        XCTAssertTrue(Self.isRejected(explicit.errors.first ?? nil), "the explicit caller that joined gets the answer")
+        XCTAssertTrue(Self.isRejected(coordinator.lastAutoFireError), "and so does the auto-fire (an environment value's failure is always recorded)")
+    }
+
+    /// TDLibKit answers inside the hand-off when `send` throws, that is while
+    /// the client lock is held: the answer only reaches `RequestAnswer`, so
+    /// nothing waits on the lock.
+    func testAnAnswerDeliveredInsideTheHandOffDoesNotBlock() async {
+        let fake = FakeRequests(answer: .failure(Self.rejected), inline: true)
+        let coordinator = AuthCoordinator(credentials: NoKeychainCredentialSource(), requests: fake)
+        await coordinator.enterCredentialState(.waitingForPassword, plan: .fire("stored-secret"))?.value
+        XCTAssertTrue(Self.isRejected(coordinator.lastAutoFireError))
+        coordinator.enter(.ready)
+        XCTAssertEqual(coordinator.state, .ready)
+        XCTAssertEqual(fake.handOffs.map(\.value), ["stored-secret"])
     }
 
     // MARK: - Explicit values before the claim (#96)

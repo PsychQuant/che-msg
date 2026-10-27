@@ -10,7 +10,7 @@
 ## 3. 選項 B
 
 - [x] 3.1 依設計「Claim 與交給 TDLibKit 在 client lock 下一步完成」與「Coalesced task 等待已交出請求的回應」：自動送出在 client lock 下 claim、以 `coalescedRequest(holder:send:)` 建立或加入 coalesced task 並當場交出請求，`RequestAnswer` 接收回應（含同步到達的回應），TDLib 錯誤在交付時經 `mapTDLibError`。驗證：2.1 的測試與跨 generation 的測試通過，`AuthCoalescingTests` 的 `coalescedRequest` 測試（在途中只交出一次、交出時同步到達的回應不遺失、只算第一個回應、等待結束後重新交出）通過 [after: 2.1]
-- [x] 3.2 依設計「明確呼叫也在 client lock 下建立或加入 coalesced task」：`sendPhoneNumber`／`sendPassword` 在 client lock 下記下 `explicitSubmission`（只在 TDLib 等同一憑證時）並建立或加入 coalesced task；鎖的順序 client → holder → `RequestAnswer`，sender 與 completion 不取 client lock。驗證：2.1、2.2 的測試與 `swift test --skip E2ETests` 全過 [after: 3.1]
+- [x] 3.2 依設計「明確呼叫也在 client lock 下建立或加入 coalesced task」：`sendPhoneNumber`／`sendPassword` 在 client lock 下記下 `explicitSubmission`（只在 TDLib 等同一憑證時）並建立或加入 coalesced task；鎖的順序 client → holder → `RequestAnswer`，sender 與 completion 不取 client lock。驗證：2.1、2.2 的測試、`testAnUpdateBeforeTheAnswerLeavesTheAnswerToEveryCaller`（update 與 completion 在同一條序列 queue、update 先到）、`testAnAnswerDeliveredInsideTheHandOffDoesNotBlock`（回應在交出當下同步到達）與 `swift test --skip E2ETests` 全過 [after: 3.1]
 
 ## 4. 文件
 
