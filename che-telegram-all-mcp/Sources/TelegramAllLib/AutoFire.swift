@@ -232,41 +232,34 @@ internal final class CredentialLookupTracker: @unchecked Sendable {
 
 /// Runs the credential part of an auto-fire plan, outside TDLib's callback
 /// thread (PsychQuant/che-msg#49): sends the environment's value, or looks the
-/// credential up and sends what it finds. Before sending it takes `claim`
-/// (#96), which `TDLibClient` evaluates under the lock that also guards the
-/// authorization state: a state gets at most one automatic value, none after
-/// it has moved on, and none once a value was sent for it explicitly (an
-/// explicit call that already changed TDLib's state, before that update
-/// reached the client, is the race this closes). A failed submission is passed
-/// to `recordFailure` (for `auth_status`) before the state counts as settled,
-/// so an answer given once it has settled carries the error; a failure for a
-/// state that has moved on is not recorded. `TDLibClient` passes its Keychain
-/// source, its coalesced send and its auto-fire error record.
+/// credential up and sends what it finds. `submit` claims the state's one
+/// automatic value and sends it (#96): it returns false, sending nothing, when
+/// the state has moved on or a value was already sent for it, by the auto-fire
+/// or explicitly. `AuthCoordinator` takes the claim under the lock that also
+/// guards the authorization state. A failed submission is passed to
+/// `recordFailure` (for `auth_status`) before the state counts as settled, so
+/// an answer given once it has settled carries the error; a failure for a
+/// state that has moved on is not recorded. `AuthCoordinator` passes its
+/// Keychain source, its claim-and-send and its auto-fire error record.
 internal func runCredentialPlan(_ plan: CredentialPlan, generation: UInt64, tracker: CredentialLookupTracker,
                                 lookup: @Sendable (KeychainCredential) async -> KeychainLookup,
-                                claim: @Sendable () -> Bool,
-                                submit: @Sendable (String) async throws -> Void,
+                                submit: @Sendable (String) async throws -> Bool,
                                 recordFailure: @Sendable (Error) -> Void) async {
     switch plan {
     case .nothing:
         return
     case .fire(let value):
-        guard claim() else { return }
-        do { try await submit(value) } catch { recordFailure(error) }
+        do { _ = try await submit(value) } catch { recordFailure(error) }
     case .lookUp(let credential):
         let result = await lookup(credential)
         guard tracker.finish(generation, miss: KeychainMiss(result)), let value = result.value else { return }
-        guard claim() else {
+        do {
+            if try await submit(value) { return }
             // A value went out for this state while the lookup ran: nothing
             // from the Keychain is on its way.
-            tracker.submissionFailed(generation)
-            return
-        }
-        do {
-            try await submit(value)
         } catch {
             if tracker.isCurrent(generation) { recordFailure(error) }
-            tracker.submissionFailed(generation)
         }
+        tracker.submissionFailed(generation)
     }
 }

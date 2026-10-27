@@ -1,6 +1,6 @@
 ## 1. 可測試的接縫（行為不變）
 
-- [ ] 1.1 依設計「授權狀態移到 AuthCoordinator，TDLib 請求經過 CredentialRequestSending」：client lock 與它保護的授權狀態、電話與密碼的 holder、兩個請求的路徑移到內部的 `AuthCoordinator`，TDLib 的兩個請求經過 `CredentialRequestSending`（正式版 `TDLibKitCredentialRequests`，在 coalesced task 裡以 continuation 包 callback 形式，送出時機與 #96 相同）；`runCredentialPlan` 的 `claim:` 併進 `submit:`（回傳是否 claim 成功）；`afterAutomaticClaim` hook 在 claim 返回後執行（依設計「測試在 claim 步驟返回的那一刻動作」）。`TDLibClient` 的公開 API 不變。驗證：既有的 `CredentialPlanRunnerTests`（只改呼叫形式，斷言不變）與 `swift test --skip E2ETests` 全過，測試數與 `847971c` 相同
+- [x] 1.1 依設計「授權狀態移到 AuthCoordinator，TDLib 請求經過 CredentialRequestSending」：client lock 與它保護的授權狀態、電話與密碼的 holder、兩個請求的路徑移到內部的 `AuthCoordinator`，TDLib 的兩個請求經過 `CredentialRequestSending`（正式版 `TDLibKitCredentialRequests`，在 coalesced task 裡以 continuation 包 callback 形式，送出時機與 #96 相同）；`runCredentialPlan` 的 `claim:` 併進 `submit:`（回傳是否 claim 成功）；`afterAutomaticClaim` hook 在 claim 返回後執行（依設計「測試在 claim 步驟返回的那一刻動作」）。`TDLibClient` 的公開 API 不變。驗證：既有的 `CredentialPlanRunnerTests`（只改呼叫形式，斷言不變）與 `swift test --skip E2ETests` 全過，測試數與 `847971c` 相同
 
 ## 2. 先寫失敗的測試
 

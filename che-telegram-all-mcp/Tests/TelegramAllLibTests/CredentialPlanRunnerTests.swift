@@ -14,6 +14,12 @@ final class CredentialPlanRunnerTests: XCTestCase {
         private var failures: [(error: Error, inFlightWhenRecorded: Bool)] = []
         func lookedUp(_ c: KeychainCredential) { lock.withLock { lookups.append(c) } }
         func send(_ v: String) { lock.withLock { sent.append(v) } }
+        /// What `AuthCoordinator` passes as `submit`: the claim, then the send.
+        func claimAndSend(_ v: String, _ tracker: CredentialLookupTracker, _ generation: UInt64) -> Bool {
+            guard tracker.claimSubmission(generation) else { return false }
+            send(v)
+            return true
+        }
         func failed(_ e: Error, inFlight: Bool) { lock.withLock { failures.append((e, inFlight)) } }
         var lookupList: [KeychainCredential] { lock.withLock { lookups } }
         var sentList: [String] { lock.withLock { sent } }
@@ -38,11 +44,12 @@ final class CredentialPlanRunnerTests: XCTestCase {
                 duringLookup?(tracker)
                 return lookupResult
             },
-            claim: { tracker.claimSubmission(generation) },
             submit: { value in
+                guard tracker.claimSubmission(generation) else { return false }
                 calls.send(value)
                 duringSubmit?(tracker)
                 if submitFails { throw Rejected() }
+                return true
             },
             recordFailure: { error in calls.failed(error, inFlight: tracker.isInFlight) })
         return (calls, tracker, calls.failureList.first?.error)
@@ -143,8 +150,8 @@ final class CredentialPlanRunnerTests: XCTestCase {
         let generation = tracker.stateChanged(lookingUp: false)
         tracker.explicitSubmission()
         await runCredentialPlan(.fire("+886900000417"), generation: generation, tracker: tracker,
-                                lookup: { _ in .absent }, claim: { tracker.claimSubmission(generation) },
-                                submit: { calls.send($0) }, recordFailure: { _ in })
+                                lookup: { _ in .absent }, submit: { calls.claimAndSend($0, tracker, generation) },
+                                recordFailure: { _ in })
         XCTAssertEqual(calls.sentList, [])
     }
 
@@ -154,8 +161,8 @@ final class CredentialPlanRunnerTests: XCTestCase {
         let generation = tracker.stateChanged(lookingUp: false)
         for _ in 0..<2 {
             await runCredentialPlan(.fire("+886912345678"), generation: generation, tracker: tracker,
-                                    lookup: { _ in .absent }, claim: { tracker.claimSubmission(generation) },
-                                    submit: { calls.send($0) }, recordFailure: { _ in })
+                                    lookup: { _ in .absent }, submit: { calls.claimAndSend($0, tracker, generation) },
+                                    recordFailure: { _ in })
         }
         XCTAssertEqual(calls.sentList, ["+886912345678"])
     }
