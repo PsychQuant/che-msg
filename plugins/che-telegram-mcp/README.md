@@ -331,7 +331,7 @@ On a first install the bot wrapper may stop before the server starts. It then wr
 - **Still downloading**: the binary is not there yet and is downloading in the background (about 18 MB). Reconnect with `/mcp` in a minute, once `~/bin/.che-telegram-mcp-download/CheTelegramBotMCP.log` says it was installed.
 - **Binary not available**: the download failed. The message says why, for the same reasons as for telegram-all (see [When telegram-all does not start](#when-telegram-all-does-not-start)). Reconnect, or install it by hand as in [Manual install](#manual-install-if-auto-download-fails).
 
-A missing bot token stops it too, with the setup command on stderr only (the server's MCP log): store `TELEGRAM_BOT_TOKEN` in the Keychain as in step 2 of [Track B](#track-b--bot-only), then reconnect. So does an incomplete plugin, as for telegram-all (**Plugin incomplete** in [When telegram-all does not start](#when-telegram-all-does-not-start)).
+A missing bot token stops it too, in the same way: the answer to `initialize` names `TELEGRAM_BOT_TOKEN`, and the setup command is on stderr (the server's MCP log). Store `TELEGRAM_BOT_TOKEN` in the Keychain as in step 2 of [Track B](#track-b--bot-only), then reconnect. So does an incomplete plugin, as for telegram-all (**Plugin incomplete** in [When telegram-all does not start](#when-telegram-all-does-not-start)).
 
 ### When telegram-all stops syncing
 

@@ -39,8 +39,9 @@ SHA256_PIN="374633e1f78e366d4408878d0361afe33eed636271c7e2c86038d2b4a3235eb5"
 # The pinned release only, never releases/latest: a pin could not match it.
 DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME"
 
-# When a first install cannot start the server yet, or the plugin's lib/
-# files cannot be read, the wrapper writes the reason to stderr and answers
+# When a first install cannot start the server yet, the bot token is not in
+# the Keychain, or the plugin's lib/ files cannot be read, the wrapper writes
+# the reason to stderr and answers
 # the pending initialize request with a JSON-RPC 2.0 error, as the
 # telegram-all wrapper does (PsychQuant/che-msg#67; whether Claude Code shows
 # it: see that wrapper, #59). $1 MUST NOT
@@ -143,7 +144,7 @@ if [[ -z "$TELEGRAM_BOT_TOKEN" ]]; then
     echo "Set it up in your own terminal (security prompts for the value):" >&2
     echo "  security add-generic-password -a che-telegram-bot-mcp -s TELEGRAM_BOT_TOKEN -U -w" >&2
     echo "Get a token from @BotFather on Telegram." >&2
-    exit 1
+    fail_startup "The Telegram bot token is not in the Keychain. Store TELEGRAM_BOT_TOKEN as step 2 of Track B in the che-telegram-mcp README describes, then reconnect with /mcp."
 fi
 
 # NOTE: bot-mcp 不需要 local resource PID tracking (#12)

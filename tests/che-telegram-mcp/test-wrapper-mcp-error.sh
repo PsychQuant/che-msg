@@ -33,7 +33,11 @@
 #   8. A 0.6.x binary (its logout sends Telegram's log-out, which deletes the
 #      local database; PsychQuant/che-msg#63): when the download fails and
 #      only 0.6.0 is installed, the wrapper refuses it and says why.
-#   9. No other test reached the network: only cases 4, 5 and 8 called the
+#   9. A missing bot token: the bot wrapper exits 1 without starting its
+#      binary, answers initialize with a JSON-RPC error that names
+#      TELEGRAM_BOT_TOKEN and points at "When telegram-bot does not start",
+#      and still prints the setup command on stderr (PsychQuant/che-msg#59).
+#  10. No other test reached the network: only cases 4, 5 and 8 called the
 #      fake curl.
 #
 # Usage:
@@ -195,6 +199,22 @@ mv "$H/started.pids" "$H/probe.pids" 2>/dev/null
 check_error "$H" 13
 check_message "$H" "The binary at ~/.local/bin/CheTelegramAllMCP reports version 0.5.0"
 check_message "$H" "never upgraded automatically"
+
+# ----------------------------------------------------------------------
+test_case "Missing bot token: the bot wrapper answers initialize with the reason"
+H="$SCRATCH/notoken"; make_bot_home "$H" "$BOT_DESIRED"
+printf '#!/bin/bash\nexit 44\n' > "$H/fakebin/security"; chmod +x "$H/fakebin/security"
+printf '%s\n' '{"jsonrpc":"2.0","id":14,"method":"initialize","params":{}}' > "$H/in"
+HOME="$H" PATH="$H/fakebin:$PATH" bash "$BOT_WRAPPER" < "$H/in" > "$H/out" 2> "$H/err"
+RC=$?
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
+if [ ! -s "$H/started.pids" ]; then pass "the bot binary was not started"; else fail "the bot binary was started"; fi
+if [ "$(wc -l < "$H/out" | tr -d ' ')" = 1 ] && jq -e '.jsonrpc == "2.0" and .id == 14 and .error.code == -32000 and (.error.message | test("TELEGRAM_BOT_TOKEN")) and (.error.data.docsUrl | endswith("README.md#when-telegram-bot-does-not-start"))' "$H/out" >/dev/null 2>&1; then
+    pass "stdout is one JSON-RPC error for id 14 that names TELEGRAM_BOT_TOKEN and the bot section"
+else
+    fail "stdout: $(head -c 400 "$H/out")"
+fi
+if grep -q 'security add-generic-password -a che-telegram-bot-mcp -s TELEGRAM_BOT_TOKEN -U -w$' "$H/err"; then pass "stderr still has the setup command"; else fail "stderr: $(head -c 400 "$H/err")"; fi
 
 # ----------------------------------------------------------------------
 test_case "No other test reached the network"
