@@ -14,4 +14,4 @@
 
 ## 4. 文件
 
-- [ ] 4.1 all-mcp CHANGELOG `[Unreleased]` 的 #96 條目改寫「Still open」那句，新增 #98 的行為說明（claim 與交出請求一步完成、claim 之後的明確呼叫加入自動請求並得到它的結果、TDLib 已改變而 update 未到時以錯誤回應）。驗證：人工核對條目只描述行為，與 spec 的 Requirement 一致 [after: 3.2]
+- [x] 4.1 all-mcp CHANGELOG `[Unreleased]` 的 #96 條目改寫「Still open」那句，新增 #98 的行為說明（claim 與交出請求一步完成、claim 之後的明確呼叫加入自動請求並得到它的結果、TDLib 已改變而 update 未到時以錯誤回應）。驗證：人工核對條目只描述行為，與 spec 的 Requirement 一致 [after: 3.2]
