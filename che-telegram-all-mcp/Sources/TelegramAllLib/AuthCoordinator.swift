@@ -50,9 +50,10 @@ internal final class AuthCoordinator: @unchecked Sendable {
 
     private let requests: CredentialRequestSending
 
-    /// Runs as soon as the step that claims an automatic value has returned,
-    /// before the auto-fire waits for TDLib's answer: the first moment another
-    /// caller can take `lock`. Tests act there; production passes nothing.
+    /// Runs as soon as the step that claims an automatic value and hands its
+    /// request to TDLib has returned, before the auto-fire waits for TDLib's
+    /// answer: the first moment another caller can take `lock`. Tests act
+    /// there; production passes nothing.
     private let afterAutomaticClaim: @Sendable () async -> Void
 
     init(credentials: KeychainCredentialSource, requests: CredentialRequestSending,
@@ -120,20 +121,23 @@ internal final class AuthCoordinator: @unchecked Sendable {
         }
     }
 
-    /// Claims the automatic submission for `generation` under the lock that
-    /// guards `authState`, so the decision and the state change that would
-    /// invalidate it are ordered (#96), then sends the value through the
-    /// coalesced path. Returns false, sending nothing, when the claim fails.
+    /// Claims the automatic submission for `generation` and, when the claim
+    /// holds, creates or joins the method's coalesced task in the same step
+    /// under the lock that guards `authState` (#96, #98): a state change is
+    /// recorded either before the claim, which then fails, or after the
+    /// request was handed to TDLib; an explicit call after it joins the
+    /// request. Then waits for TDLib's answer. Returns false, sending nothing,
+    /// when the claim fails.
     private func submitAutomatically(_ value: String, for state: TDLibClient.AuthState,
                                      generation: UInt64) async throws -> Bool {
         guard state == .waitingForPhoneNumber || state == .waitingForPassword else { return false }
-        guard lock.withLock({ credentialLookups.claimSubmission(generation) }) else { return false }
-        await afterAutomaticClaim()
-        if state == .waitingForPhoneNumber {
-            try await requestPhoneNumber(value)
-        } else {
-            try await requestPassword(value)
+        let request: Task<Void, Error>? = lock.withLock {
+            guard credentialLookups.claimSubmission(generation) else { return nil }
+            return state == .waitingForPhoneNumber ? phoneNumberRequest(value) : passwordRequest(value)
         }
+        guard let request else { return false }
+        await afterAutomaticClaim()
+        try await awaitCoalesced(request, holder: state == .waitingForPhoneNumber ? sendPhoneTask : sendPasswordTask)
         return true
     }
 
@@ -176,42 +180,46 @@ internal final class AuthCoordinator: @unchecked Sendable {
     // MARK: - Explicit requests
 
     /// An explicit phone number: the current state gets no automatic one after
-    /// it (#96).
+    /// it (#96), and it joins an automatic request claimed before it (#98).
     func sendPhoneNumber(_ phoneNumber: String) async throws {
-        // Only while TDLib waits for a phone number: a phone number sent at
-        // another step must not cancel that step's automatic value.
-        lock.withLock { if authState == .waitingForPhoneNumber { credentialLookups.explicitSubmission() } }
-        try await requestPhoneNumber(phoneNumber)
+        let request: Task<Void, Error> = lock.withLock {
+            // Only while TDLib waits for a phone number: a phone number sent at
+            // another step must not cancel that step's automatic value.
+            if authState == .waitingForPhoneNumber { credentialLookups.explicitSubmission() }
+            return phoneNumberRequest(phoneNumber)
+        }
+        try await awaitCoalesced(request, holder: sendPhoneTask)
     }
 
     /// An explicit 2FA password: the current state gets no automatic one after
-    /// it (#96).
+    /// it (#96), and it joins an automatic request claimed before it (#98).
     func sendPassword(_ password: String) async throws {
-        lock.withLock { if authState == .waitingForPassword { credentialLookups.explicitSubmission() } }
-        try await requestPassword(password)
+        let request: Task<Void, Error> = lock.withLock {
+            if authState == .waitingForPassword { credentialLookups.explicitSubmission() }
+            return passwordRequest(password)
+        }
+        try await awaitCoalesced(request, holder: sendPasswordTask)
     }
 
-    private func requestPhoneNumber(_ phoneNumber: String) async throws {
-        try await coalesceTask(holder: sendPhoneTask) { [requests] in
-            do {
-                try await withCheckedThrowingContinuation { (answer: CheckedContinuation<Void, Swift.Error>) in
-                    requests.setAuthenticationPhoneNumber(phoneNumber) { answer.resume(with: $0) }
-                }
-            } catch {
-                try mapTDLibError(error)
-            }
+    /// The phone number's coalesced task: the one in flight, or a new one whose
+    /// request is handed to TDLib now. Called under `lock`; takes the holder's
+    /// lock inside it, never the other way round.
+    private func phoneNumberRequest(_ phoneNumber: String) -> Task<Void, Error> {
+        coalescedRequest(holder: sendPhoneTask) { [requests] deliver in
+            requests.setAuthenticationPhoneNumber(phoneNumber) { deliver(Self.mapped($0)) }
         }
     }
 
-    private func requestPassword(_ password: String) async throws {
-        try await coalesceTask(holder: sendPasswordTask) { [requests] in
-            do {
-                try await withCheckedThrowingContinuation { (answer: CheckedContinuation<Void, Swift.Error>) in
-                    requests.checkAuthenticationPassword(password) { answer.resume(with: $0) }
-                }
-            } catch {
-                try mapTDLibError(error)
-            }
+    /// The 2FA password's coalesced task, as `phoneNumberRequest`.
+    private func passwordRequest(_ password: String) -> Task<Void, Error> {
+        coalescedRequest(holder: sendPasswordTask) { [requests] deliver in
+            requests.checkAuthenticationPassword(password) { deliver(Self.mapped($0)) }
         }
+    }
+
+    /// TDLib's answer as every caller of the coalesced task sees it: a TDLib
+    /// error mapped by `mapTDLibError` (406 counts as success).
+    private static func mapped(_ answer: Result<Void, Swift.Error>) -> Result<Void, Swift.Error> {
+        Result { do { try answer.get() } catch { try mapTDLibError(error) } }
     }
 }

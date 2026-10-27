@@ -4,13 +4,13 @@
 
 ## 2. 先寫失敗的測試
 
-- [ ] 2.1 `AuthCoordinatorTests`（Requirement: An automatic credential is claimed and handed to TDLib in one step）：claim 步驟返回時記錄的狀態變更（電話與密碼）、交出請求當下另一條 thread 記錄的狀態變更、claim 之後同方法的明確呼叫（TDLibKit 只收到一個請求、明確呼叫得到自動請求的結果）。驗證：在 1.1 的 commit 上 `swift test --filter AuthCoordinatorTests` 這三個測試失敗 [after: 1.1]
-- [ ] 2.2 同檔記錄 #96 的行為與跨 generation 加入：claim 之前的明確呼叫取消自動值、其他步驟的明確值不取消、一個狀態只有一個自動值、claim 之前的狀態變更不交出請求、新狀態的自動值加入舊狀態仍在途中的請求。驗證：在 1.1 的 commit 上這些測試通過 [after: 1.1]
+- [x] 2.1 `AuthCoordinatorTests`（Requirement: An automatic credential is claimed and handed to TDLib in one step）：claim 步驟返回時記錄的狀態變更（電話與密碼）、交出請求當下另一條 thread 記錄的狀態變更、claim 之後同方法的明確呼叫（TDLibKit 只收到一個請求、明確呼叫得到自動請求的結果）。驗證：在 1.1 的 commit 上 `swift test --filter AuthCoordinatorTests` 這三個測試失敗 [after: 1.1]
+- [x] 2.2 同檔記錄 #96 的行為與跨 generation 加入：claim 之前的明確呼叫取消自動值、其他步驟的明確值不取消、claim 之前的狀態變更不交出請求（一個狀態只有一個自動值已由 `CredentialPlanRunnerTests` 與 `CredentialLookupTrackerTests` 涵蓋）；新狀態的自動值加入舊狀態仍在途中的請求。驗證：#96 的三個測試在 1.1 的 commit 上通過；跨 generation 的測試要等 claim 與加入是同一步才是決定性的，在 3.1 之後驗證 [after: 1.1]
 
 ## 3. 選項 B
 
-- [ ] 3.1 依設計「Claim 與交給 TDLibKit 在 client lock 下一步完成」與「Coalesced task 等待已交出請求的回應」：自動送出在 client lock 下 claim、以 `coalescedRequest(holder:send:)` 建立或加入 coalesced task 並當場交出請求，`RequestAnswer` 接收回應（含同步到達的回應），TDLib 錯誤在交付時經 `mapTDLibError`。驗證：2.1 的測試通過 [after: 2.1]
-- [ ] 3.2 依設計「明確呼叫也在 client lock 下建立或加入 coalesced task」：`sendPhoneNumber`／`sendPassword` 在 client lock 下記下 `explicitSubmission`（只在 TDLib 等同一憑證時）並建立或加入 coalesced task；鎖的順序 client → holder → `RequestAnswer`，sender 與 completion 不取 client lock。驗證：2.1、2.2 的測試與 `swift test --skip E2ETests` 全過 [after: 3.1]
+- [x] 3.1 依設計「Claim 與交給 TDLibKit 在 client lock 下一步完成」與「Coalesced task 等待已交出請求的回應」：自動送出在 client lock 下 claim、以 `coalescedRequest(holder:send:)` 建立或加入 coalesced task 並當場交出請求，`RequestAnswer` 接收回應（含同步到達的回應），TDLib 錯誤在交付時經 `mapTDLibError`。驗證：2.1 的測試與跨 generation 的測試通過，`AuthCoalescingTests` 的 `coalescedRequest` 測試（在途中只交出一次、交出時同步到達的回應不遺失、只算第一個回應、等待結束後重新交出）通過 [after: 2.1]
+- [x] 3.2 依設計「明確呼叫也在 client lock 下建立或加入 coalesced task」：`sendPhoneNumber`／`sendPassword` 在 client lock 下記下 `explicitSubmission`（只在 TDLib 等同一憑證時）並建立或加入 coalesced task；鎖的順序 client → holder → `RequestAnswer`，sender 與 completion 不取 client lock。驗證：2.1、2.2 的測試與 `swift test --skip E2ETests` 全過 [after: 3.1]
 
 ## 4. 文件
 
