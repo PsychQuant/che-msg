@@ -1,15 +1,19 @@
 import XCTest
+import TDLibKit
 @testable import TelegramAllLib
+
+/// This file needs `TDLibKit.Error`; the client meant here is ours.
+private typealias TDLibClient = TelegramAllLib.TDLibClient
 
 /// The automatic phone number and 2FA password against state changes and
 /// explicit calls, on the production path with TDLib replaced by a fake
 /// sender (PsychQuant/che-msg#98).
 ///
 /// Spec: "An automatic credential is claimed and handed to TDLib in one step"
-/// (telegram-auth-coordination). `afterAutomaticClaim` runs as soon as the
-/// claim step returns, the first moment another caller can take the lock, so
-/// what a test does there is what a concurrent caller could do at the worst
-/// moment.
+/// (telegram-auth-coordination). `beforeAutomaticClaim` and
+/// `afterAutomaticClaim` run right before and right after the claim step, the
+/// last and the first moment another caller can take the lock, so what a test
+/// does there is what a concurrent caller could do at the worst moment.
 final class AuthCoordinatorTests: XCTestCase {
     // MARK: - Fakes
 
@@ -169,6 +173,26 @@ final class AuthCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state, .ready)
     }
 
+    /// The claim checks its own state's generation: a state change after the
+    /// Keychain lookup finished for the right state (or after the auto-fire
+    /// started, for an environment value) and before the claim makes it fail.
+    func testAStateChangeRightBeforeTheClaimMakesItFail() async {
+        let cases: [(TDLibClient.AuthState, CredentialPlan, KeychainCredentialSource)] = [
+            (.waitingForPhoneNumber, .fire("+886900000417"), NoKeychainCredentialSource()),
+            (.waitingForPassword, .lookUp(.password), FoundSource(value: "stored-secret")),
+        ]
+        for (state, plan, source) in cases {
+            let fake = FakeRequests(answer: .success(()))
+            let box = Box()
+            let coordinator = AuthCoordinator(credentials: source, requests: fake,
+                                              beforeAutomaticClaim: { box.coordinator?.enter(.waitingForCode) })
+            box.coordinator = coordinator
+            await coordinator.enterCredentialState(state, plan: plan)?.value
+            XCTAssertEqual(fake.handOffs, [], "\(state): the value belongs to a state that is gone")
+            XCTAssertFalse(coordinator.isSubmittingKeychainCredential, "\(state)")
+        }
+    }
+
     /// Scenario: a state change before the claim sends nothing.
     func testAStateChangeBeforeTheClaimSendsNothing() async {
         let fake = FakeRequests(answer: .success(()))
@@ -258,40 +282,102 @@ final class AuthCoordinatorTests: XCTestCase {
     func testAnAnswerDeliveredInsideTheHandOffDoesNotBlock() async {
         let fake = FakeRequests(answer: .failure(Self.rejected), inline: true)
         let coordinator = AuthCoordinator(credentials: NoKeychainCredentialSource(), requests: fake)
-        await coordinator.enterCredentialState(.waitingForPassword, plan: .fire("stored-secret"))?.value
+        let automatic = coordinator.enterCredentialState(.waitingForPassword, plan: .fire("stored-secret"))
+        let done = await finished(within: 2) { () -> Bool in
+            await automatic?.value
+            return true
+        }
+        XCTAssertEqual(done, true, "the answer was lost: still waiting after 2 s")
         XCTAssertTrue(Self.isRejected(coordinator.lastAutoFireError))
         coordinator.enter(.ready)
         XCTAssertEqual(coordinator.state, .ready)
         XCTAssertEqual(fake.handOffs.map(\.value), ["stored-secret"])
     }
 
+    // MARK: - TDLib's errors as every caller sees them
+
+    /// TDLib's 406 must not be shown and counts as success (`mapTDLibError`),
+    /// for the auto-fire and for an explicit caller alike.
+    func testATDLib406AnswerCountsAsSuccess() async throws {
+        let fake = FakeRequests(answer: .failure(TDLibKit.Error(code: 406, message: "NOT_SHOWN")))
+        let coordinator = AuthCoordinator(credentials: FoundSource(value: "stored-secret"), requests: fake)
+        await coordinator.enterCredentialState(.waitingForPassword, plan: .lookUp(.password))?.value
+        XCTAssertNil(coordinator.lastAutoFireError)
+        XCTAssertTrue(coordinator.isSubmittingKeychainCredential,
+                      "a submission that succeeded is still on its way until TDLib reports the next state")
+        try await coordinator.sendPhoneNumber("+886911111111")
+        try await coordinator.sendPassword("typed-secret")
+        XCTAssertEqual(fake.handOffs.map(\.method), ["password", "phone", "password"])
+    }
+
+    /// Any other TDLib error reaches every caller as `TDError.tdlibError`, and
+    /// an automatic value's is recorded for `auth_status`.
+    func testATDLibErrorReachesCallersAsTDError() async {
+        func isInvalid(_ error: Swift.Error?) -> Bool {
+            guard case .tdlibError(400, "PHONE_NUMBER_INVALID")? = error as? TDLibClient.TDError else { return false }
+            return true
+        }
+        let fake = FakeRequests(answer: .failure(TDLibKit.Error(code: 400, message: "PHONE_NUMBER_INVALID")))
+        let coordinator = AuthCoordinator(credentials: NoKeychainCredentialSource(), requests: fake)
+        await coordinator.enterCredentialState(.waitingForPhoneNumber, plan: .fire("+886900000417"))?.value
+        XCTAssertTrue(isInvalid(coordinator.lastAutoFireError), "\(String(describing: coordinator.lastAutoFireError))")
+        for explicit in [{ try await coordinator.sendPhoneNumber("+886911111111") },
+                         { try await coordinator.sendPassword("typed-secret") }] as [() async throws -> Void] {
+            do {
+                try await explicit()
+                XCTFail("the error was not thrown")
+            } catch {
+                XCTAssertTrue(isInvalid(error), "\(error)")
+            }
+        }
+    }
+
     // MARK: - Explicit values before the claim (#96)
 
     func testAnExplicitValueBeforeTheClaimSendsNoAutomaticOne() async throws {
-        let fake = FakeRequests(answer: .success(()))
-        let source = GatedSource()
-        let coordinator = AuthCoordinator(credentials: source, requests: fake)
-        let automatic = coordinator.enterCredentialState(.waitingForPassword, plan: .lookUp(.password))
-        await source.waitUntilAsked()
-        try await coordinator.sendPassword("typed-secret")
-        source.release(.found("stored-secret"))
-        await automatic?.value
-        XCTAssertEqual(fake.handOffs.map(\.value), ["typed-secret"])
-        XCTAssertFalse(coordinator.isSubmittingKeychainCredential,
-                       "nothing from the Keychain is on its way, so auth_run does not wait for it")
+        let cases: [(TDLibClient.AuthState, KeychainCredential, explicit: String)] = [
+            (.waitingForPassword, .password, "typed-secret"),
+            (.waitingForPhoneNumber, .phone, "+886911111111"),
+        ]
+        for (state, credential, explicit) in cases {
+            let fake = FakeRequests(answer: .success(()))
+            let source = GatedSource()
+            let coordinator = AuthCoordinator(credentials: source, requests: fake)
+            let automatic = coordinator.enterCredentialState(state, plan: .lookUp(credential))
+            await source.waitUntilAsked()
+            if credential == .phone {
+                try await coordinator.sendPhoneNumber(explicit)
+            } else {
+                try await coordinator.sendPassword(explicit)
+            }
+            source.release(.found("stored-value"))
+            await automatic?.value
+            XCTAssertEqual(fake.handOffs.map(\.value), [explicit], "\(state)")
+            XCTAssertFalse(coordinator.isSubmittingKeychainCredential,
+                           "\(state): nothing from the Keychain is on its way, so auth_run does not wait for it")
+        }
     }
 
     func testAnExplicitValueForAnotherStepDoesNotCancelThisStepsAutomaticOne() async throws {
-        let fake = FakeRequests(answer: .success(()))
-        let source = GatedSource()
-        let coordinator = AuthCoordinator(credentials: source, requests: fake)
-        let automatic = coordinator.enterCredentialState(.waitingForPassword, plan: .lookUp(.password))
-        await source.waitUntilAsked()
-        try await coordinator.sendPhoneNumber("+886911111111")
-        source.release(.found("stored-secret"))
-        await automatic?.value
-        XCTAssertEqual(fake.handOffs.map(\.method), ["phone", "password"])
-        XCTAssertEqual(fake.handOffs.map(\.value), ["+886911111111", "stored-secret"])
+        let cases: [(TDLibClient.AuthState, KeychainCredential, stored: String, explicitMethod: String, explicit: String)] = [
+            (.waitingForPassword, .password, "stored-secret", "phone", "+886911111111"),
+            (.waitingForPhoneNumber, .phone, "+886900000417", "password", "typed-secret"),
+        ]
+        for (state, credential, stored, explicitMethod, explicit) in cases {
+            let fake = FakeRequests(answer: .success(()))
+            let source = GatedSource()
+            let coordinator = AuthCoordinator(credentials: source, requests: fake)
+            let automatic = coordinator.enterCredentialState(state, plan: .lookUp(credential))
+            await source.waitUntilAsked()
+            if explicitMethod == "phone" {
+                try await coordinator.sendPhoneNumber(explicit)
+            } else {
+                try await coordinator.sendPassword(explicit)
+            }
+            source.release(.found(stored))
+            await automatic?.value
+            XCTAssertEqual(fake.handOffs.map(\.value), [explicit, stored], "\(state)")
+        }
     }
 
     // MARK: - A newer state and a request still in flight (#98 comment 1)

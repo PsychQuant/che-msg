@@ -191,19 +191,24 @@ final class AuthCoalescingTests: XCTestCase {
         struct Refused: Swift.Error {}
         let holder = TaskFieldHolder()
         let task = coalescedRequest(holder: holder) { deliver in deliver(.failure(Refused())) }
-        let outcome = await Result { try await awaitCoalesced(task, holder: holder) }
-        guard case .failure(let error) = outcome else { return XCTFail("the answer was lost") }
+        let outcome = await finished(within: 2) { await Result { try await awaitCoalesced(task, holder: holder) } }
+        guard case .failure(let error)? = outcome else {
+            return XCTFail("the answer was lost: \(outcome.map { "\($0)" } ?? "still waiting after 2 s")")
+        }
         XCTAssertTrue(error is Refused)
     }
 
-    func testOnlyTheFirstAnswerCounts() async throws {
+    func testOnlyTheFirstAnswerCounts() async {
         struct Late: Swift.Error {}
         let holder = TaskFieldHolder()
         let task = coalescedRequest(holder: holder) { deliver in
             deliver(.success(()))
             deliver(.failure(Late()))
         }
-        try await awaitCoalesced(task, holder: holder)
+        let outcome = await finished(within: 2) { await Result { try await awaitCoalesced(task, holder: holder) } }
+        guard case .success? = outcome else {
+            return XCTFail("the first answer was not kept: \(outcome.map { "\($0)" } ?? "still waiting after 2 s")")
+        }
     }
 
     func testANewRequestIsHandedOverAfterTheLastOneWasAwaited() async throws {

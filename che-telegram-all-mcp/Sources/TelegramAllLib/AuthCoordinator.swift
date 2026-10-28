@@ -50,16 +50,20 @@ internal final class AuthCoordinator: @unchecked Sendable {
 
     private let requests: CredentialRequestSending
 
-    /// Runs as soon as the step that claims an automatic value and hands its
-    /// request to TDLib has returned, before the auto-fire waits for TDLib's
-    /// answer: the first moment another caller can take `lock`. Tests act
-    /// there; production passes nothing.
+    /// Run right before and right after the step that claims an automatic
+    /// value and hands its request to TDLib: the last moment another caller
+    /// can take `lock` before the claim, and the first one after the request
+    /// was handed over (before the auto-fire waits for TDLib's answer). Tests
+    /// act there; production passes nothing.
+    private let beforeAutomaticClaim: @Sendable () async -> Void
     private let afterAutomaticClaim: @Sendable () async -> Void
 
     init(credentials: KeychainCredentialSource, requests: CredentialRequestSending,
+         beforeAutomaticClaim: @escaping @Sendable () async -> Void = {},
          afterAutomaticClaim: @escaping @Sendable () async -> Void = {}) {
         self.credentials = credentials
         self.requests = requests
+        self.beforeAutomaticClaim = beforeAutomaticClaim
         self.afterAutomaticClaim = afterAutomaticClaim
     }
 
@@ -131,6 +135,7 @@ internal final class AuthCoordinator: @unchecked Sendable {
     private func submitAutomatically(_ value: String, for state: TDLibClient.AuthState,
                                      generation: UInt64) async throws -> Bool {
         guard state == .waitingForPhoneNumber || state == .waitingForPassword else { return false }
+        await beforeAutomaticClaim()
         let request: Task<Void, Error>? = lock.withLock {
             guard credentialLookups.claimSubmission(generation) else { return nil }
             return state == .waitingForPhoneNumber ? phoneNumberRequest(value) : passwordRequest(value)
