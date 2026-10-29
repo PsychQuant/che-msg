@@ -25,13 +25,21 @@ extension SlackToolHandler {
              (team_id, conversation_id, date, utc_offset) and holds one block per message: <!-- msg:<ts> -->, a \
              header **HH:mm sender**： (a thread reply adds ↳ thread:<parent_ts>), and the text with Slack markup \
              turned into markdown. The sender is 我 for your own messages, else the user's display name, \
-             Bot <bot_id> or User <user_id>. Replies of the thread parents read in this call are fetched and \
+             Bot <bot_id> or User <user_id>. Replies of the thread parents written in this call are fetched and \
              written in the file of their own day. Attached files are written as [file: name](permalink) and never \
              downloaded. A day file that already exists is merged by ts: its blocks are kept, and a message \
              archived again replaces its own block. Directories are created owner-only (0700), day files 0600. \
-             Without after_ts or since_date the whole history is read, at most \(archiveHistoryMaxPages) pages of \
-             \(archivePageSize) top-level messages per call; complete is false when messages were left out. \
-             Returns the day files changed (relative to output_dir) and message counts, never message text.
+             A manifest.json next to the day files records the newest top-level ts archived, the newest reply ts \
+             of each thread parent inside the lookback window, the time of the last run and its counts, never \
+             message text or names. Without after_ts or since_date only messages newer than the manifest's newest \
+             ts are written (the whole history when there is no manifest), and the thread parents archived in the \
+             last thread_lookback_days days are listed again so that a parent whose latest reply is newer than \
+             the recorded one gets its replies fetched; older threads are not checked. A manifest that cannot be \
+             read or was not written for this conversation refuses the call; move it aside to start over. At most \
+             \(archiveHistoryMaxPages) pages of \(archivePageSize) top-level messages are read per call; complete \
+             is false when messages were left out, and the manifest's newest ts then moves only when every \
+             message newer than it was read. Returns the day files changed (relative to output_dir) and message \
+             counts, never message text.
              """,
              properties: workspaceProperty.merging([
                  "conversation_id": prop("string", "The conversation's id, such as C0123ABCD, from list_conversations."),
@@ -61,25 +69,33 @@ extension SlackToolHandler {
 
     func archiveConversation(_ arguments: [String: Value]) async -> CallTool.Result {
         let localOffset = localOffsetSeconds()
+        let start = now()
         return await checked(arguments, { args throws(ToolFailure) in
             try Self.archiveRequest(args, localOffsetSeconds: localOffset)
         }) { request, selection in
             let archiver = ConversationArchiver(client: client, selection: selection, request: request,
-                                                maxPages: Self.archiveHistoryMaxPages)
+                                                maxPages: Self.archiveHistoryMaxPages, now: start)
             return ToolResult.json(try await archiver.run())
         }
     }
 }
 
-/// One archive call: reads the history newest first by cursor, the replies
-/// of each thread parent read, the names of senders and mentioned users
-/// (`users.info`, once per user per call), and merges each page into the
-/// day files before reading the next.
+/// One archive call: reads the manifest, then the history newest first by
+/// cursor within `ArchiveScope`, the replies of each thread parent written
+/// and of each parent in the lookback window with a newer reply, the names
+/// of senders and mentioned users (`users.info`, once per user per call);
+/// merges each page into the day files before reading the next, and
+/// replaces the manifest last, so a failure before that leaves the
+/// previous bookmark, and the next call reads the same messages again and
+/// merges them in place.
 struct ConversationArchiver {
     let client: SlackWebClient
     let selection: ResolvedWorkspace
     let request: ArchiveRequest
     let maxPages: Int
+    /// The start of the call: the end of the lookback window, and the run
+    /// time the manifest records.
+    let now: Date
 
     /// The result: paths and counts, never message text, sender names or
     /// file names.
@@ -102,58 +118,104 @@ struct ConversationArchiver {
 
     private var credential: SlackCredential { selection.credential }
 
+    /// What one run carries from page to page.
+    private struct Progress {
+        var summary: Summary
+        var changed: Set<String> = []
+        var names = DirectMessageNames(limit: .max)
+        var seen: Set<String> = []
+        /// Per thread parent, the newest reply ts archived.
+        var replyBookmarks: [String: String]
+        var newestWritten: String?
+        /// Slack lists newest first, so a listed message that is not
+        /// written (below the bound) means every newer one was listed.
+        var reachedBound = false
+    }
+
     func run() async throws -> Summary {
         let directory = try ArchiveDirectory(outputDir: request.outputDir, teamID: selection.workspace.teamID,
                                              conversationID: request.conversationID)
         try directory.preflight(utcOffset: request.utcOffset)
-        var summary = Summary(team_id: directory.teamID, conversation_id: request.conversationID,
-                              utc_offset: request.utcOffset)
-        var changed: Set<String> = []
-        var names = DirectMessageNames(limit: .max)
-        var seen: Set<String> = []
+        let previous = try directory.readManifest()
+        let scope = ArchiveScope(request: request, bookmark: previous?.newest_ts, now: now)
+        var progress = Progress(summary: Summary(team_id: directory.teamID, conversation_id: request.conversationID,
+                                                 utc_offset: request.utcOffset),
+                                replyBookmarks: previous?.newest_reply_ts ?? [:])
         var cursor: String?
         var pages = 0
         repeat {
             let page = try await client.conversationHistory(channel: request.conversationID,
                                                             limit: SlackToolHandler.archivePageSize,
-                                                            oldest: request.oldest, cursor: cursor,
+                                                            oldest: scope.listOldest, cursor: cursor,
                                                             credential: credential)
             pages += 1
             var batch: [SlackMessage] = []
             for message in page.messages {
-                guard SlackDayFile.seconds(ofTS: message.ts) != nil else { summary.skipped_messages += 1; continue }
-                guard isInRange(message.ts), seen.insert(message.ts).inserted else { continue }
-                batch.append(message)
-                guard isThreadParent(message) else { continue }
-                let thread = try await client.conversationReplies(channel: request.conversationID, ts: message.ts,
-                                                                  credential: credential)
-                if thread.hasMore { summary.complete = false }
-                for reply in thread.messages where reply.ts != message.ts {
-                    guard SlackDayFile.seconds(ofTS: reply.ts) != nil else { summary.skipped_messages += 1; continue }
-                    if seen.insert(reply.ts).inserted { batch.append(reply) }
+                guard SlackDayFile.seconds(ofTS: message.ts) != nil else {
+                    progress.summary.skipped_messages += 1
+                    continue
+                }
+                guard progress.seen.insert(message.ts).inserted else { continue }
+                let isNew = scope.isWritten(message.ts)
+                if isNew {
+                    batch.append(message)
+                    progress.newestWritten = ArchiveScope.newer(progress.newestWritten, message.ts)
+                } else {
+                    progress.reachedBound = true
+                }
+                if isNew ? ArchiveScope.isThreadParent(message)
+                    : scope.needsReplies(message, recorded: progress.replyBookmarks[message.ts]) {
+                    batch += try await replies(of: message, progress: &progress)
                 }
             }
-            try await write(batch, into: directory, names: &names, summary: &summary, changed: &changed)
+            try await write(batch, into: directory, names: &progress.names, summary: &progress.summary,
+                            changed: &progress.changed)
             cursor = page.nextCursor
         } while cursor != nil && pages < maxPages
-        if cursor != nil { summary.complete = false }
-        summary.files = changed.sorted()
-        return summary
+        if cursor == nil { progress.reachedBound = true } else { progress.summary.complete = false }
+        progress.summary.files = progress.changed.sorted()
+        try directory.writeManifest(manifest(scope: scope, progress: progress))
+        return progress.summary
     }
 
-    /// After `after_ts` (strictly), else from `since_date`'s midnight on.
-    /// Slack already applies `oldest`; this keeps a message Slack returns
-    /// at the bound itself out.
-    private func isInRange(_ ts: String) -> Bool {
-        if let after = request.afterTS { return SlackDayFile.precedes(after, ts) }
-        if let since = request.sinceSeconds { return (SlackDayFile.seconds(ofTS: ts) ?? 0) >= since }
-        return true
+    /// The replies of `parent` not yet seen in this run, oldest first; its
+    /// reply bookmark becomes the newest reply Slack returned (all of them
+    /// are written now or were before). A thread longer than one walk
+    /// leaves `complete` false; its bookmark is then the newest reply read,
+    /// so the next run asks again.
+    private func replies(of parent: SlackMessage, progress: inout Progress) async throws -> [SlackMessage] {
+        let thread = try await client.conversationReplies(channel: request.conversationID, ts: parent.ts,
+                                                          credential: credential)
+        if thread.hasMore { progress.summary.complete = false }
+        var replies: [SlackMessage] = []
+        for reply in thread.messages where reply.ts != parent.ts {
+            guard SlackDayFile.seconds(ofTS: reply.ts) != nil else {
+                progress.summary.skipped_messages += 1
+                continue
+            }
+            progress.replyBookmarks[parent.ts] = ArchiveScope.newer(progress.replyBookmarks[parent.ts], reply.ts)
+            if progress.seen.insert(reply.ts).inserted { replies.append(reply) }
+        }
+        return replies
     }
 
-    /// A message that starts a thread; one Slack says has no replies is not
-    /// asked about.
-    private func isThreadParent(_ message: SlackMessage) -> Bool {
-        message.threadTS == message.ts && message.replyCount != 0
+    /// The manifest after this run. `newest_ts` moves to the newest message
+    /// written only when the walk reached its bound: a walk the page limit
+    /// stopped above it left a gap below the messages it wrote, which a
+    /// moved bookmark would skip for good. Reply bookmarks are kept only
+    /// for parents inside this run's window; a parent that left it is
+    /// dropped, and a later run with a wider window has no record of it, so
+    /// its replies are fetched once more and merged in place.
+    private func manifest(scope: ArchiveScope, progress: Progress) -> ArchiveManifest {
+        let summary = progress.summary
+        return ArchiveManifest(
+            teamID: summary.team_id, conversationID: summary.conversation_id,
+            newestTS: progress.reachedBound ? ArchiveScope.newer(scope.bookmark, progress.newestWritten)
+                : scope.bookmark,
+            newestReplyTS: progress.replyBookmarks.filter { scope.isInWindow($0.key) },
+            lastRun: .init(at: ArchiveManifest.timestamp(now, offsetSeconds: request.offsetSeconds),
+                           top_level_messages: summary.top_level_messages, thread_replies: summary.thread_replies,
+                           new_messages: summary.new_messages))
     }
 
     private func write(_ batch: [SlackMessage], into directory: ArchiveDirectory, names: inout DirectMessageNames,

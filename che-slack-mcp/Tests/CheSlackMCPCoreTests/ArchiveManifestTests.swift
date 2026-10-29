@@ -1,0 +1,356 @@
+import Foundation
+import MCP
+import Testing
+@testable import CheSlackMCPCore
+import SlackWebLib
+
+/// spec: slack-chat-archive, "Incremental archive and manifest" and
+/// "Thread replies and lookback", through the tool with a fake Slack and a
+/// fixed clock. Times at +08:00: the parent `1793498700.000100` is
+/// 2026-11-01 10:05, the user's reply `1793498820.000200` 10:07, and the
+/// first run 2026-11-01 11:05 (`1793502300`). A day is 86400 seconds.
+@Suite("archive_conversation_to_markdown manifest and lookback")
+struct ArchiveManifestTests {
+    static let parentTS = "1793498700.000100"
+    static let replyTS = "1793498820.000200"
+    static let firstRun = 1_793_502_300
+    static let day = 86_400
+    static let manifestPath = "T01/C01/manifest.json"
+
+    /// Alex's thread parent as `conversations.history` lists it.
+    static func parent(replies: Int, latest: String) -> String {
+        #"{"type":"message","user":"U02","text":"hello","ts":"1793498700.000100","thread_ts":"1793498700.000100","reply_count":\#(replies),"latest_reply":"\#(latest)"}"#
+    }
+
+    /// The fake Slack of the spec's day file example: the parent and the
+    /// user's own reply.
+    static func firstRunSlack() -> MethodTransport {
+        let parent = parent(replies: 1, latest: replyTS)
+        return ArchiveToolTests.slack(history: ArchiveFake.history([parent]),
+                                      replies: ArchiveFake.replies([parent, ArchiveToolTests.ownReply]))
+    }
+
+    /// `handler` with its clock fixed at `seconds` since 1970.
+    static func at(_ seconds: Int, _ handler: SlackToolHandler) -> SlackToolHandler {
+        var fixed = handler
+        fixed.now = { Date(timeIntervalSince1970: TimeInterval(seconds)) }
+        return fixed
+    }
+
+    static func manifest(_ output: TemporaryDirectory) throws -> NSDictionary {
+        try #require(try JSONSerialization.jsonObject(with: Data(output.read(manifestPath).utf8)) as? NSDictionary)
+    }
+
+    /// A hand-written manifest, compared as parsed JSON, so a ts written as
+    /// a number would not equal one written as a string.
+    static func expected(_ json: String) throws -> NSDictionary {
+        try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? NSDictionary)
+    }
+
+    @Test("a run writes manifest.json (0600): newest top-level ts, newest reply ts per parent, run time, counts")
+    func manifestAfterFirstRun() async throws {
+        let (handler, _) = try await readHandler(Self.firstRunSlack())
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+
+        #expect(result.isError == false, "\(text(result))")
+        #expect(output.listing() == ["T01", "T01/C01", "T01/C01/2026-11-01.md", Self.manifestPath])
+        #expect(try Self.manifest(output) == Self.expected("""
+            {"format": "che-slack-mcp archive manifest", "version": 1, "team_id": "T01", "conversation_id": "C01",
+             "newest_ts": "1793498700.000100",
+             "newest_reply_ts": {"1793498700.000100": "1793498820.000200"},
+             "last_run": {"at": "2026-11-01T11:05:00+08:00", "top_level_messages": 1, "thread_replies": 1,
+                          "new_messages": 2}}
+            """))
+        #expect(try output.mode(Self.manifestPath) == 0o600)
+        let raw = try output.read(Self.manifestPath)
+        for content in ["hello", "thanks", "Alex", "我"] {
+            #expect(!raw.contains(content), "the manifest holds \(content)")
+        }
+    }
+
+    /// spec: "Second run with no new messages". The second run is a day
+    /// later, 2026-11-02 11:05 (`1793588700`); its 30-day window starts at
+    /// `1793588700 - 30 * 86400 = 1790996700`, before the bookmark, so the
+    /// history is listed from there. The parent's `latest_reply` is the
+    /// reply already recorded, so its replies are not asked for again.
+    @Test("spec: a second run with no new messages leaves every day file byte-identical; the manifest records its time")
+    func secondRunWithNoNewMessages() async throws {
+        let first = Self.firstRunSlack()
+        let (handler, _) = try await readHandler(first)
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        _ = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+        let dayFile = try output.read("T01/C01/2026-11-01.md")
+        let second = Self.firstRunSlack()
+        let (secondHandler, _) = try await readHandler(second)
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + Self.day, secondHandler), into: output)
+
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":[],"new_messages":0,"#
+                   + #""skipped_messages":0,"team_id":"T01","thread_replies":0,"top_level_messages":0,"#
+                   + #""utc_offset":"+08:00"}"#)
+        #expect(dayFile == SlackDayFileTests.exampleFile)
+        #expect(try output.read("T01/C01/2026-11-01.md") == dayFile)
+        #expect(output.listing() == ["T01", "T01/C01", "T01/C01/2026-11-01.md", Self.manifestPath])
+        #expect(second.methods == ["conversations.history"])
+        #expect(second.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": "1790996700"])
+        #expect(try Self.manifest(output) == Self.expected("""
+            {"format": "che-slack-mcp archive manifest", "version": 1, "team_id": "T01", "conversation_id": "C01",
+             "newest_ts": "1793498700.000100",
+             "newest_reply_ts": {"1793498700.000100": "1793498820.000200"},
+             "last_run": {"at": "2026-11-02T11:05:00+08:00", "top_level_messages": 0, "thread_replies": 0,
+                          "new_messages": 0}}
+            """))
+    }
+
+    /// A later run whose Slack lists the parent with `latest_reply` `late`
+    /// and answers its replies with Kim's reply `late` added.
+    static func laterSlack(late: String) -> MethodTransport {
+        let parent = parent(replies: 2, latest: late)
+        let reply = #"{"user":"U03","text":"late answer","ts":"\#(late)","thread_ts":"1793498700.000100"}"#
+        return ArchiveToolTests.slack(history: ArchiveFake.history([parent]),
+                                      replies: ArchiveFake.replies([parent, ArchiveToolTests.ownReply, reply]),
+                                      names: ["U02": "Alex", "U03": "Kim"])
+    }
+
+    static let lookback30: [String: Value] = ["utc_offset": .string("+08:00"), "thread_lookback_days": .int(30)]
+
+    /// spec: "Late reply outside the window is not fetched". The second run
+    /// is 45 days after the first, 2026-12-16 11:05 (`1797390300`); the
+    /// window starts at `1797390300 - 30 * 86400 = 1794798300`, after the
+    /// parent. The new reply `1797300300.000300` is 2026-12-15 10:05.
+    @Test("spec: with thread_lookback_days 30, a 45-day-old parent's new reply is not fetched nor archived")
+    func lateReplyOutsideWindow() async throws {
+        let (handler, _) = try await readHandler(Self.firstRunSlack())
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        _ = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+        let dayFile = try output.read("T01/C01/2026-11-01.md")
+        let later = Self.laterSlack(late: "1797300300.000300")
+        let (laterHandler, _) = try await readHandler(later)
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + 45 * Self.day, laterHandler), into: output,
+                                                    Self.lookback30)
+
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":[],"new_messages":0,"#
+                   + #""skipped_messages":0,"team_id":"T01","thread_replies":0,"top_level_messages":0,"#
+                   + #""utc_offset":"+08:00"}"#)
+        #expect(later.methods == ["conversations.history"])
+        #expect(later.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": "1793498700.000100"])
+        #expect(output.listing() == ["T01", "T01/C01", "T01/C01/2026-11-01.md", Self.manifestPath])
+        #expect(try output.read("T01/C01/2026-11-01.md") == dayFile)
+        // The parent left the window, so its reply record is dropped.
+        #expect(try Self.manifest(output) == Self.expected("""
+            {"format": "che-slack-mcp archive manifest", "version": 1, "team_id": "T01", "conversation_id": "C01",
+             "newest_ts": "1793498700.000100", "newest_reply_ts": {},
+             "last_run": {"at": "2026-12-16T11:05:00+08:00", "top_level_messages": 0, "thread_replies": 0,
+                          "new_messages": 0}}
+            """))
+    }
+
+    /// The counterpart inside the window: 20 days after the first run,
+    /// 2026-11-21 11:05 (`1795230300`), the window starts at
+    /// `1795230300 - 30 * 86400 = 1792638300`, before the bookmark, so the
+    /// history is listed from there. Kim's reply `1795140300.000300` is
+    /// 2026-11-20 10:05, newer than the recorded `1793498820.000200`.
+    @Test("a parent inside the window whose latest_reply is newer than recorded gets its new reply archived")
+    func lateReplyInsideWindow() async throws {
+        let (handler, _) = try await readHandler(Self.firstRunSlack())
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        _ = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+        let dayFile = try output.read("T01/C01/2026-11-01.md")
+        let later = Self.laterSlack(late: "1795140300.000300")
+        let (laterHandler, _) = try await readHandler(later)
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + 20 * Self.day, laterHandler), into: output,
+                                                    Self.lookback30)
+
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-11-20.md"],"#
+                   + #""new_messages":1,"skipped_messages":0,"team_id":"T01","thread_replies":2,"#
+                   + #""top_level_messages":0,"utc_offset":"+08:00"}"#)
+        #expect(later.methods == ["conversations.history", "conversations.replies", "users.info"])
+        #expect(later.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": "1792638300"])
+        #expect(later.calls.dropFirst().first?.parameters["ts"] == Self.parentTS)
+        #expect(try output.read("T01/C01/2026-11-01.md") == dayFile)
+        #expect(try output.read("T01/C01/2026-11-20.md") == """
+            ---
+            team_id: "T01"
+            conversation_id: "C01"
+            date: 2026-11-20
+            utc_offset: "+08:00"
+            ---
+
+            <!-- msg:1795140300.000300 -->
+            **10:05 Kim** ↳ thread:1793498700.000100：
+            late answer
+
+
+            """)
+        #expect(try Self.manifest(output) == Self.expected("""
+            {"format": "che-slack-mcp archive manifest", "version": 1, "team_id": "T01", "conversation_id": "C01",
+             "newest_ts": "1793498700.000100",
+             "newest_reply_ts": {"1793498700.000100": "1795140300.000300"},
+             "last_run": {"at": "2026-11-21T11:05:00+08:00", "top_level_messages": 0, "thread_replies": 2,
+                          "new_messages": 1}}
+            """))
+    }
+
+    /// Silent-gap guard: the 50-page limit stopped a first run before the
+    /// oldest message, so the bookmark stays null and the next call reads
+    /// the whole history again rather than skipping what was left out.
+    @Test("a run cut by the page limit before its lower bound leaves newest_ts where it was (null on a first run)")
+    func pageCapKeepsBookmark() async throws {
+        let transport = MethodTransport { call in
+            guard call.method == "conversations.history" else { return ArchiveFake.users(["U02": "Alex"], call) }
+            let page = Int(call.parameters["cursor"] ?? "0") ?? 0
+            return .body(ArchiveFake.history([#"{"user":"U02","text":"m","ts":"\#(1793498000 - page).000100"}"#],
+                                             cursor: String(page + 1)))
+        }
+        let (handler, _) = try await readHandler(transport)
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+
+        #expect(text(result).contains(#""complete":false"#), "\(text(result))")
+        #expect(try Self.manifest(output) == Self.expected("""
+            {"format": "che-slack-mcp archive manifest", "version": 1, "team_id": "T01", "conversation_id": "C01",
+             "newest_ts": null, "newest_reply_ts": {},
+             "last_run": {"at": "2026-11-01T11:05:00+08:00", "top_level_messages": 50, "thread_replies": 0,
+                          "new_messages": 50}}
+            """))
+    }
+
+    /// The limit stops the walk inside the lookback window, after it passed
+    /// the bookmark: every message newer than the bookmark was read, so the
+    /// bookmark moves; `complete` is false because window parents were left
+    /// unchecked. The second run is 2026-11-02 11:05; its new message
+    /// `1793585100.000100` is 10:05 that day.
+    @Test("a run cut by the page limit after passing the bookmark still moves newest_ts to the newest message")
+    func pageCapAfterBookmark() async throws {
+        let (handler, _) = try await readHandler(ArchiveToolTests.slack(
+            history: ArchiveFake.history([ArchiveToolTests.alexPlain])))
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        _ = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+        let later = MethodTransport { call in
+            guard call.method == "conversations.history" else { return ArchiveFake.users(["U02": "Alex"], call) }
+            let page = Int(call.parameters["cursor"] ?? "0") ?? 0
+            let ts = page == 0 ? "1793585100.000100" : "\(1793498700 - page).000100"
+            return .body(ArchiveFake.history([#"{"user":"U02","text":"m","ts":"\#(ts)"}"#], cursor: String(page + 1)))
+        }
+        let (laterHandler, _) = try await readHandler(later)
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + Self.day, laterHandler), into: output)
+
+        #expect(text(result).contains(#""complete":false"#) && text(result).contains(#""new_messages":1"#),
+                "\(text(result))")
+        #expect(later.calls.filter { $0.method == "conversations.history" }.count == 50)
+        #expect(try Self.manifest(output)["newest_ts"] as? String == "1793585100.000100")
+    }
+
+    /// A parent archived before it had replies has no reply record; its
+    /// first reply, a day later, is fetched and lands in the spec's example
+    /// day file.
+    @Test("a parent archived without replies gets its first reply fetched while inside the window")
+    func firstReplyAfterArchiving() async throws {
+        let (handler, _) = try await readHandler(ArchiveToolTests.slack(
+            history: ArchiveFake.history([ArchiveToolTests.alexPlain])))
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        _ = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+        #expect(try Self.manifest(output)["newest_reply_ts"] as? NSDictionary == [:])
+        let later = Self.firstRunSlack()
+        let (laterHandler, _) = try await readHandler(later)
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + Self.day, laterHandler), into: output)
+
+        #expect(text(result).contains(#""new_messages":1"#), "\(text(result))")
+        #expect(later.methods == ["conversations.history", "conversations.replies"])
+        #expect(try output.read("T01/C01/2026-11-01.md") == SlackDayFileTests.exampleFile)
+        #expect(try Self.manifest(output)["newest_reply_ts"] as? NSDictionary == [Self.parentTS: Self.replyTS])
+    }
+
+    /// spec: "Without after_ts and since_date, a run SHALL fetch only
+    /// top-level messages newer than the manifest's newest top-level ts."
+    /// With a 0-day window the bookmark is `oldest` itself; an older message
+    /// Slack still returns (here edited) is not written again.
+    @Test("with thread_lookback_days 0 the bookmark is sent as oldest and only newer messages are written")
+    func onlyNewerThanBookmark() async throws {
+        let (handler, _) = try await readHandler(ArchiveToolTests.slack(
+            history: ArchiveFake.history([ArchiveToolTests.alexPlain])))
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        _ = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+        let dayFile = try output.read("T01/C01/2026-11-01.md")
+        let later = ArchiveToolTests.slack(history: ArchiveFake.history([
+            #"{"user":"U02","text":"new","ts":"1793585100.000100"}"#,
+            #"{"user":"U02","text":"edited","ts":"1793498700.000100"}"#,
+        ]))
+        let (laterHandler, _) = try await readHandler(later)
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + Self.day, laterHandler), into: output,
+                                                    ["utc_offset": .string("+08:00"), "thread_lookback_days": .int(0)])
+
+        #expect(text(result).contains(#""files":["T01/C01/2026-11-02.md"]"#), "\(text(result))")
+        #expect(later.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": "1793498700.000100"])
+        #expect(try output.read("T01/C01/2026-11-01.md") == dayFile)
+        #expect(try Self.manifest(output) == Self.expected("""
+            {"format": "che-slack-mcp archive manifest", "version": 1, "team_id": "T01", "conversation_id": "C01",
+             "newest_ts": "1793585100.000100", "newest_reply_ts": {},
+             "last_run": {"at": "2026-11-02T11:05:00+08:00", "top_level_messages": 1, "thread_replies": 0,
+                          "new_messages": 1}}
+            """))
+    }
+
+    /// after_ts below the bookmark archives that range again (merged in
+    /// place) and never moves the bookmark back.
+    @Test("after_ts takes precedence over the manifest's bookmark, which is not moved back")
+    func afterTSOverridesBookmark() async throws {
+        let (handler, _) = try await readHandler(ArchiveToolTests.slack(
+            history: ArchiveFake.history([ArchiveToolTests.alexPlain])))
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        _ = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+        let later = ArchiveToolTests.slack(history: ArchiveFake.history([
+            #"{"user":"U02","text":"earlier","ts":"1793498600.000100"}"#,
+        ]))
+        let (laterHandler, _) = try await readHandler(later)
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + Self.day, laterHandler), into: output, [
+            "utc_offset": .string("+08:00"), "thread_lookback_days": .int(0), "after_ts": .string("1793498000.000100"),
+        ])
+
+        #expect(text(result).contains(#""new_messages":1"#), "\(text(result))")
+        #expect(later.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": "1793498000.000100"])
+        #expect(try output.read("T01/C01/2026-11-01.md").contains("<!-- msg:1793498600.000100 -->\n**10:03 Alex**：\nearlier\n"))
+        #expect(try Self.manifest(output)["newest_ts"] as? String == "1793498700.000100")
+    }
+
+    @Test("the manifest holds no message text, sender name, bot name, file name or permalink")
+    func manifestIsContentFree() async throws {
+        let parent = #"{"user":"U02","text":"secret plan","ts":"1793498700.000100","thread_ts":"1793498700.000100","reply_count":1,"latest_reply":"1793498820.000200","files":[{"id":"F1","name":"plan.pdf","permalink":"https://t.slack.com/files/U9/F1/plan.pdf"}]}"#
+        let history = ArchiveFake.history([
+            #"{"subtype":"bot_message","bot_id":"B01","username":"deploybot","text":"deployed","ts":"1793498710.000100"}"#,
+            parent,
+        ])
+        let reply = #"{"user":"U03","text":"agreed","ts":"1793498820.000200","thread_ts":"1793498700.000100"}"#
+        let (handler, _) = try await readHandler(ArchiveToolTests.slack(
+            history: history, replies: ArchiveFake.replies([parent, reply]), names: ["U02": "Alex", "U03": "Kim"]))
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
+
+        #expect(result.isError == false, "\(text(result))")
+        #expect(try output.read("T01/C01/2026-11-01.md").contains("[file: plan.pdf]"))
+        let raw = try output.read(Self.manifestPath)
+        for content in ["secret", "plan", "deploy", "agreed", "Alex", "Kim", "https", "F1", "U02", "U03", "B01"] {
+            #expect(!raw.contains(content), "the manifest holds \(content)")
+        }
+    }
+}

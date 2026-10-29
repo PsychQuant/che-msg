@@ -31,6 +31,8 @@ public struct SlackMessage: Equatable, Sendable, Decodable {
     public let threadTS: String?
     /// Present on a thread parent.
     public let replyCount: Int?
+    /// The ts of a thread parent's newest reply, present on a parent.
+    public let latestReply: String?
     public let subtype: String?
     /// The sender's names, when Slack sends them along with the message.
     public let userProfile: SlackProfileNames?
@@ -40,7 +42,7 @@ public struct SlackMessage: Equatable, Sendable, Decodable {
 
     public init(ts: String, user: String? = nil, botID: String? = nil, username: String? = nil, text: String? = nil,
                 threadTS: String? = nil, replyCount: Int? = nil, subtype: String? = nil,
-                userProfile: SlackProfileNames? = nil, files: [SlackFile]? = nil) {
+                userProfile: SlackProfileNames? = nil, files: [SlackFile]? = nil, latestReply: String? = nil) {
         self.ts = ts
         self.user = user
         self.botID = botID
@@ -48,6 +50,7 @@ public struct SlackMessage: Equatable, Sendable, Decodable {
         self.text = text
         self.threadTS = threadTS
         self.replyCount = replyCount
+        self.latestReply = latestReply
         self.subtype = subtype
         self.userProfile = userProfile
         self.files = files
@@ -58,6 +61,7 @@ public struct SlackMessage: Equatable, Sendable, Decodable {
         case botID = "bot_id"
         case threadTS = "thread_ts"
         case replyCount = "reply_count"
+        case latestReply = "latest_reply"
         case userProfile = "user_profile"
     }
 

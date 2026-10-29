@@ -130,23 +130,26 @@ struct ArchiveDirectory {
     }
 
     /// Writes `data` to a new 0600 temporary file next to `file`, then
-    /// renames it over `file`. The temporary file never outlives a failure.
-    static func replace(_ file: URL, with data: Data) throws(ToolFailure) {
+    /// renames it over `file`. The temporary file never outlives a failure,
+    /// which `failure` words from the `errno` (by default as a day file's).
+    static func replace(_ file: URL, with data: Data,
+                        failure: ((Int32) -> ToolFailure)? = nil) throws(ToolFailure) {
+        let describe = failure ?? { writeFailure(file, $0) }
         let temporary = file.deletingLastPathComponent()
             .appendingPathComponent(".\(file.lastPathComponent).\(UUID().uuidString).tmp")
         let descriptor = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard descriptor >= 0 else { throw writeFailure(file, errno) }
-        var failure: Int32?
+        guard descriptor >= 0 else { throw describe(errno) }
+        var code: Int32?
         if fchmod(descriptor, 0o600) != 0 {
-            failure = errno
+            code = errno
         } else if !writeAll(descriptor, data) {
-            failure = errno
+            code = errno
         }
-        if close(descriptor) != 0, failure == nil { failure = errno }
-        if failure == nil, rename(temporary.path, file.path) != 0 { failure = errno }
-        if let failure {
+        if close(descriptor) != 0, code == nil { code = errno }
+        if code == nil, rename(temporary.path, file.path) != 0 { code = errno }
+        if let code {
             unlink(temporary.path)
-            throw writeFailure(file, failure)
+            throw describe(code)
         }
     }
 
@@ -210,7 +213,7 @@ struct ArchiveDirectory {
     /// True when `file` is a regular file, false when it does not exist;
     /// refuses anything else (a link, a directory).
     @discardableResult
-    private static func checkRegularFile(_ file: URL) throws(ToolFailure) -> Bool {
+    static func checkRegularFile(_ file: URL) throws(ToolFailure) -> Bool {
         var info = stat()
         guard lstat(file.path, &info) == 0 else {
             if errno == ENOENT { return false }

@@ -12,6 +12,10 @@ struct SlackToolHandler: Sendable {
     /// that gives no `utc_offset`; injectable so tests do not depend on the
     /// machine's time zone.
     var localOffsetSeconds: @Sendable () -> Int = { TimeZone.current.secondsFromGMT(for: Date()) }
+    /// The current time, asked once at each archive call: the end of the
+    /// thread lookback window and the run time the manifest records.
+    /// Injectable so tests run on a fixed clock.
+    var now: @Sendable () -> Date = { Date() }
 
     var resolver: WorkspaceResolver { WorkspaceResolver(store: store) }
 

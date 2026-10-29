@@ -16,11 +16,12 @@ struct ArchiveRequest: Equatable, Sendable {
     /// The effective offset, as written into the day files.
     let utcOffset: String
     let offsetSeconds: Int
-    /// Checked here; used by the thread lookback (spec: "Thread replies and
-    /// lookback").
+    /// The lookback window in days (spec: "Thread replies and lookback");
+    /// 0 checks no earlier thread again.
     let threadLookbackDays: Int
 
-    /// The `oldest` sent to `conversations.history`.
+    /// The lower bound the arguments set, as a ts; `ArchiveScope` lists the
+    /// history from it, or from earlier for the lookback window.
     var oldest: String? { afterTS ?? sinceSeconds.map(String.init) }
 }
 
