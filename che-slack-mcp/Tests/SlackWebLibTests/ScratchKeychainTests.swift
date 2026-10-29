@@ -15,18 +15,21 @@ struct ScratchKeychainTests {
 
     init() throws { scratch = try ScratchDirectory() }
 
-    /// The spec scenario "Index lists workspaces without credentials", read
-    /// back: the index decodes to T01 (alpha) and T02 (beta), and each
-    /// workspace's two items give its credential. The T02 name is non-ASCII,
-    /// which `security -g` prints as hex.
+    /// Items seeded by argv (synthetic values), read through the store: the
+    /// index decodes to T01 (alpha) and T02 (beta), and each workspace's two
+    /// items give its credential. The T02 name is non-ASCII; base64 keeps
+    /// the stored value ASCII.
     @Test("an imported T01 and T02 read back as the index and two credentials")
     func readsTheLayout() async throws {
         let searchList = try ScratchKeychain.userSearchList()
         let keychain = try ScratchKeychain(in: scratch)
         defer { keychain.delete() }
         #expect(try ScratchKeychain.userSearchList() == searchList, "creating the scratch keychain changed the search list")
-        try keychain.add(SlackKeychain.workspacesService, #"[{"team_id":"T01","domain":"alpha","name":"Alpha","user_id":"U01"},"#
-            + #"{"team_id":"T02","domain":"beta","name":"日本語チーム","user_id":"U02"}]"#)
+        // base64 of [{"team_id":"T01","domain":"alpha","name":"Alpha","user_id":"U01"},
+        //            {"team_id":"T02","domain":"beta","name":"日本語チーム","user_id":"U02"}]
+        try keychain.add(SlackKeychain.workspacesService,
+                         "W3sidGVhbV9pZCI6IlQwMSIsImRvbWFpbiI6ImFscGhhIiwibmFtZSI6IkFscGhhIiwidXNlcl9pZCI6IlUwMSJ9LHsidGVh"
+                         + "bV9pZCI6IlQwMiIsImRvbWFpbiI6ImJldGEiLCJuYW1lIjoi5pel5pys6Kqe44OB44O844OgIiwidXNlcl9pZCI6IlUwMiJ9XQ==")
         try keychain.add("SLACK_TOKEN_T01", "xoxc-fake-t01")
         try keychain.add("SLACK_COOKIE_T01", "xoxd-fake%2Bt01")
         try keychain.add("SLACK_TOKEN_T02", "xoxc-fake-t02")
@@ -53,7 +56,9 @@ struct ScratchKeychainTests {
         let searchList = try ScratchKeychain.userSearchList()
         let keychain = try ScratchKeychain(in: scratch)
         defer { keychain.delete() }
-        try keychain.add(SlackKeychain.workspacesService, #"[{"team_id":"T01","domain":"alpha","name":"Alpha","user_id":"U01"}]"#)
+        // base64 of [{"team_id":"T01","domain":"alpha","name":"Alpha","user_id":"U01"}]
+        try keychain.add(SlackKeychain.workspacesService,
+                         "W3sidGVhbV9pZCI6IlQwMSIsImRvbWFpbiI6ImFscGhhIiwibmFtZSI6IkFscGhhIiwidXNlcl9pZCI6IlUwMSJ9XQ==")
         try keychain.add("SLACK_COOKIE_T01", "xoxd-fake-cookie")
         let reader = SecurityCLIKeychainReader(keychainPath: keychain.path)
         let store = SlackCredentialStore(reader: reader)
@@ -87,6 +92,101 @@ struct ScratchKeychainTests {
         #expect(none == [])
         #expect(first.token == "xoxc-first")
         #expect(second.token == "xoxc-second")
+    }
+
+    /// The spec scenario "Index lists workspaces without credentials", written
+    /// through the store with the real `security -i`: the raw index item
+    /// base64-decodes (here, independently of the store) to a JSON array of
+    /// T01/alpha and T02/beta, and the four token and cookie items exist.
+    @Test("T01 (alpha) and T02 (beta) imported: SLACK_WORKSPACES base64-decodes to both, and four items exist")
+    func importedLayout() async throws {
+        let searchList = try ScratchKeychain.userSearchList()
+        let keychain = try ScratchKeychain(in: scratch)
+        defer { keychain.delete() }
+        let reader = SecurityCLIKeychainReader(keychainPath: keychain.path)
+        let store = SlackCredentialStore(reader: reader, writer: SecurityCLIKeychainWriter(keychainPath: keychain.path))
+        let workspaces = [
+            SlackWorkspace(teamID: "T01", domain: "alpha", name: "Alpha", userID: "U01"),
+            SlackWorkspace(teamID: "T02", domain: "beta", name: "日本語チーム", userID: "U02"),
+        ]
+
+        try await store.saveWorkspaces(workspaces)
+        try await store.save(SlackCredential(teamID: "T01", token: "xoxc-fake-t01", cookie: "xoxd-fake%2Bt01"))
+        try await store.save(SlackCredential(teamID: "T02", token: "xoxc-fake-t02", cookie: "xoxd-fake%2Ft02="))
+
+        let stored = try #require(await reader.read(service: "SLACK_WORKSPACES").value)
+        let json = try #require(Data(base64Encoded: stored))
+        let objects = try #require(try JSONSerialization.jsonObject(with: json) as? [[String: String]])
+        #expect(objects.map { [$0["team_id"], $0["domain"]] } == [["T01", "alpha"], ["T02", "beta"]])
+        #expect(objects.last?["name"] == "日本語チーム")
+        #expect(objects.allSatisfy { Set($0.keys) == ["team_id", "domain", "name", "user_id"] })
+        #expect(await reader.read(service: "SLACK_TOKEN_T01") == .found("xoxc-fake-t01"))
+        #expect(await reader.read(service: "SLACK_COOKIE_T01") == .found("xoxd-fake%2Bt01"))
+        #expect(await reader.read(service: "SLACK_TOKEN_T02") == .found("xoxc-fake-t02"))
+        #expect(await reader.read(service: "SLACK_COOKIE_T02") == .found("xoxd-fake%2Ft02="))
+        #expect(try await store.workspaces() == workspaces)
+        keychain.delete()
+        #expect(try ScratchKeychain.userSearchList() == searchList, "the search list changed")
+    }
+
+    /// The spec scenario "Value with a quote is refused", against a keychain
+    /// that already holds T01's items: both keep their values.
+    @Test("a cookie containing a quote is refused naming SLACK_COOKIE_T01, and T01's items are unchanged")
+    func quotedCookieChangesNothing() async throws {
+        let keychain = try ScratchKeychain(in: scratch)
+        defer { keychain.delete() }
+        try keychain.add("SLACK_TOKEN_T01", "xoxc-old")
+        try keychain.add("SLACK_COOKIE_T01", "xoxd-old")
+        let reader = SecurityCLIKeychainReader(keychainPath: keychain.path)
+        let store = SlackCredentialStore(reader: reader, writer: SecurityCLIKeychainWriter(keychainPath: keychain.path))
+
+        let error = await KeychainWriterTests.error {
+            try await store.save(SlackCredential(teamID: "T01", token: "xoxc-new", cookie: #"xoxd-new"x"#))
+        }
+
+        #expect(error == .refused(service: "SLACK_COOKIE_T01", reason: .valueCharacters))
+        #expect(error?.description.contains("SLACK_COOKIE_T01") == true)
+        #expect(await reader.read(service: "SLACK_TOKEN_T01") == .found("xoxc-old"))
+        #expect(await reader.read(service: "SLACK_COOKIE_T01") == .found("xoxd-old"))
+    }
+
+    /// The spec scenario "Team id with a quote is refused": afterwards the
+    /// scratch keychain holds no item at all for the account (an attribute
+    /// lookup by account alone exits 44).
+    @Test("a token for team id T01\"x is refused naming its service, and no item is created")
+    func quotedTeamIDCreatesNothing() async throws {
+        let keychain = try ScratchKeychain(in: scratch)
+        defer { keychain.delete() }
+        let store = SlackCredentialStore(reader: SecurityCLIKeychainReader(keychainPath: keychain.path),
+                                         writer: SecurityCLIKeychainWriter(keychainPath: keychain.path))
+
+        let error = await KeychainWriterTests.error {
+            try await store.save(SlackCredential(teamID: #"T01"x"#, token: "xoxc-new", cookie: "xoxd-new"))
+        }
+
+        #expect(error == .refused(service: #"SLACK_TOKEN_T01"x"#, reason: .teamID))
+        #expect(keychain.itemCount() == 0)
+    }
+
+    /// The real `security -i` against the scratch file: the value comes back
+    /// exactly, and `-U` replaces it on the second write.
+    @Test("a value written through security -i reads back exactly, and a second write replaces it")
+    func writeReadsBack() async throws {
+        let searchList = try ScratchKeychain.userSearchList()
+        let keychain = try ScratchKeychain(in: scratch)
+        defer { keychain.delete() }
+        let writer = SecurityCLIKeychainWriter(keychainPath: keychain.path)
+        let reader = SecurityCLIKeychainReader(keychainPath: keychain.path)
+
+        try await writer.write(service: "SLACK_TOKEN_T01", value: "xoxc-TEST%2Fab_c.d-e+f/g=")
+        let first = await reader.read(service: "SLACK_TOKEN_T01")
+        try await writer.write(service: "SLACK_TOKEN_T01", value: "xoxc-second")
+        let second = await reader.read(service: "SLACK_TOKEN_T01")
+
+        #expect(first == .found("xoxc-TEST%2Fab_c.d-e+f/g="))
+        #expect(second == .found("xoxc-second"))
+        keychain.delete()
+        #expect(try ScratchKeychain.userSearchList() == searchList, "the search list changed")
     }
 
     /// The real reader with a stand-in tool that never answers: the store
@@ -126,6 +226,20 @@ struct ScratchKeychain {
     /// Adds or replaces a synthetic item under the account `che-slack-mcp`.
     func add(_ service: String, _ fakeValue: String) throws {
         try run(Self.security, ["add-generic-password", "-U", "-a", SlackKeychain.account, "-s", service, "-w", fakeValue, path])
+    }
+
+    /// How many items for the account `che-slack-mcp` the file holds,
+    /// counted from attribute-only lookups (no `-g`, so no value is read):
+    /// 0 when `find-generic-password -a` exits 44, else at least 1.
+    func itemCount() -> Int {
+        do {
+            try run(Self.security, ["find-generic-password", "-a", SlackKeychain.account, path])
+            return 1
+        } catch let failed as ToolFailed where failed.status == 44 {
+            return 0
+        } catch {
+            return -1
+        }
     }
 
     /// Deletes the file by path; deleting twice is harmless.

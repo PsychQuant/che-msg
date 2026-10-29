@@ -4,8 +4,10 @@ import Foundation
 /// slack-credentials, "Keychain credential layout"). Every item uses the
 /// account `che-slack-mcp`; the service names one item:
 ///
-/// - `SLACK_WORKSPACES`: the index, a JSON array of `SlackWorkspace` objects.
-///   It holds no credential.
+/// - `SLACK_WORKSPACES`: the index, a JSON array of `SlackWorkspace` objects
+///   stored as the standard base64 (with padding) of its UTF-8, so that a
+///   name in any script passes the write path's character check. It holds
+///   no credential.
 /// - `SLACK_TOKEN_<team_id>`: that workspace's `xoxc` token.
 /// - `SLACK_COOKIE_<team_id>`: that workspace's `d` cookie value.
 ///

@@ -7,6 +7,35 @@ enum ChildOutcome: Equatable, Sendable {
     case couldNotStart
 }
 
+/// Starts `process` and waits for it to exit or for `timeout` to pass,
+/// whichever comes first; on timeout, terminates it and kills it if it is
+/// still running `killGrace` seconds later.
+func runBounded(_ process: Process, timeout: TimeInterval, killGrace: TimeInterval) async -> ChildOutcome {
+    await withCheckedContinuation { (continuation: CheckedContinuation<ChildOutcome, Never>) in
+        let once = ResumeOnce(continuation)
+        process.terminationHandler = { finished in
+            once.resume(.exited(finished.terminationStatus))
+        }
+        do {
+            try process.run()
+        } catch {
+            once.resume(.couldNotStart)
+            return
+        }
+        let pid = process.processIdentifier
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+            guard process.isRunning else { return }
+            // Resume first: once terminated, the exit handler would report
+            // the signal's exit status instead of the timeout.
+            once.resume(.timedOut)
+            process.terminate()
+            DispatchQueue.global().asyncAfter(deadline: .now() + killGrace) {
+                if process.isRunning { kill(pid, SIGKILL) }
+            }
+        }
+    }
+}
+
 /// Collects a child's output in the background, up to `limit` bytes, so the
 /// child never blocks on a full pipe and the caller never blocks on EOF.
 final class OutputCollector: @unchecked Sendable {

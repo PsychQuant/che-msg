@@ -84,7 +84,7 @@ public struct SecurityCLIKeychainReader: KeychainItemReader {
         process.standardError = stderr
         let output = OutputCollector(stderr.fileHandleForReading)
 
-        let outcome = await run(process)
+        let outcome = await runBounded(process, timeout: timeout, killGrace: Self.killGrace)
         // Never wait on the pipe without a bound: a process that inherited the
         // child's stderr can keep it open after the child has gone.
         let waitForOutput = outcome == .timedOut || outcome == .couldNotStart ? 0 : Self.outputGrace
@@ -105,35 +105,6 @@ public struct SecurityCLIKeychainReader: KeychainItemReader {
             }
         case .exited(let status):
             return .unavailable(reason: "exited with status \(status)")
-        }
-    }
-
-    /// Starts `process` and waits for it to exit or for `timeout` to pass,
-    /// whichever comes first; on timeout, terminates it and kills it if it is
-    /// still running a second later.
-    private func run(_ process: Process) async -> ChildOutcome {
-        await withCheckedContinuation { (continuation: CheckedContinuation<ChildOutcome, Never>) in
-            let once = ResumeOnce(continuation)
-            process.terminationHandler = { finished in
-                once.resume(.exited(finished.terminationStatus))
-            }
-            do {
-                try process.run()
-            } catch {
-                once.resume(.couldNotStart)
-                return
-            }
-            let pid = process.processIdentifier
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                guard process.isRunning else { return }
-                // Resume first: once terminated, the exit handler would report
-                // the signal's exit status instead of the timeout.
-                once.resume(.timedOut)
-                process.terminate()
-                DispatchQueue.global().asyncAfter(deadline: .now() + Self.killGrace) {
-                    if process.isRunning { kill(pid, SIGKILL) }
-                }
-            }
         }
     }
 

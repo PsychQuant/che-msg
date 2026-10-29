@@ -11,8 +11,9 @@ public enum SlackCredentialError: Error, Equatable, Sendable, CustomStringConver
     case timedOut(service: String, after: TimeInterval)
     /// `security` failed or printed something that is not a value.
     case unavailable(service: String, reason: String)
-    /// `SLACK_WORKSPACES` holds something other than a JSON array of
-    /// workspace objects. The reason is a fixed phrase, never the content.
+    /// `SLACK_WORKSPACES` holds something other than the base64 of a JSON
+    /// array of workspace objects. The reason is a fixed phrase, never the
+    /// content.
     case malformedIndex(reason: String)
 
     public var service: String {
@@ -41,14 +42,18 @@ public enum SlackCredentialError: Error, Equatable, Sendable, CustomStringConver
     public var errorDescription: String? { description }
 }
 
-/// Reads the per-workspace credential layout described on `SlackKeychain`.
-/// It holds no value between calls: every call reads the Keychain again, so
-/// a re-import is seen at once and nothing outlives the call that needed it.
+/// Reads and writes the per-workspace credential layout described on
+/// `SlackKeychain`. It holds no value between calls: every call reads the
+/// Keychain again, so a re-import is seen at once and nothing outlives the
+/// call that needed it.
 public struct SlackCredentialStore: Sendable {
     public let reader: any KeychainItemReader
+    public let writer: any KeychainItemWriter
 
-    public init(reader: any KeychainItemReader = SecurityCLIKeychainReader()) {
+    public init(reader: any KeychainItemReader = SecurityCLIKeychainReader(),
+                writer: any KeychainItemWriter = SecurityCLIKeychainWriter()) {
         self.reader = reader
+        self.writer = writer
     }
 
     /// The workspaces in `SLACK_WORKSPACES`, in stored order.
@@ -59,9 +64,9 @@ public struct SlackCredentialStore: Sendable {
     /// thrown error.
     ///
     /// - Throws: `SlackCredentialError` naming `SLACK_WORKSPACES` when the
-    ///   item cannot be read (`timedOut`, `unavailable`) or is not a JSON
-    ///   array of objects with string `team_id`, `domain`, `name` and
-    ///   `user_id` (`malformedIndex`).
+    ///   item cannot be read (`timedOut`, `unavailable`), or is not standard
+    ///   base64 with padding of a JSON array of objects with string
+    ///   `team_id`, `domain`, `name` and `user_id` (`malformedIndex`).
     public func workspaces() async throws -> [SlackWorkspace] {
         let service = SlackKeychain.workspacesService
         let stored: String
@@ -70,8 +75,12 @@ public struct SlackCredentialStore: Sendable {
         } catch SlackCredentialError.absent {
             return []
         }
+        // Strict: no whitespace, no URL-safe alphabet, padding required.
+        guard let json = Data(base64Encoded: stored) else {
+            throw SlackCredentialError.malformedIndex(reason: "is not valid base64")
+        }
         do {
-            return try JSONDecoder().decode([SlackWorkspace].self, from: Data(stored.utf8))
+            return try JSONDecoder().decode([SlackWorkspace].self, from: json)
         } catch DecodingError.dataCorrupted(let context) where context.codingPath.isEmpty {
             throw SlackCredentialError.malformedIndex(reason: "is not valid JSON")
         } catch {
@@ -91,6 +100,36 @@ public struct SlackCredentialStore: Sendable {
         let token = try await value(of: SlackKeychain.tokenService(teamID: teamID))
         let cookie = try await value(of: SlackKeychain.cookieService(teamID: teamID))
         return SlackCredential(teamID: teamID, token: token, cookie: cookie)
+    }
+
+    /// Writes the token to `SLACK_TOKEN_<teamID>`, then the cookie to
+    /// `SLACK_COOKIE_<teamID>`. Both are checked before either is written,
+    /// so a refused cookie never leaves a new token beside an old cookie.
+    ///
+    /// - Throws: `SlackKeychainWriteError` naming the item: `refused` when
+    ///   either fails its check (nothing is written), or `failed` /
+    ///   `timedOut` for the first write that may not have happened (after a
+    ///   token write fails, the cookie is not attempted).
+    public func save(_ credential: SlackCredential) async throws {
+        let items = [
+            (SlackKeychain.tokenService(teamID: credential.teamID), credential.token),
+            (SlackKeychain.cookieService(teamID: credential.teamID), credential.cookie),
+        ]
+        for (service, value) in items { try writer.check(service: service, value: value) }
+        for (service, value) in items { try await writer.write(service: service, value: value) }
+    }
+
+    /// Replaces `SLACK_WORKSPACES` with `workspaces`, in the given order, as
+    /// the standard base64 (with padding) of their JSON array. Keys are
+    /// sorted so the same list always gives the same value; any name, in any
+    /// script, passes the write path's character check once in base64.
+    ///
+    /// - Throws: `SlackKeychainWriteError` naming `SLACK_WORKSPACES`.
+    public func saveWorkspaces(_ workspaces: [SlackWorkspace]) async throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = try encoder.encode(workspaces)
+        try await writer.write(service: SlackKeychain.workspacesService, value: json.base64EncodedString())
     }
 
     /// The value of one item, or the error naming it.

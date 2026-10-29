@@ -134,22 +134,25 @@ struct KeychainReaderTests {
         let pidFile = scratch.path("pid")
         let started = Date()
 
-        let result = try await read("echo $$ > '\(pidFile)'; exec sleep 30", timeout: Self.termination)
+        let script = try scratch.fakeSecurity("echo $$ > '\(pidFile)'; exec sleep 30")
+        let result = await SecurityCLIKeychainReader(executable: script, timeout: Self.termination)
+            .read(service: "SLACK_TOKEN_T01")
 
         #expect(result == .timedOut(after: Self.termination))
         #expect(Date().timeIntervalSince(started) < Self.termination + 3)
-        #expect(try processIsGone(pidFile: pidFile))
+        #expect(try processIsGone(pidFile: pidFile, script: script))
     }
 
     @Test("a child that ignores SIGTERM is killed after a short grace")
     func childIgnoringTerminateIsKilled() async throws {
         let pidFile = scratch.path("pid")
 
-        let result = try await read("trap '' TERM; echo $$ > '\(pidFile)'; while :; do sleep 0.05; done",
-                                    timeout: Self.termination)
+        let script = try scratch.fakeSecurity("trap '' TERM; echo $$ > '\(pidFile)'; while :; do sleep 0.05; done")
+        let result = await SecurityCLIKeychainReader(executable: script, timeout: Self.termination)
+            .read(service: "SLACK_TOKEN_T01")
 
         #expect(result == .timedOut(after: Self.termination))
-        #expect(try processIsGone(pidFile: pidFile, within: 3))
+        #expect(try processIsGone(pidFile: pidFile, script: script, within: 3))
     }
 
     /// A process that inherits the child's stderr and keeps it open must not
