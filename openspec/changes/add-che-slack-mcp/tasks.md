@@ -24,7 +24,7 @@
 
 - [x] 5.1 [after: 4.1] 依「歸檔格式對齊 telegram-chat-archive」實作 `archive_conversation_to_markdown` 的 Slack archive tool parameters、Slack day file format（`<output_dir>/<team_id>/<conversation_id>/<YYYY-MM-DD>.md`、frontmatter、`<!-- msg:<ts> -->`、回覆標頭 `↳ thread:<parent_ts>`、行首跳脫、0700／0600）與 Slack markup conversion，並依「第一版不下載檔案」把附件寫成 `[file: <name>](<permalink>)`。驗證：測試重現 spec 的 day file 範例（`1793498700.000100` 與 `1793498820.000200` 寫進 `T01/C01/2026-11-01.md`）、轉換表的每一列、相對路徑被拒、檔案權限。
 - [x] 5.2 [after: 5.1] 實作 Incremental archive and manifest（`manifest.json` 不含內容、只抓比書籤新的主訊息、同一則訊息就地取代、無新訊息時重跑檔案逐 byte 相同）與「thread 回覆以回顧窗口補抓」的 Thread replies and lookback（`thread_lookback_days` 預設 30）。驗證：測試涵蓋「第二次執行沒有新訊息」與「窗口外 45 天的 thread 不抓回覆」兩個情境，並檢查 manifest 不含訊息文字、寄件者與檔名。
-- [ ] 5.3 [after: 5.2] 實作 Archive concurrency and partial progress：同一 workspace、同一 conversation、同一輸出目錄不得同時歸檔；被限流放棄時保留已寫入的檔案、書籤停在最後一則完整寫入的訊息、回傳非錯誤結果並說明可續跑。驗證：測試涵蓋並行呼叫被拒且未寫檔，以及 spec 的「限流中途停止」情境（書籤為 `1793498700.000100`）。
+- [ ] 5.3 [after: 5.2] 實作 Archive concurrency and partial progress：同一 workspace、同一 conversation、同一輸出目錄不得同時歸檔；被限流放棄時保留已寫入的檔案、書籤維持原值（不推進）、回傳非錯誤結果並說明重跑會重抓未完成的範圍。驗證：測試涵蓋並行呼叫被拒且未寫檔，以及 spec 的「限流中途停止」情境（書籤仍為 `1793451600.000100`）。
 
 ## 6. Plugin、文件與驗收
 

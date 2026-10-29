@@ -67,9 +67,9 @@ For each thread parent fetched in the run, and for each thread parent whose `ts`
 
 ### Requirement: Archive concurrency and partial progress
 
-Two calls archiving the same `conversation_id` of the same workspace into the same `output_dir` SHALL NOT run at the same time: the second SHALL fail with `isError: true` saying another archive of that conversation is running, and SHALL NOT write any file. When the client gives up on a `rateLimited` error during a run, the tool SHALL keep every day file written so far, set the manifest's newest top-level `ts` to the newest message whose block was fully written, and return a result that is not an error and reports that the run stopped early, how many messages were written, and that calling the tool again resumes from there.
+Two calls archiving the same `conversation_id` of the same workspace into the same `output_dir` SHALL NOT run at the same time: the second SHALL fail with `isError: true` saying another archive of that conversation is running, and SHALL NOT write any file. When the client gives up on a `rateLimited` error during a run, the tool SHALL keep every day file written so far, SHALL leave the manifest's newest top-level `ts` unchanged, because Slack lists messages newest first and the unread range below the written ones would otherwise be skipped for good, and SHALL return a result that is not an error and reports that the run stopped early, how many messages were written, and that calling the tool again resumes by fetching the unfinished range again, merging blocks already written in place.
 
 #### Scenario: Rate limit stops a run midway
 
-- **WHEN** a run has written messages up to `1793498700.000100` and the client then throws `rateLimited`
-- **THEN** the written day files remain, the manifest's newest top-level `ts` is `1793498700.000100`, and the result says the run stopped early and can be resumed
+- **WHEN** the manifest's newest top-level `ts` is `1793451600.000100`, a run has written messages down from `1793498700.000100`, and the client then throws `rateLimited` before the walk reaches `1793451600.000100`
+- **THEN** the written day files remain, the manifest's newest top-level `ts` is still `1793451600.000100`, and the result says the run stopped early and can be resumed
