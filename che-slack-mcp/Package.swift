@@ -57,5 +57,14 @@ let package = Package(
             dependencies: ["SlackAllCore", "SlackWebLib"],
             path: "Tests/SlackAllCoreTests"
         ),
+        .testTarget(
+            name: "CheSlackMCPCoreTests",
+            dependencies: [
+                "CheSlackMCPCore",
+                "SlackWebLib",
+                .product(name: "MCP", package: "swift-sdk"),
+            ],
+            path: "Tests/CheSlackMCPCoreTests"
+        ),
     ]
 )
