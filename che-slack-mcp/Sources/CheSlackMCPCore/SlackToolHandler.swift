@@ -29,7 +29,7 @@ struct SlackToolHandler: Sendable {
              reported in the list, not as an error result.
              """,
              properties: workspaceProperty),
-    ]
+    ] + readTools
 
     /// The optional `workspace` argument every tool except
     /// `list_workspaces` takes (spec: slack-mcp-tools, "Workspace selection").
@@ -47,6 +47,11 @@ struct SlackToolHandler: Sendable {
         switch name {
         case "list_workspaces": return await listWorkspaces()
         case "auth_status": return await authStatus(arguments)
+        case "list_conversations": return await listConversations(arguments)
+        case "get_conversation_history": return await conversationHistory(arguments)
+        case "get_thread_replies": return await threadReplies(arguments)
+        case "get_user": return await user(arguments)
+        case "search_messages": return await searchMessages(arguments)
         default: return ToolResult.error("Unknown tool: \(name)")
         }
     }
@@ -180,11 +185,11 @@ struct SlackToolHandler: Sendable {
 
     // MARK: - Schema helpers
 
-    private static func prop(_ type: String, _ description: String) -> Value {
+    static func prop(_ type: String, _ description: String) -> Value {
         .object(["type": .string(type), "description": .string(description)])
     }
 
-    private static func tool(_ name: String, description: String, properties: [String: Value],
+    static func tool(_ name: String, description: String, properties: [String: Value],
                              required: [String] = []) -> Tool {
         Tool(name: name, description: description, inputSchema: .object([
             "type": .string("object"),

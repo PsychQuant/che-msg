@@ -17,7 +17,7 @@
 ## 4. MCP 工具
 
 - [x] 4.1 [after: 2.2, 3.1] 實作「一個 process 管多個 workspace」的 Workspace selection（team id 或 domain、不分大小寫完全相符、多個時省略即報錯並列出、未匯入時建議 `slack-all auth import`）、Workspace and session tools（`list_workspaces`、`auth_status`）與 Tool error results（client 錯誤一律回 `isError: true` 的工具結果，`sessionInvalid` 附兩個重新匯入指令，`enterpriseRestricted` 建議官方 MCP）。驗證：MCP Core 的測試涵蓋 spec 的選擇結果表、`auth_status` 逐一回報、session 失效訊息含兩個指令。
-- [ ] 4.2 [after: 4.1] 實作 Conversation read tools（`list_conversations`、`get_conversation_history`、`get_thread_replies`、`get_user`，參數超出範圍時不呼叫 Slack）與 Message search（`search_messages`，query 原樣傳給 `search.messages`）。驗證：假 client 的測試涵蓋 `limit` 500 被拒、空白 query 被拒、各工具回傳的欄位。
+- [x] 4.2 [after: 4.1] 實作 Conversation read tools（`list_conversations`、`get_conversation_history`、`get_thread_replies`、`get_user`，參數超出範圍時不呼叫 Slack）與 Message search（`search_messages`，query 原樣傳給 `search.messages`）。驗證：假 client 的測試涵蓋 `limit` 500 被拒、空白 query 被拒、各工具回傳的欄位。
 - [ ] 4.3 [after: 4.2] 實作 Send message（`send_message`，`text` 1 到 40000 字元，`thread_ts` 時回覆在 thread 中，回傳新訊息的 `ts`）。驗證：假 client 的測試斷言 `chat.postMessage` 收到 `channel`、`text`、`thread_ts`，以及空白 `text` 被拒。
 
 ## 5. 歸檔

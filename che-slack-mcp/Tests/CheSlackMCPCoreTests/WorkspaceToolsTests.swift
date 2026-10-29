@@ -210,9 +210,44 @@ struct ToolListTests {
         return try #require(tool.inputSchema.objectValue)
     }
 
-    @Test("the tools are list_workspaces and auth_status")
+    @Test("the tools are list_workspaces, auth_status and the read tools, in that order")
     func names() {
-        #expect(SlackToolHandler.tools.map(\.name) == ["list_workspaces", "auth_status"])
+        #expect(SlackToolHandler.tools.map(\.name) == ["list_workspaces", "auth_status", "list_conversations",
+                                                       "get_conversation_history", "get_thread_replies", "get_user",
+                                                       "search_messages"])
+    }
+
+    @Test("each read tool declares exactly its required arguments, each as a property, plus an optional string workspace",
+          arguments: [("list_conversations", []), ("get_conversation_history", ["conversation_id"]),
+                      ("get_thread_replies", ["conversation_id", "thread_ts"]), ("get_user", ["user_id"]),
+                      ("search_messages", ["query"])] as [(String, [String])])
+    func readToolSchemas(name: String, required: [String]) throws {
+        let schema = try schema(name)
+        let properties = try #require(schema["properties"]?.objectValue)
+        #expect(schema["required"] == .array(required.map { .string($0) }))
+        #expect(properties["workspace"]?.objectValue?["type"] == .string("string"))
+        for argument in required {
+            #expect(properties[argument]?.objectValue?["type"] == .string("string"), "\(argument)")
+        }
+    }
+
+    @Test("limit and count declare the integer ranges and defaults the tools enforce",
+          arguments: [("get_conversation_history", "limit", 1, 200, 50), ("search_messages", "count", 1, 100, 20)]
+              as [(String, String, Int, Int, Int)])
+    func integerRanges(tool: String, argument: String, minimum: Int, maximum: Int, defaultValue: Int) throws {
+        let property = try #require(try schema(tool)["properties"]?.objectValue?[argument]?.objectValue)
+        #expect(property["type"] == .string("integer"))
+        #expect(property["minimum"] == .int(minimum))
+        #expect(property["maximum"] == .int(maximum))
+        #expect(property["default"] == .int(defaultValue))
+    }
+
+    @Test("oldest and latest are optional string timestamps on get_conversation_history")
+    func timestamps() throws {
+        let properties = try #require(try schema("get_conversation_history")["properties"]?.objectValue)
+        for argument in ["oldest", "latest"] {
+            #expect(properties[argument]?.objectValue?["type"] == .string("string"), "\(argument)")
+        }
     }
 
     @Test("auth_status takes an optional string workspace; list_workspaces takes none")
