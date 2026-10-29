@@ -90,20 +90,26 @@ struct ArchiveDirectory {
     // MARK: - Writing
 
     /// Creates `output_dir` (with any missing parent), the team and the
-    /// conversation directory where missing, each 0700.
-    func createDirectories() throws(ToolFailure) {
+    /// conversation directory where missing, each 0700. Returns the
+    /// directories it created, outermost first.
+    @discardableResult
+    func createDirectories() throws(ToolFailure) -> [URL] {
         var missing: [URL] = []
         var current = outputDir
         while !FileManager.default.fileExists(atPath: current.path), current.path != "/" {
             missing.append(current)
             current = current.deletingLastPathComponent()
         }
-        for directory in missing.reversed() { try Self.makeDirectory(directory) }
+        var created: [URL] = []
+        for directory in missing.reversed() {
+            if try Self.makeDirectory(directory) { created.append(directory) }
+        }
         for directory in [teamDir, conversationDir] {
             try Self.checkOwnDirectory(directory)
-            try Self.makeDirectory(directory)
+            if try Self.makeDirectory(directory) { created.append(directory) }
             try Self.checkOwnDirectory(directory)
         }
+        return created
     }
 
     /// Merges `messages` into `day`'s file and replaces it when its content
@@ -176,17 +182,19 @@ struct ArchiveDirectory {
 
     // MARK: - Checks
 
-    /// Creates `url` with mode 0700, or leaves an existing directory as it is.
-    private static func makeDirectory(_ url: URL) throws(ToolFailure) {
+    /// Creates `url` with mode 0700 and returns true, or leaves an existing
+    /// directory as it is and returns false.
+    private static func makeDirectory(_ url: URL) throws(ToolFailure) -> Bool {
         if mkdir(url.path, 0o700) == 0 {
             // mkdir applies the umask; the mode is set exactly afterwards.
             guard chmod(url.path, 0o700) == 0 else { throw directoryFailure(url, errno) }
-            return
+            return true
         }
         let code = errno
         var isDirectory: ObjCBool = false
         guard code == EEXIST, FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
               isDirectory.boolValue else { throw directoryFailure(url, code) }
+        return false
     }
 
     private static func directoryFailure(_ url: URL, _ code: Int32) -> ToolFailure {

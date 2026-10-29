@@ -29,6 +29,9 @@ import Foundation
 ///   lookback window, the newest reply ts archived for it.
 /// - `last_run`: the run's start, at the run's `utc_offset`, and the counts
 ///   the run returned.
+///
+/// A run stopped by a rate limit or ended by an error does not write the
+/// manifest, so none of these moves: the next run reads that range again.
 struct ArchiveManifest: Codable, Equatable {
     static let formatName = "che-slack-mcp archive manifest"
     static let currentVersion = 1

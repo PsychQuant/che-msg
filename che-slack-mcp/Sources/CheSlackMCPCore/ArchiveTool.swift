@@ -38,8 +38,14 @@ extension SlackToolHandler {
              read or was not written for this conversation refuses the call; move it aside to start over. At most \
              \(archiveHistoryMaxPages) pages of \(archivePageSize) top-level messages are read per call; complete \
              is false when messages were left out, and the manifest's newest ts then moves only when every \
-             message newer than it was read. Returns the day files changed (relative to output_dir) and message \
-             counts, never message text.
+             message newer than it was read. One archive of a conversation into an output_dir runs at a time, \
+             across server processes too: a call made while another runs is an error and writes nothing. When \
+             Slack keeps rate limiting after the client's retries, the call stops early and is not an error: the \
+             day files written so far stay, the manifest is left as it was so its bookmark does not move, and the \
+             result has complete false, stopped_reason rate_limited, retry_after_seconds and a note; calling again \
+             later fetches the unfinished range again and merges the blocks already written in place. Any other \
+             Slack error is an error result; the pages merged before it stay written and the manifest is left as \
+             it was. Returns the day files changed (relative to output_dir) and message counts, never message text.
              """,
              properties: workspaceProperty.merging([
                  "conversation_id": prop("string", "The conversation's id, such as C0123ABCD, from list_conversations."),
@@ -80,12 +86,13 @@ extension SlackToolHandler {
     }
 }
 
-/// One archive call: reads the manifest, then the history newest first by
-/// cursor within `ArchiveScope`, the replies of each thread parent written
-/// and of each parent in the lookback window with a newer reply, the names
-/// of senders and mentioned users (`users.info`, once per user per call);
-/// merges each page into the day files before reading the next, and
-/// replaces the manifest last, so a failure before that leaves the
+/// One archive call: takes the conversation's `ArchiveLock`, reads the
+/// manifest, then the history newest first by cursor within
+/// `ArchiveScope`, the replies of each thread parent written and of each
+/// parent in the lookback window with a newer reply, the names of senders
+/// and mentioned users (`users.info`, once per user per call); merges each
+/// page into the day files before reading the next, and replaces the
+/// manifest last, so a failure or a rate limit before that leaves the
 /// previous bookmark, and the next call reads the same messages again and
 /// merges them in place.
 struct ConversationArchiver {
@@ -111,9 +118,32 @@ struct ConversationArchiver {
         var new_messages = 0
         /// Messages not written because their ts is not a Slack timestamp.
         var skipped_messages = 0
-        /// False when the page limit stopped the history walk, or a thread
-        /// had more replies than one walk reads.
+        /// False when the page limit or a rate limit stopped the history
+        /// walk, or a thread had more replies than one walk reads.
         var complete = true
+        /// Why the run stopped early; absent when it did not.
+        enum StopReason: String, Encodable {
+            /// Slack kept rate limiting after the client's retries.
+            case rate_limited
+        }
+
+        var stopped_reason: StopReason?
+        /// With `stopped_reason`: the wait Slack last asked for.
+        var retry_after_seconds: Int?
+        /// With `stopped_reason`: how many messages were written and how
+        /// to resume.
+        var note: String?
+
+        mutating func stopRateLimited(retryAfterSeconds seconds: Int) {
+            complete = false
+            stopped_reason = .rate_limited
+            retry_after_seconds = seconds
+            let written = top_level_messages + thread_replies
+            note = "Slack kept rate limiting this workspace after the client's retries, so the run stopped early "
+                + "with \(written == 1 ? "1 message" : "\(written) messages") written. The manifest was left as it "
+                + "was, so its bookmark did not move: calling the tool again, after retry_after_seconds, resumes by "
+                + "fetching the unfinished range again and merges the blocks already written in place."
+        }
     }
 
     private var credential: SlackCredential { selection.credential }
@@ -135,12 +165,54 @@ struct ConversationArchiver {
     func run() async throws -> Summary {
         let directory = try ArchiveDirectory(outputDir: request.outputDir, teamID: selection.workspace.teamID,
                                              conversationID: request.conversationID)
+        // Refusals that need no lock come first, so they create nothing.
+        try directory.preflight(utcOffset: request.utcOffset)
+        return try await ArchiveLock.holding(directory) { try await run(in: directory) }
+    }
+
+    /// The run, with the conversation's archive lock held. A rate limit
+    /// the client gave up on stops it with a result that is not an error
+    /// (spec: "Archive concurrency and partial progress"); every page
+    /// merged before stays written and the manifest is left as it was:
+    /// - `newest_ts` must not move, because Slack lists newest first and
+    ///   the unread range below the written messages would be skipped;
+    /// - reply bookmarks are not moved either, even for a thread written
+    ///   whole before the stop: the next run fetches it again and merges
+    ///   it in place, at the cost of a request, rather than trust a run
+    ///   that stopped part way;
+    /// - `last_run` keeps describing the last run that was not stopped.
+    /// Any other error is thrown on, with the same files kept and the
+    /// manifest left as it was.
+    private func run(in directory: ArchiveDirectory) async throws -> Summary {
+        // Again under the lock: a run that ended meanwhile may have written
+        // day files at another offset.
         try directory.preflight(utcOffset: request.utcOffset)
         let previous = try directory.readManifest()
         let scope = ArchiveScope(request: request, bookmark: previous?.newest_ts, now: now)
         var progress = Progress(summary: Summary(team_id: directory.teamID, conversation_id: request.conversationID,
                                                  utc_offset: request.utcOffset),
                                 replyBookmarks: previous?.newest_reply_ts ?? [:])
+        do {
+            try await walk(scope, into: directory, progress: &progress)
+        } catch SlackError.rateLimited(let seconds) {
+            progress.summary.files = progress.changed.sorted()
+            progress.summary.stopRateLimited(retryAfterSeconds: seconds)
+            return progress.summary
+        }
+        progress.summary.files = progress.changed.sorted()
+        try directory.writeManifest(manifest(scope: scope, progress: progress))
+        return progress.summary
+    }
+
+    /// Reads the history newest first by cursor within `scope`, and merges
+    /// each page into the day files before reading the next. A rate limit
+    /// on a thread's replies ends the page there: the messages listed
+    /// before it, that parent included, are still written (their names
+    /// looked up, `users.info` being limited apart), then the rate limit is
+    /// thrown on. A page whose name lookup is rate limited is not written:
+    /// a message is written only with its sender's name.
+    private func walk(_ scope: ArchiveScope, into directory: ArchiveDirectory,
+                      progress: inout Progress) async throws {
         var cursor: String?
         var pages = 0
         repeat {
@@ -150,7 +222,8 @@ struct ConversationArchiver {
                                                             credential: credential)
             pages += 1
             var batch: [SlackMessage] = []
-            for message in page.messages {
+            var stop: SlackError?
+            messages: for message in page.messages {
                 guard SlackDayFile.seconds(ofTS: message.ts) != nil else {
                     progress.summary.skipped_messages += 1
                     continue
@@ -165,17 +238,20 @@ struct ConversationArchiver {
                 }
                 if isNew ? ArchiveScope.isThreadParent(message)
                     : scope.needsReplies(message, recorded: progress.replyBookmarks[message.ts]) {
-                    batch += try await replies(of: message, progress: &progress)
+                    do {
+                        batch += try await replies(of: message, progress: &progress)
+                    } catch SlackError.rateLimited(let seconds) {
+                        stop = .rateLimited(retryAfterSeconds: seconds)
+                        break messages
+                    }
                 }
             }
             try await write(batch, into: directory, names: &progress.names, summary: &progress.summary,
                             changed: &progress.changed)
+            if let stop { throw stop }
             cursor = page.nextCursor
         } while cursor != nil && pages < maxPages
         if cursor == nil { progress.reachedBound = true } else { progress.summary.complete = false }
-        progress.summary.files = progress.changed.sorted()
-        try directory.writeManifest(manifest(scope: scope, progress: progress))
-        return progress.summary
     }
 
     /// The replies of `parent` not yet seen in this run, oldest first; its
