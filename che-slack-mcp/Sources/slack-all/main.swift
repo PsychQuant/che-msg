@@ -24,19 +24,35 @@ struct Auth: AsyncParsableCommand {
 extension Auth {
     struct Import: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Import every workspace signed in on app.slack.com, through the clipboard.",
+            abstract: "Import every workspace signed in on app.slack.com, through the clipboard or the Slack desktop app.",
             discussion: """
                 Prints a line to paste into the browser console of app.slack.com, then asks you to copy \
                 the d cookie. Each workspace is verified with auth.test; only verified ones are stored in \
                 the Keychain. No token or cookie is printed, and the clipboard is cleared at the end. \
                 Exits 0 when at least one workspace was imported.
+
+                With --from-desktop, reads the workspaces signed in to the Slack desktop app instead, from \
+                temporary copies of its Cookies and Local Storage/leveldb (deleted before the command ends). \
+                The d cookie is decrypted with the Keychain item "Slack Safe Storage": when macOS asks, click \
+                Allow, not Always Allow. Only workspaces signed in to the desktop app are found.
                 """
         )
 
+        @Flag(name: .long, help: "Read the workspaces and the d cookie from the Slack desktop app instead of the clipboard.")
+        var fromDesktop = false
+
         func run() async throws {
             let results = try await reportingErrors {
-                try await SlackAuthImport(store: SlackCredentialStore(), client: SlackWebClient(pacing: .fromEnvironment()),
-                                          clipboard: PasteboardClipboard(), terminal: StandardTerminal()).run()
+                let store = SlackCredentialStore()
+                let client = SlackWebClient(pacing: .fromEnvironment())
+                if fromDesktop {
+                    return try await SlackDesktopImport(
+                        store: store, client: client, terminal: StandardTerminal(),
+                        data: .standard(home: FileManager.default.homeDirectoryForCurrentUser),
+                        safeStorage: SecuritySafeStorageReader()).run()
+                }
+                return try await SlackAuthImport(store: store, client: client,
+                                                 clipboard: PasteboardClipboard(), terminal: StandardTerminal()).run()
             }
             let status = SlackAuthImport.exitStatus(for: results)
             if status != 0 { throw ExitCode(status) }
