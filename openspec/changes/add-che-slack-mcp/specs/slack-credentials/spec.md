@@ -33,7 +33,7 @@ Writing an item SHALL start `/usr/bin/security -i` and send the line `add-generi
 
 ### Requirement: Clipboard import
 
-`slack auth import` SHALL print a one-line browser console command that copies, as JSON, the `id`, `domain`, `name`, `token` and `user_id` of every workspace in `localStorage.localConfig_v2` of `app.slack.com`, wait for the user to press Enter, and read the clipboard. It SHALL then ask the user to copy the `d` cookie value, wait for Enter, and read the clipboard again. For each workspace it SHALL call `auth.test` with that token and cookie, store only the workspaces whose call succeeds, update `SLACK_WORKSPACES`, and print one line per workspace with its name and the result. It SHALL clear the clipboard after the second read. It SHALL NOT print any token or cookie value. When the first clipboard read is not a JSON array of workspace objects, it SHALL stop with an error before asking for the cookie.
+`slack-all auth import` SHALL print a one-line browser console command that copies, as JSON, the `id`, `domain`, `name`, `token` and `user_id` of every workspace in `localStorage.localConfig_v2` of `app.slack.com`, wait for the user to press Enter, and read the clipboard. It SHALL then ask the user to copy the `d` cookie value, wait for Enter, and read the clipboard again. For each workspace it SHALL call `auth.test` with that token and cookie, store only the workspaces whose call succeeds, update `SLACK_WORKSPACES`, and print one line per workspace with its name and the result. It SHALL clear the clipboard after the second read. It SHALL NOT print any token or cookie value. When the first clipboard read is not a JSON array of workspace objects, it SHALL stop with an error before asking for the cookie.
 
 #### Scenario: One of two workspaces fails verification
 
@@ -42,18 +42,18 @@ Writing an item SHALL start `/usr/bin/security -i` and send the line `add-generi
 
 ### Requirement: Desktop import
 
-`slack auth import --from-desktop` SHALL look for the Slack desktop app's data under `~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack` and then under `~/Library/Application Support/Slack`, read the `d` cookie for host `.slack.com` from its `Cookies` database decrypted with the Keychain item `Slack Safe Storage`, read `localConfig_v2` from its `Local Storage/leveldb`, and then verify and store the workspaces exactly as the clipboard import does. Before reading `Slack Safe Storage` it SHALL tell the user to answer the macOS prompt with Allow and not Always Allow. It SHALL read the databases from temporary copies and delete the copies before exiting, whether or not the import succeeded. When neither data folder exists, or the cookie or `localConfig_v2` cannot be read or decrypted, it SHALL stop with an error that names the step that failed and suggests `slack auth import`.
+`slack-all auth import --from-desktop` SHALL look for the Slack desktop app's data under `~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack` and then under `~/Library/Application Support/Slack`, read the `d` cookie for host `.slack.com` from its `Cookies` database decrypted with the Keychain item `Slack Safe Storage`, read `localConfig_v2` from its `Local Storage/leveldb`, and then verify and store the workspaces exactly as the clipboard import does. Before reading `Slack Safe Storage` it SHALL tell the user to answer the macOS prompt with Allow and not Always Allow. It SHALL read the databases from temporary copies and delete the copies before exiting, whether or not the import succeeded. When neither data folder exists, or the cookie or `localConfig_v2` cannot be read or decrypted, it SHALL stop with an error that names the step that failed and suggests `slack-all auth import`.
 
 #### Scenario: Slack desktop app is not installed
 
 - **WHEN** neither Slack data folder exists
-- **THEN** the command exits non-zero with a message saying no Slack desktop data was found and suggesting `slack auth import`, and no Keychain item is changed
+- **THEN** the command exits non-zero with a message saying no Slack desktop data was found and suggesting `slack-all auth import`, and no Keychain item is changed
 
 ### Requirement: Workspace removal
 
-`slack auth remove <workspace>` SHALL accept a team id or a domain, delete that workspace's `SLACK_TOKEN_<team_id>` and `SLACK_COOKIE_<team_id>` items, and remove its entry from `SLACK_WORKSPACES`. A workspace that does not match SHALL produce an error listing the imported workspaces and SHALL change nothing.
+`slack-all auth remove <workspace>` SHALL accept a team id or a domain, delete that workspace's `SLACK_TOKEN_<team_id>` and `SLACK_COOKIE_<team_id>` items, and remove its entry from `SLACK_WORKSPACES`. A workspace that does not match SHALL produce an error listing the imported workspaces and SHALL change nothing.
 
 #### Scenario: Remove by domain
 
-- **WHEN** `alpha` (`T01`) and `beta` (`T02`) are imported and the user runs `slack auth remove alpha`
+- **WHEN** `alpha` (`T01`) and `beta` (`T02`) are imported and the user runs `slack-all auth remove alpha`
 - **THEN** the `T01` token and cookie items no longer exist, `SLACK_WORKSPACES` lists only `T02`, and the `T02` items are unchanged

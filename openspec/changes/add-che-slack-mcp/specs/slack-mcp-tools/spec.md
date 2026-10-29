@@ -6,7 +6,7 @@ The MCP tools that che-slack-mcp exposes to Claude for acting as the signed-in u
 
 ### Requirement: Workspace selection
 
-Every tool except `list_workspaces` SHALL accept an optional string argument `workspace` matched case-insensitively and exactly against the team id and the domain of each imported workspace. When exactly one workspace is imported the argument SHALL be optional, and that workspace SHALL be used when it is omitted. When the argument is omitted while two or more are imported, or when it matches no imported workspace, the tool SHALL return a result with `isError: true` whose message lists every imported team id with its domain, and SHALL NOT call Slack. When no workspace is imported, every tool except `list_workspaces` SHALL return `isError: true` telling the user to run `slack auth import` or `slack auth import --from-desktop`.
+Every tool except `list_workspaces` SHALL accept an optional string argument `workspace` matched case-insensitively and exactly against the team id and the domain of each imported workspace. When exactly one workspace is imported the argument SHALL be optional, and that workspace SHALL be used when it is omitted. When the argument is omitted while two or more are imported, or when it matches no imported workspace, the tool SHALL return a result with `isError: true` whose message lists every imported team id with its domain, and SHALL NOT call Slack. When no workspace is imported, every tool except `list_workspaces` SHALL return `isError: true` telling the user to run `slack-all auth import` or `slack-all auth import --from-desktop`.
 
 #### Scenario: Ambiguous call is refused
 
@@ -21,7 +21,7 @@ Every tool except `list_workspaces` SHALL accept an optional string argument `wo
 | `T01 alpha`, `T02 beta` | `BETA` | uses `T02` |
 | `T01 alpha`, `T02 beta` | `t01` | uses `T01` |
 | `T01 alpha`, `T02 beta` | `gamma` | error listing both |
-| (none) | (omitted) | error suggesting `slack auth import` |
+| (none) | (omitted) | error suggesting `slack-all auth import` |
 
 ### Requirement: Workspace and session tools
 
@@ -61,9 +61,9 @@ Every tool except `list_workspaces` SHALL accept an optional string argument `wo
 
 ### Requirement: Tool error results
 
-Any failure from the Slack client SHALL be returned as a tool result with `isError: true`, never as a JSON-RPC protocol error. A `sessionInvalid` result SHALL name the workspace and include both `slack auth import` and `slack auth import --from-desktop`. An `enterpriseRestricted` result SHALL say that Enterprise Grid can end automated sessions and suggest Slack's official MCP server. No tool result SHALL contain a token or cookie value.
+Any failure from the Slack client SHALL be returned as a tool result with `isError: true`, never as a JSON-RPC protocol error. A `sessionInvalid` result SHALL name the workspace and include both `slack-all auth import` and `slack-all auth import --from-desktop`. An `enterpriseRestricted` result SHALL say that Enterprise Grid can end automated sessions and suggest Slack's official MCP server. No tool result SHALL contain a token or cookie value.
 
 #### Scenario: Session expired during a read
 
 - **WHEN** `get_conversation_history` for `beta` receives `invalid_auth`
-- **THEN** the result has `isError: true`, names `beta`, and includes the commands `slack auth import` and `slack auth import --from-desktop`
+- **THEN** the result has `isError: true`, names `beta`, and includes the commands `slack-all auth import` and `slack-all auth import --from-desktop`

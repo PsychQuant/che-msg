@@ -46,7 +46,7 @@
 
 | 類別 | 判定 | 給使用者的訊息 |
 |---|---|---|
-| session 失效 | `ok:false` 且 error 為 `invalid_auth`、`not_authed`、`token_revoked`、`account_inactive` | 指出是哪個 workspace，並給 `slack auth import` 與 `slack auth import --from-desktop` 兩個重新匯入的指令 |
+| session 失效 | `ok:false` 且 error 為 `invalid_auth`、`not_authed`、`token_revoked`、`account_inactive` | 指出是哪個 workspace，並給 `slack-all auth import` 與 `slack-all auth import --from-desktop` 兩個重新匯入的指令 |
 | 被限流 | HTTP 429 或 error 為 `ratelimited` | 依 `Retry-After` 等待後重試；超過重試上限才回報 |
 | Enterprise Grid 限制 | error 以 `enterprise_` 開頭，或 `team_is_restricted` | 說明 Enterprise Grid 會偵測自動化，建議改用官方 MCP |
 | 其他 Slack 錯誤 | 其餘 `ok:false` | 原樣帶出 Slack 的 error 字串 |
@@ -80,7 +80,7 @@ CLI 寫入時執行 `/usr/bin/security -i`，把 `add-generic-password -U -a che
 
 ### 剪貼簿匯入：console 一行複製全部 workspace
 
-`slack auth import` 分兩步，每步提示使用者複製、按 Enter 後從剪貼簿讀取：
+`slack-all auth import` 分兩步，每步提示使用者複製、按 Enter 後從剪貼簿讀取：
 
 1. 在瀏覽器已登入的 `app.slack.com` 頁面開 console，貼上 CLI 印出的一行指令。它從 `localStorage.localConfig_v2` 取出這個瀏覽器登入的所有 workspace（`id`、`domain`、`name`、`token`、`user_id`），以 JSON 複製到剪貼簿。
 2. 從開發者工具的 Storage 分頁複製 cookie `d` 的值。
@@ -91,7 +91,7 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 
 ### 桌面版匯入：先實測再實作
 
-`slack auth import --from-desktop` 讀 Slack 桌面 app 的本機資料：依序尋找 App Store 版路徑與官網下載版路徑（`~/Library/Application Support/Slack`）。
+`slack-all auth import --from-desktop` 讀 Slack 桌面 app 的本機資料：依序尋找 App Store 版路徑與官網下載版路徑（`~/Library/Application Support/Slack`）。
 
 - cookie `d`：從 `Cookies`（SQLite）讀 `host_key` 為 `.slack.com`、`name` 為 `d` 的列，以 Chromium 在 macOS 的方式解密：Keychain 項目 `Slack Safe Storage` 的密碼經 PBKDF2-HMAC-SHA1（salt `saltysalt`、1003 次）得到 16 bytes 金鑰，AES-128-CBC、IV 為 16 個空白，去掉 `v10` 前綴；新版 Chromium 會在明文前加 32 bytes 的 host 雜湊，要一併處理。
 - token：從 `Local Storage/leveldb` 找出 `localConfig_v2` 的值。
@@ -149,10 +149,10 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 
 **使用者看到的行為**
 
-- `slack auth import`：兩次複製、兩次 Enter，印出每個 workspace 的名稱與驗證結果，不印出任何憑證，結束時剪貼簿已清空。
-- `slack auth import --from-desktop`：macOS 跳出授權視窗；成功後印出與上面相同格式的結果。
-- `slack auth status`：列出已匯入的 workspace 與各自 `auth.test` 的結果。
-- `slack auth remove <workspace>`：刪除該 workspace 的 token 與 cookie 兩個 Keychain 項目，並把它從索引移除。
+- `slack-all auth import`：兩次複製、兩次 Enter，印出每個 workspace 的名稱與驗證結果，不印出任何憑證，結束時剪貼簿已清空。
+- `slack-all auth import --from-desktop`：macOS 跳出授權視窗；成功後印出與上面相同格式的結果。
+- `slack-all auth status`：列出已匯入的 workspace 與各自 `auth.test` 的結果。
+- `slack-all auth remove <workspace>`：刪除該 workspace 的 token 與 cookie 兩個 Keychain 項目，並把它從索引移除。
 - MCP 工具：`list_workspaces`、`auth_status`、`list_conversations`、`get_conversation_history`、`get_thread_replies`、`search_messages`、`get_user`、`send_message`、`archive_conversation_to_markdown`。
 
 **介面與資料形狀**
@@ -191,7 +191,7 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 
 ## Migration Plan
 
-全新的 server 與 plugin，不影響既有使用者。發布順序：本 change 完成並驗證後，另外經使用者確認才發 GitHub release、bump wrapper 的 `DESIRED_VERSION` 與 plugin 版號。回滾：從 marketplace 移除 `che-slack-mcp` 條目即可，Keychain 資料以 `slack auth remove` 清除。
+全新的 server 與 plugin，不影響既有使用者。發布順序：本 change 完成並驗證後，另外經使用者確認才發 GitHub release、bump wrapper 的 `DESIRED_VERSION` 與 plugin 版號。回滾：從 marketplace 移除 `che-slack-mcp` 條目即可，Keychain 資料以 `slack-all auth remove` 清除。
 
 ## Open Questions
 
