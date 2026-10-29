@@ -46,4 +46,16 @@ struct KeychainLayoutTests {
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: String])
         #expect(object == ["team_id": "T01", "domain": "alpha", "name": "Alpha", "user_id": "U01"])
     }
+
+    /// Expected values follow from the rule: team id or domain, ignoring
+    /// case, whole string only. The name is never matched.
+    @Test("a workspace matches its team id or its domain, ignoring case, and nothing else", arguments: [
+        ("T01", true), ("t01", true), ("alpha", true), ("ALPHA", true),
+        ("Alpha Team", false), ("alp", false), ("T0", false), (" alpha", false), ("alpha.slack.com", false), ("", false),
+    ])
+    func matching(query: String, expected: Bool) {
+        let workspace = SlackWorkspace(teamID: "T01", domain: "alpha", name: "Alpha Team", userID: "U01")
+
+        #expect(workspace.matches(query) == expected)
+    }
 }

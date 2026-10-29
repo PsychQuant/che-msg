@@ -189,6 +189,30 @@ struct ScratchKeychainTests {
         #expect(try ScratchKeychain.userSearchList() == searchList, "the search list changed")
     }
 
+    /// The real `security delete-generic-password` against the scratch file:
+    /// the deleted item reads back absent, the other workspace's item is
+    /// unchanged, and deleting it again is not an error (security exits 44).
+    @Test("a deleted item reads back absent, others stay, and a second delete is not an error")
+    func deleteRemovesOneItem() async throws {
+        let searchList = try ScratchKeychain.userSearchList()
+        let keychain = try ScratchKeychain(in: scratch)
+        defer { keychain.delete() }
+        try keychain.add("SLACK_TOKEN_T01", "xoxc-fake-t01")
+        try keychain.add("SLACK_TOKEN_T02", "xoxc-fake-t02")
+        let writer = SecurityCLIKeychainWriter(keychainPath: keychain.path)
+        let reader = SecurityCLIKeychainReader(keychainPath: keychain.path)
+
+        try await writer.delete(service: "SLACK_TOKEN_T01")
+        let deleted = await reader.read(service: "SLACK_TOKEN_T01")
+        let kept = await reader.read(service: "SLACK_TOKEN_T02")
+        try await writer.delete(service: "SLACK_TOKEN_T01")
+
+        #expect(deleted == .absent)
+        #expect(kept == .found("xoxc-fake-t02"))
+        keychain.delete()
+        #expect(try ScratchKeychain.userSearchList() == searchList, "the search list changed")
+    }
+
     /// The real reader with a stand-in tool that never answers: the store
     /// reports the timeout naming the item it was reading.
     @Test("a token lookup that does not finish is reported as timed out, naming SLACK_TOKEN_T01")

@@ -19,6 +19,12 @@ public enum SlackKeychain {
 
     public static func tokenService(teamID: String) -> String { "SLACK_TOKEN_\(teamID)" }
     public static func cookieService(teamID: String) -> String { "SLACK_COOKIE_\(teamID)" }
+
+    /// True when `value` is non-empty and every character is one the write
+    /// path accepts (`A-Z a-z 0-9 - _ . % + / =`).
+    public static func acceptsValue(_ value: String) -> Bool {
+        (try? KeychainWritePolicy.check(service: workspacesService, value: value)) != nil
+    }
 }
 
 /// One entry of the `SLACK_WORKSPACES` index. It names a workspace and its
@@ -34,6 +40,13 @@ public struct SlackWorkspace: Codable, Equatable, Sendable {
         self.domain = domain
         self.name = name
         self.userID = userID
+    }
+
+    /// True when `query` equals this workspace's team id or domain, ignoring
+    /// case. No prefix or substring match.
+    public func matches(_ query: String) -> Bool {
+        let wanted = query.lowercased()
+        return !wanted.isEmpty && (wanted == teamID.lowercased() || wanted == domain.lowercased())
     }
 
     enum CodingKeys: String, CodingKey {

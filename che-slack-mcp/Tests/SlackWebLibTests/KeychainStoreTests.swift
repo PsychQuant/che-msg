@@ -315,6 +315,41 @@ struct CredentialStoreTests {
         #expect(keychain.writes.isEmpty)
     }
 
+    // MARK: - Deleting a credential
+
+    @Test("deleteCredential deletes the token, then the cookie, and leaves other workspaces and the index alone")
+    func deletesTokenThenCookie() async throws {
+        let keychain = FakeKeychain([
+            "SLACK_WORKSPACES": .found(Self.index),
+            "SLACK_TOKEN_T01": .found(Self.token), "SLACK_COOKIE_T01": .found(Self.cookie),
+            "SLACK_TOKEN_T02": .found("xoxc-other"), "SLACK_COOKIE_T02": .found("xoxd-other"),
+        ])
+        let store = SlackCredentialStore(reader: keychain, writer: keychain)
+
+        try await store.deleteCredential(teamID: "T01")
+
+        #expect(keychain.deletes == ["SLACK_TOKEN_T01", "SLACK_COOKIE_T01"])
+        #expect(await keychain.read(service: "SLACK_TOKEN_T01") == .absent)
+        #expect(await keychain.read(service: "SLACK_COOKIE_T01") == .absent)
+        #expect(await keychain.read(service: "SLACK_TOKEN_T02") == .found("xoxc-other"))
+        #expect(await keychain.read(service: "SLACK_COOKIE_T02") == .found("xoxd-other"))
+        #expect(await keychain.read(service: "SLACK_WORKSPACES") == .found(Self.index))
+        #expect(keychain.writes.isEmpty)
+    }
+
+    @Test("a token delete that fails stops: the error names SLACK_TOKEN_T01 and the cookie is not attempted")
+    func failedTokenDeleteStops() async throws {
+        let keychain = FakeKeychain(["SLACK_TOKEN_T01": .found(Self.token), "SLACK_COOKIE_T01": .found(Self.cookie)])
+        let failure = SlackKeychainDeleteError.failed(service: "SLACK_TOKEN_T01", reason: "security exited with status 1")
+        keychain.failDeletes(of: "SLACK_TOKEN_T01", with: failure)
+
+        await #expect(throws: failure) {
+            try await SlackCredentialStore(reader: keychain, writer: keychain).deleteCredential(teamID: "T01")
+        }
+        #expect(keychain.deletes.isEmpty)
+        #expect(await keychain.read(service: "SLACK_COOKIE_T01") == .found(Self.cookie))
+    }
+
     @Test("production writes through security -i with a 10 second limit and no keychain path")
     func productionWriter() throws {
         let writer = try #require(SlackCredentialStore().writer as? SecurityCLIKeychainWriter)
@@ -340,6 +375,8 @@ final class FakeKeychain: KeychainItemReader, KeychainItemWriter, @unchecked Sen
     private var log: [String] = []
     private var writeLog: [Write] = []
     private var failures: [String: SlackKeychainWriteError] = [:]
+    private var deleteLog: [String] = []
+    private var deleteFailures: [String: SlackKeychainDeleteError] = [:]
 
     init(_ items: [String: KeychainLookup]) { self.items = items }
 
@@ -358,6 +395,22 @@ final class FakeKeychain: KeychainItemReader, KeychainItemWriter, @unchecked Sen
             if let error = failures[service] { throw error }
             writeLog.append(Write(service: service, value: value))
             items[service] = .found(value)
+        }
+    }
+
+    /// Every delete call, in order, whether or not the item existed.
+    var deletes: [String] { lock.withLock { deleteLog } }
+
+    /// Makes every later delete of `service` throw `error` and delete nothing.
+    func failDeletes(of service: String, with error: SlackKeychainDeleteError) {
+        lock.withLock { deleteFailures[service] = error }
+    }
+
+    func delete(service: String) async throws {
+        try lock.withLock {
+            if let error = deleteFailures[service] { throw error }
+            deleteLog.append(service)
+            items[service] = nil
         }
     }
 

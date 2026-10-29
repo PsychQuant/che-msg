@@ -54,6 +54,10 @@ public protocol KeychainItemWriter: Sendable {
     func check(service: String, value: String) throws
     /// Creates or replaces the item; returns only once it holds `value`.
     func write(service: String, value: String) async throws
+    /// Deletes the item. An item that does not exist is not an error: the
+    /// call returns once the item is gone either way. Throws
+    /// `SlackKeychainDeleteError` naming the service otherwise.
+    func delete(service: String) async throws
 }
 
 extension KeychainItemWriter {
@@ -75,19 +79,24 @@ enum KeychainWritePolicy {
     /// value is 1 or more bytes from `A-Z a-z 0-9 - _ . % + / =`. The
     /// service is checked first.
     static func check(service: String, value: String) throws {
-        if service != SlackKeychain.workspacesService {
-            guard let prefix = [tokenPrefix, cookiePrefix].first(where: { service.hasPrefix($0) }) else {
-                throw SlackKeychainWriteError.refused(service: service, reason: .unknownService)
-            }
-            let teamID = service.utf8.dropFirst(prefix.utf8.count)
-            guard (1...32).contains(teamID.count), teamID.allSatisfy(isTeamIDByte) else {
-                throw SlackKeychainWriteError.refused(service: service, reason: .teamID)
-            }
+        if let reason = serviceRefusal(service) {
+            throw SlackKeychainWriteError.refused(service: service, reason: reason)
         }
         guard !value.isEmpty else { throw SlackKeychainWriteError.refused(service: service, reason: .emptyValue) }
         guard value.utf8.allSatisfy(isValueByte) else {
             throw SlackKeychainWriteError.refused(service: service, reason: .valueCharacters)
         }
+    }
+
+    /// Why `service` is not one of the layout's, or nil when it is.
+    static func serviceRefusal(_ service: String) -> SlackKeychainWriteRefusal? {
+        if service == SlackKeychain.workspacesService { return nil }
+        guard let prefix = [tokenPrefix, cookiePrefix].first(where: { service.hasPrefix($0) }) else {
+            return .unknownService
+        }
+        let teamID = service.utf8.dropFirst(prefix.utf8.count)
+        guard (1...32).contains(teamID.count), teamID.allSatisfy(isTeamIDByte) else { return .teamID }
+        return nil
     }
 
     private static func isTeamIDByte(_ byte: UInt8) -> Bool {

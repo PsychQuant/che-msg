@@ -111,12 +111,34 @@ public struct SlackCredentialStore: Sendable {
     ///   `timedOut` for the first write that may not have happened (after a
     ///   token write fails, the cookie is not attempted).
     public func save(_ credential: SlackCredential) async throws {
-        let items = [
+        try check(credential)
+        for (service, value) in Self.items(of: credential) { try await writer.write(service: service, value: value) }
+    }
+
+    /// Throws `SlackKeychainWriteError.refused`, naming the item, when
+    /// `save` would refuse `credential`; starts nothing. Lets the importer
+    /// skip `auth.test` for a credential it could not store anyway.
+    public func check(_ credential: SlackCredential) throws {
+        for (service, value) in Self.items(of: credential) { try writer.check(service: service, value: value) }
+    }
+
+    private static func items(of credential: SlackCredential) -> [(String, String)] {
+        [
             (SlackKeychain.tokenService(teamID: credential.teamID), credential.token),
             (SlackKeychain.cookieService(teamID: credential.teamID), credential.cookie),
         ]
-        for (service, value) in items { try writer.check(service: service, value: value) }
-        for (service, value) in items { try await writer.write(service: service, value: value) }
+    }
+
+    /// Deletes `SLACK_TOKEN_<teamID>`, then `SLACK_COOKIE_<teamID>`. An item
+    /// that is already gone is not an error, so a removal that stopped
+    /// half-way can be run again. The index is not touched.
+    ///
+    /// - Throws: `SlackKeychainDeleteError` naming the first item that was
+    ///   refused or may not have been deleted; after a token delete fails,
+    ///   the cookie is not attempted.
+    public func deleteCredential(teamID: String) async throws {
+        try await writer.delete(service: SlackKeychain.tokenService(teamID: teamID))
+        try await writer.delete(service: SlackKeychain.cookieService(teamID: teamID))
     }
 
     /// Replaces `SLACK_WORKSPACES` with `workspaces`, in the given order, as

@@ -75,6 +75,10 @@ extension SlackError {
 ///    an array, `"ok": "true"`, `"ok": 1`, a non-string `error`) →
 ///    `slackError("invalid_json")`.
 /// 5. HTTP 200 with `"ok": true` → success, body unchanged.
+///
+/// One more client code comes from a method wrapper rather than this table:
+/// `authTest` throws `slackError("unexpected_response")` for an `ok: true`
+/// answer without the fields it needs.
 enum SlackResponseClassifier {
     static let sessionErrors: Set<String> = ["invalid_auth", "not_authed", "token_revoked", "account_inactive"]
 

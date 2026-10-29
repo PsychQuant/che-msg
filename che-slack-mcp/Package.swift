@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "SlackWebLib", targets: ["SlackWebLib"]),
         .library(name: "CheSlackMCPCore", targets: ["CheSlackMCPCore"]),
+        .library(name: "SlackAllCore", targets: ["SlackAllCore"]),
         .executable(name: "CheSlackMCP", targets: ["CheSlackMCP"]),
         .executable(name: "slack-all", targets: ["slack-all"]),
     ],
@@ -32,9 +33,15 @@ let package = Package(
             dependencies: ["CheSlackMCPCore"],
             path: "Sources/CheSlackMCP"
         ),
+        .target(
+            name: "SlackAllCore",
+            dependencies: ["SlackWebLib"],
+            path: "Sources/SlackAllCore"
+        ),
         .executableTarget(
             name: "slack-all",
             dependencies: [
+                "SlackAllCore",
                 "SlackWebLib",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
@@ -44,6 +51,11 @@ let package = Package(
             name: "SlackWebLibTests",
             dependencies: ["SlackWebLib"],
             path: "Tests/SlackWebLibTests"
+        ),
+        .testTarget(
+            name: "SlackAllCoreTests",
+            dependencies: ["SlackAllCore", "SlackWebLib"],
+            path: "Tests/SlackAllCoreTests"
         ),
     ]
 )
