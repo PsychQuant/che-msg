@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Tool results are compact JSON: no line breaks, indentation or spaces around colons ([#101](https://github.com/PsychQuant/che-msg/issues/101)). Keys, values and key order are unchanged. On a synthetic 20-message `get_chat_history` result this is 28.4% fewer bytes (5851 → 4192). `TDLibClient` and `LocalTDLibReader` now share one serializer, `JSONOutput`.
+
 ## [0.8.0] - 2026-10-14
 
 Archive chats incrementally into per-day Markdown files with their media, and download a single message's media ([#69](https://github.com/PsychQuant/che-msg/issues/69), [#17](https://github.com/PsychQuant/che-msg/issues/17)). Use with plugin `che-telegram-mcp` 1.7.0.

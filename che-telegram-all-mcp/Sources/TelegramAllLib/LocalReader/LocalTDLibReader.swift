@@ -195,12 +195,9 @@ public struct LocalTDLibReader {
 
     private static func date(_ unix: Int32) -> Date { Date(timeIntervalSince1970: TimeInterval(unix)) }
 
-    /// `TDLibClient.toJSON`: pretty-printed with sorted keys.
+    /// Same output as `TDLibClient.toJSON`: both go through `JSONOutput`.
     static func json(_ value: Any) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]) else {
-            return "{}"
-        }
-        return String(data: data, encoding: .utf8) ?? "{}"
+        JSONOutput.string(value)
     }
 }
 

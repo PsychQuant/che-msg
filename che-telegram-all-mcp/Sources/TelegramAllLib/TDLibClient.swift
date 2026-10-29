@@ -857,10 +857,7 @@ public final class TDLibClient {
     }
 
     private func toJSON(_ value: Any) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]) else {
-            return "{}"
-        }
-        return String(data: data, encoding: .utf8) ?? "{}"
+        JSONOutput.string(value)
     }
 }
 
