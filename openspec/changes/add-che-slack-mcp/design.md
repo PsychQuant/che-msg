@@ -195,10 +195,12 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 
 ## Open Questions
 
-以下由 task 1.1 的唯讀實測回答，結論寫回本節：
+task 1.1 的唯讀實測已在 2026-10-29 於使用者的 Mac（macOS 27.2、Mac App Store 版 Slack）完成。實測只記錄長度、前綴與成功與否，複製出來的 Slack 資料在實測後立即刪除。
 
-- `security -i` 從 stdin 寫入是否可行，值是否確實不出現在 argv。
-- Safari 的 console 有沒有 `copy()`。
-- 桌面 app 的 LevelDB 是否經 Snappy 壓縮、`localConfig_v2` 是否在其中。
-- 新版 Chromium 的 cookie 明文前綴。
-- 讀沙盒資料夾與 `Slack Safe Storage` 時，macOS 跳出哪些授權。
+- **`security -i` 從 stdin 寫入：可行。** 對暫存 keychain 檔案寫入含 `% + / = - _ .` 的假值，`security -i` 等待輸入時 `ps` 顯示的 argv 只有 `security -i`；以 `find-generic-password -g` 讀回與寫入值完全相同；keychain 搜尋清單前後不變。
+- **Safari console 的 `copy()`：有。** WebKit 的 `Source/WebCore/inspector/CommandLineAPIModuleSource.js` 定義了 `CommandLineAPI.methods["copy"]`，所以剪貼簿匯入的 console 指令用 `copy()`，不需要 `navigator.clipboard.writeText` 的版本。
+- **LevelDB：有 Snappy 壓縮。** `Local Storage/leveldb` 的兩個 `.ldb` 表格檔裡，index block 與 14 個 data block 全部是 Snappy 壓縮。`localConfig_v2` 的 key 是 `_https://app.slack.com` 加分隔字元再加 `localConfig_v2`，留有 4 個版本，要取 sequence 最大的一筆；值的第一個 byte 是編碼（1 為 Latin-1，0 為 UTF-16LE），實測是 1。最新值的 `teams` 裡每個 workspace 都有 `id`、`domain`、`name`、`token`、`user_id`，token 以 `xoxc-` 開頭（實測 114 字元）。這次 `.log` 裡沒有 `localConfig_v2`，但 `.log` 是尚未寫入表格的新資料，實作仍要讀 `.log` 才不會漏掉最新版本。因此 task 3.4 需要以 Swift 自行實作 Snappy 解壓（實測用的 Python 版約 20 行）、LevelDB 表格讀取與 `.log` 讀取，不引入第三方套件。
+- **Chromium cookie 明文前綴：有。** `Cookies` 的 `meta` 表 `version` 與 `last_compatible_version` 都是 24；cookie `d` 那一列 host 為 `.slack.com`，`value` 欄為空，`encrypted_value` 共 291 bytes，以 `v10` 開頭。以 `Slack Safe Storage` 密碼經 PBKDF2-HMAC-SHA1（salt `saltysalt`、1003 次）得到金鑰、AES-128-CBC（IV 為 16 個空白）解密後得到 277 bytes，前 32 bytes 等於 `SHA256(".slack.com")`，去掉後是以 `xoxd-` 開頭、245 字元、全為可見 ASCII 的 cookie。實作要在 `meta.version` 大於等於 24 時去掉這 32 bytes。
+- **macOS 授權：只有 Keychain 一次。** 從沙盒資料夾複製 `Cookies` 與 `Local Storage/leveldb` 時沒有跳出存取其他 app 資料的授權；讀 `Slack Safe Storage` 時跳出一次 Keychain 授權，使用者按「允許」後成功。
+- **範圍提醒：** 桌面 app 只登入了 1 個 workspace，`--from-desktop` 只拿得到桌面 app 登入過的 workspace；其他 workspace 要先在桌面 app 登入，或改用剪貼簿匯入。這點要寫進 plugin README（task 6.1）。
+- **未逐字元核對：** cookie `d` 是否只含寫入前檢查允許的字元（`A-Z a-z 0-9 - _ . % + / =`）沒有在實測中逐字元比對（避免再跳一次 Keychain 授權）；執行時由 Keychain write keeps values off argv 的寫入前檢查把關，不合法時會拒絕並點名 service。
