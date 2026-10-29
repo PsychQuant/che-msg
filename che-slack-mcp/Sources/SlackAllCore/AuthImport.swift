@@ -100,6 +100,51 @@ public struct SlackAuthImport: Sendable {
         let cookie = try ClipboardImport.cookie(from: second)
         redact = Redaction(secrets: redact.secrets + [cookie])
 
+        return try await ImportVerifier(store: store, client: client, terminal: terminal)
+            .verifyAndStore(candidates, cookie: cookie, existing: existing, redact: redact)
+    }
+
+    /// 0 when at least one workspace was imported, else 1.
+    public static func exitStatus(for results: [SlackImportResult]) -> Int32 {
+        results.contains { $0.outcome == .imported } ? 0 : 1
+    }
+
+    /// Clears the clipboard when `text`, what it was last read as, may hold
+    /// a token.
+    private func clearIfToken(_ text: String?) {
+        if text?.contains("xox") == true { clearClipboard() }
+    }
+
+    /// Clears the clipboard and says whether that worked.
+    private func clearClipboard() {
+        clipboard.clear()
+        if clipboard.text() == nil {
+            terminal.say("Cleared the clipboard.")
+        } else {
+            terminal.say("Warning: the clipboard could not be cleared; copy something else over it.")
+        }
+    }
+}
+
+/// What both imports do once they hold the workspace list and the cookie
+/// (spec: slack-credentials, "Clipboard import"; "Desktop import" verifies
+/// and stores "exactly as the clipboard import does"): each workspace is
+/// checked against the Keychain layout, verified with `auth.test`, and only
+/// then stored; one line is printed per workspace; the verified ones are
+/// merged into `SLACK_WORKSPACES` by team id.
+struct ImportVerifier: Sendable {
+    let store: SlackCredentialStore
+    let client: SlackWebClient
+    let terminal: any SlackAuthTerminal
+
+    /// Verifies and stores each of `candidates` with `cookie`, in order,
+    /// printing each line through `redact`, then merges the imported ones
+    /// into `existing` and writes the index (only when one was imported).
+    ///
+    /// - Throws: `SlackAuthCommandError` when the index cannot be written
+    ///   after an import; `CancellationError`.
+    func verifyAndStore(_ candidates: [ImportCandidate], cookie: String, existing: [SlackWorkspace],
+                        redact: Redaction) async throws -> [SlackImportResult] {
         var results: [SlackImportResult] = []
         for candidate in candidates {
             let result = try await verifyAndSave(candidate, cookie: cookie)
@@ -117,11 +162,6 @@ public struct SlackAuthImport: Sendable {
                 + "does not list them; run slack-all auth import again."))
         }
         return results
-    }
-
-    /// 0 when at least one workspace was imported, else 1.
-    public static func exitStatus(for results: [SlackImportResult]) -> Int32 {
-        results.contains { $0.outcome == .imported } ? 0 : 1
     }
 
     /// Checks, verifies, then stores one workspace. Throws only
@@ -168,22 +208,6 @@ public struct SlackAuthImport: Sendable {
             } else {
                 merged.append(workspace)
             }
-        }
-    }
-
-    /// Clears the clipboard when `text`, what it was last read as, may hold
-    /// a token.
-    private func clearIfToken(_ text: String?) {
-        if text?.contains("xox") == true { clearClipboard() }
-    }
-
-    /// Clears the clipboard and says whether that worked.
-    private func clearClipboard() {
-        clipboard.clear()
-        if clipboard.text() == nil {
-            terminal.say("Cleared the clipboard.")
-        } else {
-            terminal.say("Warning: the clipboard could not be cleared; copy something else over it.")
         }
     }
 }
