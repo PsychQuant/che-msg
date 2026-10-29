@@ -210,17 +210,18 @@ struct ToolListTests {
         return try #require(tool.inputSchema.objectValue)
     }
 
-    @Test("the tools are list_workspaces, auth_status and the read tools, in that order")
+    @Test("the tools are list_workspaces, auth_status, the read tools and send_message, in that order")
     func names() {
         #expect(SlackToolHandler.tools.map(\.name) == ["list_workspaces", "auth_status", "list_conversations",
                                                        "get_conversation_history", "get_thread_replies", "get_user",
-                                                       "search_messages"])
+                                                       "search_messages", "send_message"])
     }
 
-    @Test("each read tool declares exactly its required arguments, each as a property, plus an optional string workspace",
+    @Test("each read tool and send_message declares exactly its required arguments, each as a property, plus an optional string workspace",
           arguments: [("list_conversations", []), ("get_conversation_history", ["conversation_id"]),
                       ("get_thread_replies", ["conversation_id", "thread_ts"]), ("get_user", ["user_id"]),
-                      ("search_messages", ["query"])] as [(String, [String])])
+                      ("search_messages", ["query"]), ("send_message", ["conversation_id", "text"])]
+              as [(String, [String])])
     func readToolSchemas(name: String, required: [String]) throws {
         let schema = try schema(name)
         let properties = try #require(schema["properties"]?.objectValue)
@@ -240,6 +241,15 @@ struct ToolListTests {
         #expect(property["minimum"] == .int(minimum))
         #expect(property["maximum"] == .int(maximum))
         #expect(property["default"] == .int(defaultValue))
+    }
+
+    @Test("send_message's thread_ts is an optional string")
+    func sendMessageThreadTS() throws {
+        let schema = try schema("send_message")
+        let properties = try #require(schema["properties"]?.objectValue)
+        #expect(schema["required"]?.arrayValue?.contains(.string("thread_ts")) == false)
+        #expect(properties["thread_ts"]?.objectValue?["type"] == .string("string"))
+        #expect(properties.keys.sorted() == ["conversation_id", "text", "thread_ts", "workspace"])
     }
 
     @Test("oldest and latest are optional string timestamps on get_conversation_history")

@@ -103,6 +103,21 @@ struct ToolArguments: Sendable {
         }
         return value
     }
+
+    /// `nonBlankString`, also refused when longer than `limit` UTF-16 code
+    /// units. UTF-16 units are never fewer than Unicode scalars or
+    /// user-perceived characters, so a text within `limit` here is within it
+    /// whichever of those a service counts; an emoji outside the Basic
+    /// Multilingual Plane counts as 2.
+    func nonBlankString(_ name: String, _ meaning: String, maxUTF16Length limit: Int) throws(ToolFailure) -> String {
+        let value = try nonBlankString(name, meaning)
+        let length = value.utf16.count
+        guard length <= limit else {
+            throw ToolFailure("\(name) must be at most \(limit) characters, counted as UTF-16 code units (an emoji "
+                              + "may count as 2); this one has \(length).")
+        }
+        return value
+    }
 }
 
 /// An integer argument's allowed range and its value when omitted; the

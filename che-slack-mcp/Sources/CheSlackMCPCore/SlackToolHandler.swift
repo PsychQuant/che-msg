@@ -29,7 +29,7 @@ struct SlackToolHandler: Sendable {
              reported in the list, not as an error result.
              """,
              properties: workspaceProperty),
-    ] + readTools
+    ] + readTools + writeTools
 
     /// The optional `workspace` argument every tool except
     /// `list_workspaces` takes (spec: slack-mcp-tools, "Workspace selection").
@@ -52,6 +52,7 @@ struct SlackToolHandler: Sendable {
         case "get_thread_replies": return await threadReplies(arguments)
         case "get_user": return await user(arguments)
         case "search_messages": return await searchMessages(arguments)
+        case "send_message": return await sendMessage(arguments)
         default: return ToolResult.error("Unknown tool: \(name)")
         }
     }
