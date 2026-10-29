@@ -47,20 +47,3 @@ struct RequestAuthenticationTests {
         #expect(sent.value(forHTTPHeaderField: "Cookie") == "d=abc%2F")
     }
 }
-
-/// Records every request and answers `{"ok":true}`.
-actor RecordingTransportState {
-    var requests: [URLRequest] = []
-    func append(_ request: URLRequest) { requests.append(request) }
-}
-
-final class RecordingTransport: SlackTransport, @unchecked Sendable {
-    private let state = RecordingTransportState()
-    var requests: [URLRequest] { get async { await state.requests } }
-
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        await state.append(request)
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
-        return (Data(#"{"ok":true}"#.utf8), response)
-    }
-}

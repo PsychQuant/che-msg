@@ -5,10 +5,23 @@ import Foundation
 public struct SlackWebClient: Sendable {
     public static let baseURL = URL(string: "https://slack.com/api/")!
 
-    private let transport: SlackTransport
+    /// How many times one call is retried after `rateLimited` before the
+    /// error is thrown (spec: slack-web-client, "Rate limit retry").
+    public static let maxRateLimitRetries = 3
 
-    public init(transport: SlackTransport = URLSessionTransport()) {
+    private let transport: SlackTransport
+    private let clock: SlackClock
+    /// Shared by every copy of this client, so copies pace together.
+    let pacer: SlackPacer
+
+    /// `pacing` is usually `SlackPacingConfig.fromEnvironment()`. `clock` is
+    /// injectable so tests run waits on virtual time.
+    public init(transport: SlackTransport = URLSessionTransport(),
+                pacing: SlackPacingConfig = .default,
+                clock: SlackClock = SystemSlackClock()) {
         self.transport = transport
+        self.clock = clock
+        self.pacer = SlackPacer(config: pacing, clock: clock)
     }
 
     /// Builds the POST for `method`: the token goes in the form body, the
@@ -25,10 +38,56 @@ public struct SlackWebClient: Sendable {
         return request
     }
 
-    /// Sends `method` and returns the raw response body.
+    /// Sends `method` and returns the raw response body once the answer is
+    /// HTTP 200 with `"ok": true`; otherwise throws a `SlackError` (see
+    /// `SlackResponseClassifier` for the full table). A `rateLimited` answer
+    /// is retried after its `Retry-After` wait, up to
+    /// `maxRateLimitRetries` times; after that the last answer's wait is
+    /// thrown without waiting it. Every attempt, retries included, goes
+    /// through the workspace's pacing; the `Retry-After` wait itself holds no
+    /// concurrency slot. Cancellation propagates as `CancellationError`.
     public func call(_ method: String, parameters: [String: String], credential: SlackCredential) async throws -> Data {
-        let (data, _) = try await transport.send(request(method: method, parameters: parameters, credential: credential))
-        return data
+        let request = request(method: method, parameters: parameters, credential: credential)
+        var retries = 0
+        while true {
+            switch try await attempt(request, credential: credential) {
+            case let .success(data):
+                return data
+            case let .failure(.rateLimited(seconds)) where retries < Self.maxRateLimitRetries:
+                retries += 1
+                try await clock.sleep(for: .seconds(seconds))
+            case let .failure(error):
+                throw error
+            }
+        }
+    }
+
+    /// One paced send and its classification. Throws only
+    /// `CancellationError`.
+    private func attempt(_ request: URLRequest, credential: SlackCredential) async throws -> Result<Data, SlackError> {
+        let workspace = credential.teamID
+        try await pacer.acquire(workspace: workspace)
+        let sent: Result<(Data, HTTPURLResponse), Error>
+        do {
+            sent = .success(try await transport.send(request))
+        } catch {
+            sent = .failure(error)
+        }
+        await pacer.release(workspace: workspace)
+
+        switch sent {
+        case let .failure(error) where error is CancellationError:
+            throw error
+        case let .failure(error):
+            return .failure(SlackError.network(error.localizedDescription).redacting(credential))
+        case let .success((data, response)):
+            return SlackResponseClassifier.classify(
+                status: response.statusCode,
+                retryAfter: response.value(forHTTPHeaderField: "Retry-After"),
+                body: data,
+                workspace: workspace)
+                .mapError { $0.redacting(credential) }
+        }
     }
 
     /// Percent-encodes everything except RFC 3986 unreserved characters.

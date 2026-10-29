@@ -14,3 +14,23 @@ public struct SlackCredential: Sendable, Equatable {
         self.cookie = cookie
     }
 }
+
+/// Every textual form of a credential names the workspace and writes
+/// `<redacted>` for both values (spec: slack-web-client, "No credential in
+/// output"). `CustomReflectable` covers `dump()` and anything that walks the
+/// value through `Mirror`, such as test-failure output.
+extension SlackCredential: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public static let redacted = "<redacted>"
+
+    public var description: String {
+        "SlackCredential(teamID: \(teamID), token: \(Self.redacted), cookie: \(Self.redacted))"
+    }
+
+    public var debugDescription: String { description }
+
+    public var customMirror: Mirror {
+        Mirror(self,
+               children: ["teamID": teamID, "token": Self.redacted, "cookie": Self.redacted],
+               displayStyle: .struct)
+    }
+}
