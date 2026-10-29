@@ -62,7 +62,7 @@
 
 Keychain 的 account 一律是 `che-slack-mcp`，service 分三種：
 
-- `SLACK_WORKSPACES`：索引，值是 JSON 陣列，每筆含 `team_id`、`domain`、`name`、`user_id`，不含任何憑證。
+- `SLACK_WORKSPACES`：索引，值是 JSON 陣列的 base64 編碼（RFC 4648，含補位），每筆含 `team_id`、`domain`、`name`、`user_id`，不含任何憑證。以 base64 儲存是為了讓索引也走同一條寫入路徑：JSON 本身有引號、空白，workspace 名稱可能是中日文，都過不了寫入前的字元檢查（apply 時發現的矛盾，使用者 2026-10-29 選定此解法）。沒有索引項目視為尚未匯入任何 workspace。
 - `SLACK_TOKEN_<TEAM_ID>`：該 workspace 的 `xoxc` token。
 - `SLACK_COOKIE_<TEAM_ID>`：該 workspace 的 cookie `d`。
 
@@ -74,7 +74,7 @@ Keychain 的 account 一律是 `che-slack-mcp`，service 分三種：
 
 ### 寫入 Keychain 不經過 argv
 
-CLI 寫入時執行 `/usr/bin/security -i`，把 `add-generic-password -U -a che-slack-mcp -s <service> -w "<value>"` 這一行從 stdin 送進去，值不出現在任何程序的命令列參數（`ps` 看得到 argv）。寫入前檢查值只含 `A-Z a-z 0-9 - _ . % + / =`，否則拒絕，避免破壞 `security -i` 的引號解析。
+CLI 寫入時執行 `/usr/bin/security -i`，把 `add-generic-password -U -a che-slack-mcp -s <service> -w "<value>"` 這一行從 stdin 送進去，值不出現在任何程序的命令列參數（`ps` 看得到 argv）。寫入前檢查值只含 `A-Z a-z 0-9 - _ . % + / =`、service 名稱裡的 team id 只含 1 到 32 個 `A-Z 0-9`，否則拒絕，避免破壞 `security -i` 的引號解析。
 
 替代方案：`SecItemAdd` 建立的項目，其 ACL 只信任建立它的那個 binary；MCP server 是另一個 executable，讀取時會跳出 Keychain 授權視窗。改用 `security` 寫入與讀取，兩端都經過同一個工具，與 Telegram 的現況一致。`security -i` 從 stdin 讀指令這條路要在實測 task 中確認。
 

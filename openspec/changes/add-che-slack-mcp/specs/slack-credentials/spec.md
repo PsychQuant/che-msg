@@ -6,12 +6,12 @@ How che-slack-mcp stores, reads, imports and removes the per-workspace Slack ses
 
 ### Requirement: Keychain credential layout
 
-All items SHALL use the Keychain account `che-slack-mcp`. The service `SLACK_WORKSPACES` SHALL hold a JSON array of objects with the keys `team_id`, `domain`, `name` and `user_id`, and no credential. For each workspace in that array the service `SLACK_TOKEN_<team_id>` SHALL hold its `xoxc` token and the service `SLACK_COOKIE_<team_id>` SHALL hold its `d` cookie value.
+All items SHALL use the Keychain account `che-slack-mcp`. The service `SLACK_WORKSPACES` SHALL hold a JSON array of objects with the keys `team_id`, `domain`, `name` and `user_id`, and no credential, stored as the standard base64 encoding (RFC 4648, with padding) of its UTF-8 bytes so that the stored value contains only characters the write path accepts. A missing `SLACK_WORKSPACES` item SHALL be read as an empty list; a value that is not valid base64 or does not decode to such an array SHALL be reported as an error naming `SLACK_WORKSPACES`. For each workspace in that array the service `SLACK_TOKEN_<team_id>` SHALL hold its `xoxc` token and the service `SLACK_COOKIE_<team_id>` SHALL hold its `d` cookie value.
 
 #### Scenario: Index lists workspaces without credentials
 
 - **WHEN** workspaces `T01` (domain `alpha`) and `T02` (domain `beta`) have been imported
-- **THEN** the `SLACK_WORKSPACES` item holds two objects with those team ids and domains, and the items `SLACK_TOKEN_T01`, `SLACK_COOKIE_T01`, `SLACK_TOKEN_T02` and `SLACK_COOKIE_T02` exist
+- **THEN** the `SLACK_WORKSPACES` item base64-decodes to a JSON array of two objects with those team ids and domains, and the items `SLACK_TOKEN_T01`, `SLACK_COOKIE_T01`, `SLACK_TOKEN_T02` and `SLACK_COOKIE_T02` exist
 
 ### Requirement: Credential lookup is bounded
 
@@ -24,7 +24,12 @@ Reading an item SHALL run `/usr/bin/security find-generic-password -g` with the 
 
 ### Requirement: Keychain write keeps values off argv
 
-Writing an item SHALL start `/usr/bin/security -i` and send the line `add-generic-password -U -a che-slack-mcp -s <service> -w "<value>"` on its standard input, so that the value never appears in any process argument list. Before writing, the value SHALL be checked to contain only the characters `A-Z a-z 0-9 - _ . % + / =`; a value with any other character SHALL be refused with an error naming the service and nothing SHALL be written.
+Writing an item SHALL start `/usr/bin/security -i` and send the line `add-generic-password -U -a che-slack-mcp -s <service> -w "<value>"` on its standard input, so that the value never appears in any process argument list. Before writing, the value SHALL be checked to contain only the characters `A-Z a-z 0-9 - _ . % + / =`, and the team id inside the service name SHALL be checked to consist of 1 to 32 characters from `A-Z 0-9`; a value or team id that fails its check SHALL be refused with an error naming the service, and nothing SHALL be written.
+
+#### Scenario: Team id with a quote is refused
+
+- **WHEN** a token is about to be written for team id `T01"x`
+- **THEN** the write is refused with an error naming the service and no Keychain item is created or changed
 
 #### Scenario: Value with a quote is refused
 
