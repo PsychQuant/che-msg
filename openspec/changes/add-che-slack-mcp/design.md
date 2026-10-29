@@ -175,7 +175,7 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 - 新套件的測試用 Swift Testing（`import Testing`，可直接用參數化測試對應 spec 的範例表）；兩個 Telegram 套件維持 XCTest。因此 che-slack-mcp 需要 Swift 6 toolchain。
 - 測試以假的傳輸層驗證五類錯誤分類、請求標頭、重試與間隔；以暫存 keychain 檔案驗證 Keychain 讀寫（比照 Telegram 測試用 scratch keychain）。
 - `bash tests/che-slack-mcp/*.sh` 通過，`claude plugin validate plugins/che-slack-mcp` 通過，`tests/lib/install_refs.py` 的檢查不回報新 plugin。
-- 手動：在使用者自己的 workspace 跑一次剪貼簿匯入、`list_workspaces`、`get_conversation_history`、`archive_conversation_to_markdown`，結果記在 #99。
+- 手動：在使用者自己的 workspace 跑一次桌面版匯入、`list_workspaces`、`get_conversation_history`、`archive_conversation_to_markdown`，結果記在 #99。（剪貼簿匯入：使用者只用 Slack 桌面版，無法真機驗證，見 #103）
 
 **範圍**
 
