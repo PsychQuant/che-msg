@@ -4,7 +4,7 @@
 
 ## 2. Slack Web API client
 
-- [x] 2.1 建立 `che-slack-mcp/` Swift package，比照 `che-telegram-bot-mcp/Package.swift`（macOS 13、swift-sdk from 0.12.0、swift-argument-parser from 1.5.0）拆成 `SlackWebLib`、`CheSlackMCPCore`、`CheSlackMCP`、`slack-all` 四個 target，`SlackWebLib` 只依賴 Foundation（「SlackWebLib 只依賴 Foundation」），傳輸層是可注入的 protocol；實作「以瀏覽器 session token 認證」的 Session token request authentication：POST 到 `https://slack.com/api/<method>`，token 在 form、cookie 在 `Cookie: d=` 標頭。驗證：`swift build -c release` 成功；以假傳輸層的測試斷言 body、標頭與 URL 不含憑證。
+- [x] 2.1 建立 `che-slack-mcp/` Swift package，比照 `che-telegram-bot-mcp/Package.swift`（macOS 13、swift-sdk from 0.12.0、swift-argument-parser from 1.5.0）拆成 `SlackWebLib`、`CheSlackMCPCore`、`CheSlackMCP`、`slack-all` 四個 target（task 3.3 再加上 `SlackAllCore`，共五個），`SlackWebLib` 只依賴 Foundation（「SlackWebLib 只依賴 Foundation」），傳輸層是可注入的 protocol；實作「以瀏覽器 session token 認證」的 Session token request authentication：POST 到 `https://slack.com/api/<method>`，token 在 form、cookie 在 `Cookie: d=` 標頭。驗證：`swift build -c release` 成功；以假傳輸層的測試斷言 body、標頭與 URL 不含憑證。
 - [x] 2.2 [after: 2.1] 實作「Slack 錯誤分成五類」的 Slack error classification、Rate limit retry（依 `Retry-After`，最多 3 次）、「預設請求間隔與並行上限」的 Request pacing（350 ms、3，`SLACK_MCP_MIN_INTERVAL_MS` 與 `SLACK_MCP_MAX_CONCURRENCY` 可覆寫，超出範圍時警告並用預設值），以及 No credential in output（描述字串以 `<redacted>` 取代值）。驗證：以假傳輸層與可注入的時鐘測試 spec 的分類表、重試等待時間、兩個請求的間隔、並行上限與超出範圍的覆寫值；`String(describing:)` 的測試斷言不含憑證。
 
 ## 3. 憑證與匯入

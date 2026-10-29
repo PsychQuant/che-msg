@@ -161,6 +161,7 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 - 歸檔檔案格式與 manifest 見 `slack-chat-archive` spec。
 - 錯誤：MCP 工具一律回傳 `isError: true` 的工具結果，訊息依五類錯誤的文字；CLI 以非零 exit code 結束。
 - 參數上限與來源：`send_message` 的 `text` 上限 40000 字元，取自 Slack 文件「Slack will truncate messages containing more than 40,000 characters」，超過時改為報錯而不讓 Slack 截斷；`search_messages` 的 `count` 預設 20、上限 100，與 Slack 文件相同；`get_conversation_history` 的 `limit` 上限 200 取自 Slack 文件「We recommend no more than 200 results at a time」，預設 50 是自選值；Keychain 讀取逾時 10 秒是自選值，沒有量測依據。
+- 頁數上限（自選值，沒有量測依據）：`list_conversations` 每頁 200、最多 10 頁；thread 回覆每頁 200、最多 5 頁；歸檔的主訊息每頁 200、最多 50 頁，碰到上限時回 `complete: false` 且不推進書籤；`list_conversations` 解析 DM 名稱每次呼叫最多查 50 位使用者。
 
 **失敗模式**
 
@@ -171,6 +172,7 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 **驗收**
 
 - `cd che-slack-mcp && swift build -c release` 成功，`swift test --skip E2ETests` 全部通過。
+- 新套件的測試用 Swift Testing（`import Testing`，可直接用參數化測試對應 spec 的範例表）；兩個 Telegram 套件維持 XCTest。因此 che-slack-mcp 需要 Swift 6 toolchain。
 - 測試以假的傳輸層驗證五類錯誤分類、請求標頭、重試與間隔；以暫存 keychain 檔案驗證 Keychain 讀寫（比照 Telegram 測試用 scratch keychain）。
 - `bash tests/che-slack-mcp/*.sh` 通過，`claude plugin validate plugins/che-slack-mcp` 通過，`tests/lib/install_refs.py` 的檢查不回報新 plugin。
 - 手動：在使用者自己的 workspace 跑一次剪貼簿匯入、`list_workspaces`、`get_conversation_history`、`archive_conversation_to_markdown`，結果記在 #99。

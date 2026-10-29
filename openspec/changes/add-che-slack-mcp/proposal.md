@@ -4,7 +4,7 @@
 
 ## What Changes
 
-- 新增 Swift package `che-slack-mcp/`，比照 `che-telegram-bot-mcp/` 拆成 `SlackWebLib`（只依賴 Foundation 的 Slack Web API client）、`CheSlackMCPCore`、`CheSlackMCP`（MCP server 入口）、`slack-all`（CLI）四個 target。
+- 新增 Swift package `che-slack-mcp/`，比照 `che-telegram-bot-mcp/` 拆成 `SlackWebLib`（只依賴 Foundation 的 Slack Web API client）、`CheSlackMCPCore`、`CheSlackMCP`（MCP server 入口）、`SlackAllCore`（CLI 的匯入邏輯，與 AppKit 分開以便測試）、`slack-all`（CLI）五個 target。
 - `SlackWebLib` 以 session token 呼叫 Slack Web API，把錯誤分成「session 失效」「被限流」「Enterprise Grid 限制」「其他 Slack 錯誤」「網路錯誤」五類，並預設在請求之間保持最小間隔、限制並行數。
 - 憑證存 macOS Keychain：每個 workspace 一組 token 與 cookie，加一個記錄已匯入 workspace 的索引項目；binary 自己讀 Keychain，wrapper 不 export 成環境變數。
 - CLI 提供兩種匯入方式，token 都只經過 CLI，不經過 MCP 工具參數：

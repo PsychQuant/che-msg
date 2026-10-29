@@ -49,7 +49,7 @@ The body SHALL be the message text with Slack markup converted to markdown: a us
 
 ### Requirement: Incremental archive and manifest
 
-The tool SHALL keep `<output_dir>/<team_id>/<conversation_id>/manifest.json` holding the newest archived top-level `ts`, the newest archived reply `ts` per thread parent within the lookback window, the time of the last run, and message counts, and no message text, sender name or file name. Without `after_ts` and `since_date`, a run SHALL fetch only top-level messages newer than the manifest's newest top-level `ts`. Re-archiving a message that is already in a day file SHALL replace its block in place, so that running the tool twice with no new messages leaves every day file byte-identical.
+The tool SHALL keep `<output_dir>/<team_id>/<conversation_id>/manifest.json` holding the newest archived top-level `ts`, the newest archived reply `ts` per thread parent within the lookback window, the time of the last run, and message counts, and no message text, sender name or file name. Without `after_ts` and `since_date`, a run SHALL write only top-level messages newer than the manifest's newest top-level `ts`. When `thread_lookback_days` is greater than 0, the run SHALL also list the top-level messages inside the lookback window, only to read their `latest_reply` for the "Thread replies and lookback" requirement, and SHALL NOT write those listed messages again. Re-archiving a message that is already in a day file SHALL replace its block in place, so that running the tool twice with no new messages leaves every day file byte-identical.
 
 #### Scenario: Second run with no new messages
 
