@@ -45,13 +45,16 @@ struct ToolArguments: Sendable {
     /// ASCII letters and digits. A name such as `#general` or `@alice` is
     /// refused rather than sent to Slack.
     func id(_ name: String, _ meaning: String) throws(ToolFailure) -> String {
-        guard case let .string(value)? = values[name], (1...64).contains(value.utf8.count),
-              value.utf8.allSatisfy(Self.isASCIIAlphanumeric)
-        else {
+        guard case let .string(value)? = values[name], Self.isSlackID(value) else {
             throw ToolFailure("\(name) is required and must be \(meaning): a Slack id made of letters and digits; "
                               + "a name such as #general or @alice is not accepted.")
         }
         return value
+    }
+
+    /// 1 to 64 ASCII letters and digits, the form of every Slack id.
+    static func isSlackID(_ value: String) -> Bool {
+        (1...64).contains(value.utf8.count) && value.utf8.allSatisfy(isASCIIAlphanumeric)
     }
 
     /// A required Slack timestamp string.

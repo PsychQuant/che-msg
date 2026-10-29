@@ -1,8 +1,10 @@
 import Foundation
 import SlackWebLib
 
-/// Direct-message names for one `list_conversations` call: each user is
-/// looked up once, and at most `limit` distinct users are looked up.
+/// User names for one tool call: each user is looked up once, and at most
+/// `limit` distinct users are looked up. `list_conversations` uses it for
+/// direct-message names; `archive_conversation_to_markdown` for senders and
+/// mentions, without a limit.
 ///
 /// A lookup that Slack answers with an ordinary error (`slackError`, such as
 /// `user_not_found` for a user outside the workspace) names only that

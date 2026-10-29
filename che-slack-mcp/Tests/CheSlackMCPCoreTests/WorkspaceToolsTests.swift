@@ -210,11 +210,12 @@ struct ToolListTests {
         return try #require(tool.inputSchema.objectValue)
     }
 
-    @Test("the tools are list_workspaces, auth_status, the read tools and send_message, in that order")
+    @Test("the tools are list_workspaces, auth_status, the read tools, send_message and archive_conversation_to_markdown, in that order")
     func names() {
         #expect(SlackToolHandler.tools.map(\.name) == ["list_workspaces", "auth_status", "list_conversations",
                                                        "get_conversation_history", "get_thread_replies", "get_user",
-                                                       "search_messages", "send_message"])
+                                                       "search_messages", "send_message",
+                                                       "archive_conversation_to_markdown"])
     }
 
     @Test("each read tool and send_message declares exactly its required arguments, each as a property, plus an optional string workspace",

@@ -8,6 +8,10 @@ import SlackWebLib
 struct SlackToolHandler: Sendable {
     let store: SlackCredentialStore
     let client: SlackWebClient
+    /// The server's offset from UTC in seconds, asked at each archive call
+    /// that gives no `utc_offset`; injectable so tests do not depend on the
+    /// machine's time zone.
+    var localOffsetSeconds: @Sendable () -> Int = { TimeZone.current.secondsFromGMT(for: Date()) }
 
     var resolver: WorkspaceResolver { WorkspaceResolver(store: store) }
 
@@ -29,7 +33,7 @@ struct SlackToolHandler: Sendable {
              reported in the list, not as an error result.
              """,
              properties: workspaceProperty),
-    ] + readTools + writeTools
+    ] + readTools + writeTools + archiveTools
 
     /// The optional `workspace` argument every tool except
     /// `list_workspaces` takes (spec: slack-mcp-tools, "Workspace selection").
@@ -53,6 +57,7 @@ struct SlackToolHandler: Sendable {
         case "get_user": return await user(arguments)
         case "search_messages": return await searchMessages(arguments)
         case "send_message": return await sendMessage(arguments)
+        case "archive_conversation_to_markdown": return await archiveConversation(arguments)
         default: return ToolResult.error("Unknown tool: \(name)")
         }
     }

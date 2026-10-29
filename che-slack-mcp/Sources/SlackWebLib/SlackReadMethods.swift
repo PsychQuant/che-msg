@@ -30,16 +30,20 @@ extension SlackWebClient {
     }
 
     /// One `conversations.history` request: up to `limit` top-level
-    /// messages of `channel`, newest first as Slack returns them. `oldest`
-    /// and `latest` are sent only when given.
+    /// messages of `channel`, newest first as Slack returns them. `oldest`,
+    /// `latest` and `cursor` (a previous page's `nextCursor`) are sent only
+    /// when given.
     public func conversationHistory(channel: String, limit: Int, oldest: String? = nil, latest: String? = nil,
+                                    cursor: String? = nil,
                                     credential: SlackCredential) async throws -> SlackMessagePage {
         var parameters = ["channel": channel, "limit": String(limit)]
         parameters["oldest"] = oldest
         parameters["latest"] = latest
+        parameters["cursor"] = cursor
         let answer = try Self.decode(MessagesAnswer.self,
                                      try await call("conversations.history", parameters: parameters, credential: credential))
-        return SlackMessagePage(messages: answer.messages, hasMore: answer.more)
+        return SlackMessagePage(messages: answer.messages, hasMore: answer.more,
+                                nextCursor: SlackResponseMetadata.cursor(answer.responseMetadata))
     }
 
     /// Every kind of conversation, as `users.conversations` names them.

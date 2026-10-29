@@ -34,10 +34,13 @@ public struct SlackMessage: Equatable, Sendable, Decodable {
     public let subtype: String?
     /// The sender's names, when Slack sends them along with the message.
     public let userProfile: SlackProfileNames?
+    /// Files attached to the message, as Slack describes them; absent when
+    /// there are none.
+    public let files: [SlackFile]?
 
     public init(ts: String, user: String? = nil, botID: String? = nil, username: String? = nil, text: String? = nil,
                 threadTS: String? = nil, replyCount: Int? = nil, subtype: String? = nil,
-                userProfile: SlackProfileNames? = nil) {
+                userProfile: SlackProfileNames? = nil, files: [SlackFile]? = nil) {
         self.ts = ts
         self.user = user
         self.botID = botID
@@ -47,10 +50,11 @@ public struct SlackMessage: Equatable, Sendable, Decodable {
         self.replyCount = replyCount
         self.subtype = subtype
         self.userProfile = userProfile
+        self.files = files
     }
 
     enum CodingKeys: String, CodingKey {
-        case ts, user, username, text, subtype
+        case ts, user, username, text, subtype, files
         case botID = "bot_id"
         case threadTS = "thread_ts"
         case replyCount = "reply_count"
@@ -62,6 +66,23 @@ public struct SlackMessage: Equatable, Sendable, Decodable {
     /// `username`; nil when none is a non-empty string.
     public var senderName: String? {
         [userProfile?.displayName, userProfile?.realName, username].firstNonEmpty
+    }
+}
+
+/// A file attached to a message: only what the archive writes about it.
+/// Every field is optional, since Slack sends a hidden or deleted file with
+/// little more than its id. Nothing is downloaded.
+public struct SlackFile: Equatable, Sendable, Decodable {
+    public let id: String?
+    public let name: String?
+    public let title: String?
+    public let permalink: String?
+
+    public init(id: String? = nil, name: String? = nil, title: String? = nil, permalink: String? = nil) {
+        self.id = id
+        self.name = name
+        self.title = title
+        self.permalink = permalink
     }
 }
 
@@ -205,6 +226,15 @@ public struct SlackMessagePage: Equatable, Sendable {
     public let messages: [SlackMessage]
     /// True when Slack says more messages exist past this page.
     public let hasMore: Bool
+    /// The cursor that fetches the next `conversations.history` page; nil
+    /// when Slack sent none.
+    public let nextCursor: String?
+
+    init(messages: [SlackMessage], hasMore: Bool, nextCursor: String? = nil) {
+        self.messages = messages
+        self.hasMore = hasMore
+        self.nextCursor = nextCursor
+    }
 }
 
 /// The `response_metadata.next_cursor` every cursor-paginated answer
