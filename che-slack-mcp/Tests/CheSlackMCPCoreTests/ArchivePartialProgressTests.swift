@@ -24,8 +24,8 @@ struct ArchivePartialProgressTests {
     static func note(_ written: String) -> String {
         "Slack kept rate limiting this workspace after the client's retries, so the run stopped early with "
             + "\(written) written. The manifest's newest ts did not move: calling the tool again, after "
-            + "retry_after_seconds, continues below the oldest top-level message this walk wrote, or reads the range "
-            + "again when it wrote none, and merges the blocks already written in place."
+            + "retry_after_seconds, continues where the manifest records this walk stopped, or reads the same range "
+            + "again when nothing was recorded, and merges the blocks already written in place."
     }
 
     /// A first run that archives only `question`, leaving the manifest's

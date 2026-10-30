@@ -73,7 +73,7 @@ The tool SHALL keep `<output_dir>/<team_id>/<conversation_id>/manifest.json` hol
 
 ### Requirement: Thread replies and lookback
 
-For each thread parent fetched in the run, and for each thread parent whose `ts` is within the last `thread_lookback_days` days and whose `latest_reply` is newer than the reply `ts` recorded in the manifest, the tool SHALL fetch the replies with `conversations.replies` and archive the ones not yet written. When the manifest records a reply `ts` for that parent, the replies SHALL be requested starting after it, passing it to Slack as `oldest`, so that a thread longer than one call's reply page limit is archived over successive calls. A thread whose replies were cut short by that limit SHALL keep its reply bookmark in the manifest whatever its parent's age, and later runs SHALL continue it until all its replies are written, also when the parent is older than the lookback window or `thread_lookback_days` is 0; while such a thread remains, a run SHALL report `complete: false`. Otherwise, replies to thread parents older than the lookback window SHALL NOT be fetched.
+For each thread parent fetched in the run, and for each thread parent whose `ts` is within the last `thread_lookback_days` days and whose `latest_reply` is newer than the reply `ts` recorded in the manifest, the tool SHALL fetch the replies with `conversations.replies` and archive the ones not yet written. When the manifest records a reply `ts` for that parent, the replies SHALL be requested starting after it, passing it to Slack as `oldest`, so that a thread longer than one call's reply page limit is archived over successive calls. A thread whose replies were cut short by that limit SHALL keep its reply bookmark in the manifest whatever its parent's age, and later runs SHALL continue it until all its replies are written, also when the parent is older than the lookback window or `thread_lookback_days` is 0; while such a thread remains, a run SHALL report `complete: false`. A thread whose parent Slack answers `thread_not_found` for when it is continued SHALL leave the manifest's record of cut threads, and the call SHALL NOT be an error. Otherwise, replies to thread parents older than the lookback window SHALL NOT be fetched.
 
 #### Scenario: Late reply outside the window is not fetched
 
@@ -84,6 +84,11 @@ For each thread parent fetched in the run, and for each thread parent whose `ts`
 
 - **WHEN** on a first archive with `thread_lookback_days` 30 a parent posted 60 days ago has 1300 replies
 - **THEN** the first call archives 1000 of them and reports `complete: false`, and the next call archives the remaining 300 although the parent is outside the window
+
+#### Scenario: Cut thread whose parent is gone is dropped
+
+- **WHEN** a thread recorded as cut is continued and Slack answers `thread_not_found` for its parent
+- **THEN** the call is not an error, the thread is no longer recorded as cut, and later calls do not ask for it
 
 #### Scenario: Long thread continues on the next call
 

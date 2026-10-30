@@ -57,9 +57,10 @@ extension SlackToolHandler {
              output_dir runs at a time, across server processes \
              too: a call made while another runs is an error and writes nothing. When Slack keeps rate limiting \
              after the client's retries, the call stops early and is not an error: the day files written so far \
-             stay, the manifest's newest ts does not move but the point to continue below is recorded, and the \
-             result has complete false, stopped_reason rate_limited, retry_after_seconds and a note; calling again \
-             later continues there and merges the blocks already written in place. Any other Slack error is an \
+             stay, the manifest's newest ts does not move, the point to continue below is recorded when the walk \
+             stopped above its lower bound, and the result has complete false, stopped_reason rate_limited, \
+             retry_after_seconds and a note; calling again later continues from there, or reads the same range \
+             again when nothing was recorded, and merges the blocks already written in place. Any other Slack error is an \
              error result; the pages merged before it stay written and the manifest is left as it was. Returns \
              the day files changed (relative to output_dir) and message counts, never message text.
              """,
@@ -165,8 +166,8 @@ struct ConversationArchiver {
             let written = top_level_messages + thread_replies
             note = "Slack kept rate limiting this workspace after the client's retries, so the run stopped early "
                 + "with \(written == 1 ? "1 message" : "\(written) messages") written. The manifest's newest ts did "
-                + "not move: calling the tool again, after retry_after_seconds, continues below the oldest top-level "
-                + "message this walk wrote, or reads the range again when it wrote none, and merges the blocks "
+                + "not move: calling the tool again, after retry_after_seconds, continues where the manifest records "
+                + "this walk stopped, or reads the same range again when nothing was recorded, and merges the blocks "
                 + "already written in place."
         }
     }
