@@ -148,10 +148,37 @@ public struct SlackCredentialStore: Sendable {
     ///
     /// - Throws: `SlackKeychainWriteError` naming `SLACK_WORKSPACES`.
     public func saveWorkspaces(_ workspaces: [SlackWorkspace]) async throws {
+        try await writer.write(service: SlackKeychain.workspacesService, value: Self.indexValue(workspaces))
+    }
+
+    /// Throws what `saveWorkspaces(workspaces)` would be refused with, and
+    /// starts nothing: the same value goes through the writer's own `check`,
+    /// so with `SecurityCLIKeychainWriter` an index whose `security -i` line
+    /// would be longer than 4094 bytes is refused (`lineTooLong`). Lets an
+    /// import find out before it writes any credential.
+    ///
+    /// - Throws: `SlackKeychainWriteError.refused` naming `SLACK_WORKSPACES`.
+    public func checkWorkspaces(_ workspaces: [SlackWorkspace]) throws {
+        try writer.check(service: SlackKeychain.workspacesService, value: Self.indexValue(workspaces))
+    }
+
+    /// The bytes `workspace` takes in the index's JSON: its object, without
+    /// the comma between entries. The JSON of n entries is 2 + their sum +
+    /// (n - 1) bytes, so two candidates for one place in the index can be
+    /// compared without encoding the whole index.
+    public static func indexEntryByteCount(_ workspace: SlackWorkspace) throws -> Int {
+        try indexEncoder().encode(workspace).count
+    }
+
+    /// The value `saveWorkspaces` writes for `workspaces`.
+    static func indexValue(_ workspaces: [SlackWorkspace]) throws -> String {
+        try indexEncoder().encode(workspaces).base64EncodedString()
+    }
+
+    private static func indexEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let json = try encoder.encode(workspaces)
-        try await writer.write(service: SlackKeychain.workspacesService, value: json.base64EncodedString())
+        return encoder
     }
 
     /// The value of one item, or the error naming it.

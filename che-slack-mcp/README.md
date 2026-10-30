@@ -41,6 +41,17 @@ No command prints a token or cookie. Exit status: `auth import` 0 when at least 
 
 Values are written with `security -i` from stdin, so they never appear in a process's arguments, and read with `security find-generic-password` (10 s timeout, nothing cached).
 
+`security -i` reads a command line of at most 4094 bytes, and the index is written in one, which limits how many workspaces it can list. Measured (`IndexCapacityTests`), with 11-character team and user ids unless noted:
+
+| Entries | Workspaces that fit |
+|---------|---------------------|
+| Short: 9-character ids (`T0123ABCD`), 8-character domain, 10-character name | 35 |
+| Typical: 15-character domain, 20-character name | 28 |
+| Long: 21-character domain, 50-character name | 21 |
+| 15-character domain, name of 20 Chinese or Japanese characters | 20 |
+
+Before an import calls `auth.test` or writes anything, it checks that the index it could leave (the workspaces already imported plus every one it found in the browser or the desktop app) fits. When it would not, the import writes nothing and says how many workspaces the index would list. `slack-all auth remove` frees room.
+
 ## Installation
 
 ### Option A: the Claude Code plugin (recommended)

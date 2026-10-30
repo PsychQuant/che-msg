@@ -31,6 +31,10 @@ public struct SlackImportResult: Equatable, Sendable {
 ///   clears the clipboard only when it holds `xox` (it may hold a token);
 ///   anything else the user had copied is left alone. The second read is
 ///   always cleared, before it is checked.
+/// - The index is checked to fit one Keychain write right after the
+///   workspace list is read, so a list that could not be stored is refused
+///   before the user copies the cookie; the clipboard, which still holds
+///   the list and its tokens, is then cleared.
 /// - The cookie is taken without surrounding whitespace or a leading `d=`.
 /// - A workspace whose team id or token the Keychain layout cannot hold is
 ///   rejected without calling `auth.test`; so is one whose `auth.test`
@@ -65,7 +69,8 @@ public struct SlackAuthImport: Sendable {
     ///
     /// - Throws: `SlackCredentialError` when the index cannot be read;
     ///   `SlackAuthCommandError` when input ends, a read is not what the step
-    ///   asked for, or the index cannot be written after an import.
+    ///   asked for, the index would not fit one Keychain write, or it cannot
+    ///   be written after an import.
     public func run() async throws -> [SlackImportResult] {
         let existing = try await store.workspaces()
 
@@ -89,6 +94,13 @@ public struct SlackAuthImport: Sendable {
         var redact = Redaction(secrets: candidates.map(\.token))
         let names = candidates.map(\.workspace.name).joined(separator: ", ")
         terminal.say(redact("Read \(candidates.count) workspace(s): \(names)."))
+        let verifier = ImportVerifier(store: store, client: client, terminal: terminal)
+        do {
+            try verifier.checkIndexFits(candidates, existing: existing)
+        } catch {
+            clearClipboard()
+            throw error
+        }
         terminal.say("Step 2 of 2: in the developer tools' Storage tab, open Cookies for app.slack.com, "
             + "copy the value of the cookie named d, then press Enter here.")
         guard terminal.waitForEnter() else {
@@ -100,8 +112,7 @@ public struct SlackAuthImport: Sendable {
         let cookie = try ClipboardImport.cookie(from: second)
         redact = Redaction(secrets: redact.secrets + [cookie])
 
-        return try await ImportVerifier(store: store, client: client, terminal: terminal)
-            .verifyAndStore(candidates, cookie: cookie, existing: existing, redact: redact)
+        return try await verifier.verifyAndStore(candidates, cookie: cookie, existing: existing, redact: redact)
     }
 
     /// 0 when at least one workspace was imported, else 1.
@@ -128,23 +139,27 @@ public struct SlackAuthImport: Sendable {
 
 /// What both imports do once they hold the workspace list and the cookie
 /// (spec: slack-credentials, "Clipboard import"; "Desktop import" verifies
-/// and stores "exactly as the clipboard import does"): each workspace is
-/// checked against the Keychain layout, verified with `auth.test`, and only
-/// then stored; one line is printed per workspace; the verified ones are
-/// merged into `SLACK_WORKSPACES` by team id.
+/// and stores "exactly as the clipboard import does"): the index the import
+/// could leave is checked to fit one Keychain write ("Keychain credential
+/// layout"); then each workspace is checked against the Keychain layout,
+/// verified with `auth.test`, and only then stored; one line is printed per
+/// workspace; the verified ones are merged into `SLACK_WORKSPACES` by team id.
 struct ImportVerifier: Sendable {
     let store: SlackCredentialStore
     let client: SlackWebClient
     let terminal: any SlackAuthTerminal
 
-    /// Verifies and stores each of `candidates` with `cookie`, in order,
-    /// printing each line through `redact`, then merges the imported ones
-    /// into `existing` and writes the index (only when one was imported).
+    /// Checks the index first (`checkIndexFits`), then verifies and stores
+    /// each of `candidates` with `cookie`, in order, printing each line
+    /// through `redact`, then merges the imported ones into `existing` and
+    /// writes the index (only when one was imported).
     ///
-    /// - Throws: `SlackAuthCommandError` when the index cannot be written
-    ///   after an import; `CancellationError`.
+    /// - Throws: `SlackAuthCommandError` when the index would not fit, before
+    ///   anything is verified or written, or when it cannot be written after
+    ///   an import; `CancellationError`.
     func verifyAndStore(_ candidates: [ImportCandidate], cookie: String, existing: [SlackWorkspace],
                         redact: Redaction) async throws -> [SlackImportResult] {
+        try checkIndexFits(candidates, existing: existing)
         var results: [SlackImportResult] = []
         for candidate in candidates {
             let result = try await verifyAndSave(candidate, cookie: cookie)
@@ -162,6 +177,49 @@ struct ImportVerifier: Sendable {
                 + "does not list them; run slack-all auth import again."))
         }
         return results
+    }
+
+    /// Throws, starting nothing, when the index this import could leave
+    /// would not fit one Keychain write (spec: slack-credentials, "Keychain
+    /// credential layout"). The index checked is `existing` merged with
+    /// every candidate, as if all were imported, except that where a
+    /// candidate replaces an entry the longer of the two is counted: the
+    /// existing entry stays when the candidate is not imported. Any index
+    /// the import then writes is no longer than this one. Both imports call
+    /// this as soon as they hold the workspace list, before the cookie step
+    /// (the second copy, or the `Slack Safe Storage` prompt);
+    /// `verifyAndStore` calls it again for any other caller.
+    ///
+    /// - Throws: `SlackAuthCommandError` giving the number of workspaces
+    ///   when the index would not fit; `SlackKeychainWriteError` when it
+    ///   would be refused for another reason.
+    func checkIndexFits(_ candidates: [ImportCandidate], existing: [SlackWorkspace]) throws {
+        let longest = try Self.longestMerge(existing, candidates.map(\.workspace))
+        do {
+            try store.checkWorkspaces(longest)
+        } catch SlackKeychainWriteError.refused(_, reason: .lineTooLong) {
+            throw SlackAuthCommandError("Nothing was imported: the workspace index SLACK_WORKSPACES would list up to "
+                + "\(longest.count) workspaces (\(existing.count) already imported, \(longest.count - existing.count) new) "
+                + "and would not fit in one Keychain write. Remove workspaces you no longer use with slack-all auth remove "
+                + "<workspace>, or import fewer by signing out of some in the browser or the Slack desktop app, "
+                + "then run the import again.")
+        }
+    }
+
+    /// `merge(existing, imported)`, except that where an imported workspace
+    /// replaces an entry, the one of the two whose index entry is longer is
+    /// kept.
+    static func longestMerge(_ existing: [SlackWorkspace], _ imported: [SlackWorkspace]) throws -> [SlackWorkspace] {
+        try imported.reduce(into: existing) { merged, workspace in
+            if let index = merged.firstIndex(where: { $0.teamID == workspace.teamID }) {
+                if try SlackCredentialStore.indexEntryByteCount(workspace)
+                    > SlackCredentialStore.indexEntryByteCount(merged[index]) {
+                    merged[index] = workspace
+                }
+            } else {
+                merged.append(workspace)
+            }
+        }
     }
 
     /// Checks, verifies, then stores one workspace. Throws only

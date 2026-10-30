@@ -68,6 +68,8 @@ slack-all auth remove T0123ABCD    # by team id, or by domain: slack-all auth re
 
 `slack-all auth remove` deletes that workspace's token and cookie from the Keychain and drops it from the index.
 
+The index has room for about 28 workspaces with typical names (a 20-character name and a 15-character domain), 21 with long ones (50 and 21 characters), and 20 when names are 20 Chinese or Japanese characters: it is written as one `security -i` command, which takes at most 4094 bytes. An import that could go past that stops before it calls `auth.test` or writes anything, and says how many workspaces the index would list. Remove workspaces you no longer use with `slack-all auth remove` (or sign out of some in the browser or the desktop app, so the import finds fewer), then import again.
+
 The Keychain items all have the account `che-slack-mcp`: `SLACK_WORKSPACES` (the index: team id, domain, name and user id, no credential), and `SLACK_TOKEN_<TEAM_ID>` and `SLACK_COOKIE_<TEAM_ID>` for each workspace.
 
 When a session stops working (you signed out, or Slack ended it), the tools say so and name the workspace; import it again.

@@ -87,6 +87,8 @@ public struct SlackDesktopImportError: Error, Equatable, Sendable, CustomStringC
 ///   or failure; a deletion that fails is reported with the folder's path.
 /// - `localConfig_v2` and the cookie row are read before the Keychain is
 ///   asked, so unreadable data never costs the user a prompt.
+/// - The index is checked to fit one Keychain write before
+///   `Slack Safe Storage` is read, for the same reason.
 /// - A team entry without one of the five fields is skipped and counted.
 /// - The workspaces are then verified and stored by `ImportVerifier`, the
 ///   clipboard import's own path.
@@ -124,8 +126,8 @@ public struct SlackDesktopImport: Sendable {
     ///
     /// - Throws: `SlackDesktopImportError` naming the step that failed;
     ///   `SlackCredentialError` when the index cannot be read;
-    ///   `SlackAuthCommandError` when the index cannot be written after an
-    ///   import.
+    ///   `SlackAuthCommandError` when the index would not fit one Keychain
+    ///   write, or cannot be written after an import.
     public func run() async throws -> [SlackImportResult] {
         guard let folder = data.locate() else {
             let places = data.candidates.map(\.path).joined(separator: " or in ")
@@ -142,11 +144,12 @@ public struct SlackDesktopImport: Sendable {
             let entries = read.skipped == 1 ? "1 team entry" : "\(read.skipped) team entries"
             terminal.say("Skipped \(entries) in localConfig_v2 without a string id, domain, name, token and user_id.")
         }
+        let verifier = ImportVerifier(store: store, client: client, terminal: terminal)
+        try verifier.checkIndexFits(read.candidates, existing: existing)
         let cookie = try await decrypt(read.cookie)
         redact = Redaction(secrets: redact.secrets + [cookie])
 
-        return try await ImportVerifier(store: store, client: client, terminal: terminal)
-            .verifyAndStore(read.candidates, cookie: cookie, existing: existing, redact: redact)
+        return try await verifier.verifyAndStore(read.candidates, cookie: cookie, existing: existing, redact: redact)
     }
 
     // MARK: - Reading the copies
