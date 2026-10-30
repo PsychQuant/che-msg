@@ -179,6 +179,175 @@ struct ArchiveUnfinishedThreadTests {
         #expect(try output.read(ArchiveManifestTests.manifestPath) == Self.cutOldThread)
     }
 
+    /// 2026-09-02 10:00 and 09:00: top-level messages below the old parent.
+    static let olderTS = "1788314400.000100"
+    static let oldestTS = "1788310800.000100"
+
+    /// History page 1 holds the old parent (1300 replies) and `olderTS`
+    /// and offers cursor `c2`, which `second` answers; `replies` answers
+    /// `conversations.replies` for any other parent than the old one.
+    /// users.info knows Alex (U02) and Kim (U03) and keeps rate limiting U05.
+    static func cutThenStopped(second: ScriptedAnswer,
+                               replies other: @escaping @Sendable (SlackCall) -> ScriptedAnswer = { _ in
+                                   .body(Fake.slackError("no_scripted_answer"))
+                               }) -> MethodTransport {
+        let parent = parentJSON(oldParent, replies: 1300, latest: oldReplies.last ?? "")
+        let older = #"{"user":"U02","text":"m","ts":"\#(olderTS)"}"#
+        return MethodTransport { call in
+            switch (call.method, call.parameters["cursor"]) {
+            case ("conversations.history", nil): return .body(ArchiveFake.history([parent, older], cursor: "c2"))
+            case ("conversations.history", _): return second
+            case ("conversations.replies", _):
+                guard call.parameters["ts"] == oldParent else { return other(call) }
+                return PagedSlack.replies(parent: parent, parentTS: oldParent, oldReplies, call)
+            default:
+                return call.parameters["user"] == "U05"
+                    ? ArchivePartialProgressTests.rateLimited : ArchiveFake.users(["U02": "Alex", "U03": "Kim"], call)
+            }
+        }
+    }
+
+    /// spec: "Thread cut before a rate limit continues". The first archive
+    /// writes the old parent with its first 1000 replies and `olderTS`, then
+    /// Slack keeps rate limiting page 2. The walk continues below `olderTS`,
+    /// under the parent, so only the manifest's record of the cut thread
+    /// brings back the other 300: the second call (an hour later) continues
+    /// the walk, writes `oldestTS` and the 300 replies, and moves newest_ts
+    /// to the walk's top; nothing newer was looked for, so it is not
+    /// complete. The third call finds nothing newer and is.
+    @Test("spec: a thread cut at its 1000th reply before a rate limit is recorded, and the next calls archive the other 300")
+    func threadCutBeforeRateLimitContinues() async throws {
+        let options = ArchiveManifestTests.lookback30
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        let first = Self.cutThenStopped(second: ArchivePartialProgressTests.rateLimited)
+        let (firstHandler, _) = try await readHandler(first)
+
+        let firstResult = await ArchiveToolTests.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun,
+                                                                                 firstHandler), into: output, options)
+
+        expectJSON(firstResult, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-09-02.md"],"#
+                   + #""new_messages":1002,"#
+                   + #""note":"\#(ArchivePartialProgressTests.note("1002 messages"))","retry_after_seconds":30,"#
+                   + #""skipped_messages":0,"stopped_reason":"rate_limited","team_id":"T01","thread_replies":1000,"#
+                   + #""top_level_messages":2,"utc_offset":"+08:00"}"#)
+        #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
+            "newest_ts": null, "newest_reply_ts": {"\(Self.oldParent)": "\(Self.thousandth)"},
+            "continuation": {"top_ts": "\(Self.oldParent)", "below_ts": "\(Self.olderTS)"},
+            "unfinished_threads": ["\(Self.oldParent)"]
+            """))
+        let all = [Self.oldParent, Self.olderTS, Self.oldestTS]
+        let rest = { MethodTransport { call in
+            switch call.method {
+            case "conversations.history": return PagedSlack.history(all, call)
+            case "conversations.replies":
+                let parent = Self.parentJSON(Self.oldParent, replies: 1300, latest: Self.oldReplies.last ?? "")
+                return PagedSlack.replies(parent: parent, parentTS: Self.oldParent, Self.oldReplies, call)
+            default: return ArchiveFake.users(["U02": "Alex", "U03": "Kim"], call)
+            }
+        } }
+        let second = rest()
+        let (secondHandler, _) = try await readHandler(second)
+
+        let secondResult = await ArchiveToolTests.archive(
+            ArchiveManifestTests.at(ArchiveManifestTests.firstRun + 3600, secondHandler), into: output, options)
+
+        expectJSON(secondResult, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-09-02.md"],"#
+                   + #""new_messages":301,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":300,"top_level_messages":1,"utc_offset":"+08:00"}"#)
+        #expect(second.calls.first?.parameters == ["channel": "C01", "limit": "200", "latest": Self.olderTS])
+        #expect(Self.replies(second).allSatisfy {
+            $0.parameters["oldest"] == Self.thousandth && $0.parameters["ts"] == Self.oldParent
+        }, "\(Self.replies(second))")
+        #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
+            "newest_ts": "\(Self.oldParent)", "newest_reply_ts": {}
+            """))
+        let third = rest()
+        let (thirdHandler, _) = try await readHandler(third)
+
+        let thirdResult = await ArchiveToolTests.archive(
+            ArchiveManifestTests.at(ArchiveManifestTests.firstRun + 7200, thirdHandler), into: output, options)
+
+        expectJSON(thirdResult, #"{"complete":true,"conversation_id":"C01","files":[],"#
+                   + #""new_messages":0,"skipped_messages":0,"team_id":"T01","thread_replies":0,"#
+                   + #""top_level_messages":0,"utc_offset":"+08:00"}"#)
+        #expect(third.methods == ["conversations.history"])
+        let anchors = try ArchiveContinuationTests.anchors(output)
+        #expect(anchors.count == 1303 && Set(anchors).count == 1303)
+    }
+
+    /// A message is written only with its sender's name: page 2 holds a
+    /// second cut thread, whose parent's sender (U05) Slack keeps rate
+    /// limiting, so neither it nor its 1000 replies are written. Only the
+    /// thread cut on page 1, whose replies were written, is recorded; the
+    /// next call lists the second parent again below `olderTS` and reads its
+    /// replies from the first. `1788300000.000100` is 2026-09-02 06:00.
+    @Test("a cut thread whose batch was not written gets no reply bookmark; the one written before it is recorded")
+    func unwrittenCutThreadNotRecorded() async throws {
+        let otherTS = "1788300000.000100"
+        let otherReplies = (1...1300).map { "\(1_788_300_000 + $0).000300" }
+        let other = #"{"user":"U05","text":"q","ts":"\#(otherTS)","thread_ts":"\#(otherTS)","reply_count":1300,"latest_reply":"\#(otherReplies.last ?? "")"}"#
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        let slack = Self.cutThenStopped(second: .body(ArchiveFake.history([other]))) { call in
+            PagedSlack.replies(parent: other, parentTS: otherTS, otherReplies, call)
+        }
+        let (handler, _) = try await readHandler(slack)
+
+        let result = await ArchiveToolTests.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun, handler),
+                                                    into: output, ArchiveManifestTests.lookback30)
+
+        #expect(text(result).contains(#""stopped_reason":"rate_limited""#)
+                    && text(result).contains(#""thread_replies":1000"#), "\(text(result))")
+        #expect(Self.replies(slack).filter { $0.parameters["ts"] == otherTS }.count == SlackWebClient.repliesMaxPages)
+        let file = try output.read("T01/C01/2026-09-02.md")
+        #expect(!file.contains(otherTS) && !file.contains(".000300 -->"), "the unwritten thread is in the day file")
+        #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
+            "newest_ts": null, "newest_reply_ts": {"\(Self.oldParent)": "\(Self.thousandth)"},
+            "continuation": {"top_ts": "\(Self.oldParent)", "below_ts": "\(Self.olderTS)"},
+            "unfinished_threads": ["\(Self.oldParent)"]
+            """))
+    }
+
+    /// A thread the manifest lists is continued, still cut, and its 1000
+    /// replies written; the next listed thread is then rate limited. The
+    /// first moves to its 1000th reply after the recorded one,
+    /// `1788318001 + 1000 = 1788319001.000200`; the second keeps its
+    /// bookmark. `1788400000.000100` is 2026-09-03 09:46:40.
+    @Test("a listed thread continued and still cut before a rate limit moves its bookmark; the stopped one keeps its own")
+    func continuedCutThreadBeforeRateLimit() async throws {
+        let stoppedTS = "1788400000.000100"
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        try ArchiveContinuationTests.preset(output, manifest: ArchiveManifestSafetyTests.manifest([
+            "newest_ts": #""\#(stoppedTS)""#,
+            "newest_reply_ts": #"{"\#(Self.oldParent)": "1788318001.000200", "\#(stoppedTS)": "1788400100.000300"}"#,
+            "unfinished_threads": #"["\#(Self.oldParent)", "\#(stoppedTS)"]"#,
+        ]))
+        let parent = Self.parentJSON(Self.oldParent, replies: 1300, latest: Self.oldReplies.last ?? "")
+        let slack = MethodTransport { call in
+            switch (call.method, call.parameters["ts"]) {
+            case ("conversations.history", _): return .body(ArchiveFake.history([]))
+            case ("conversations.replies", Self.oldParent?):
+                return PagedSlack.replies(parent: parent, parentTS: Self.oldParent, Self.oldReplies, call)
+            case ("conversations.replies", _): return ArchivePartialProgressTests.rateLimited
+            default: return ArchiveFake.users(["U02": "Alex", "U03": "Kim"], call)
+            }
+        }
+        let (handler, _) = try await readHandler(slack)
+
+        let result = await ArchiveToolTests.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun, handler),
+                                                    into: output)
+
+        #expect(text(result).contains(#""stopped_reason":"rate_limited""#)
+                    && text(result).contains(#""thread_replies":1000"#), "\(text(result))")
+        #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
+            "newest_ts": "\(stoppedTS)",
+            "newest_reply_ts": {"\(Self.oldParent)": "1788319001.000200", "\(stoppedTS)": "1788400100.000300"},
+            "unfinished_threads": ["\(Self.oldParent)", "\(stoppedTS)"]
+            """))
+    }
+
     /// Spec silent, chosen: Slack answers `thread_not_found` when the parent
     /// is gone (deleted, or removed by a retention policy). There are no
     /// replies left to write, so the thread leaves the list instead of

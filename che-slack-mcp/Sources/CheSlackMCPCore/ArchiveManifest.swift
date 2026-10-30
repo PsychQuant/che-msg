@@ -47,9 +47,11 @@ import Foundation
 ///
 /// A run ended by an error does not write the manifest, so none of these
 /// moves and the next run reads that range again. A run stopped by a rate
-/// limit writes it only when its `continuation` or `range` moved, and then
-/// leaves `newest_ts`, `newest_reply_ts` and `unfinished_threads` as they
-/// were.
+/// limit writes it only when its `continuation` or `range` moved or it
+/// wrote replies of a thread it cut, and then leaves `newest_ts` as it
+/// was, and `newest_reply_ts` and `unfinished_threads` too, except that
+/// each thread it cut whose replies it wrote is listed with the newest
+/// reply written.
 ///
 /// `version` stays 1: `continuation`, `range` and `unfinished_threads` are
 /// optional, so a manifest written before they existed is read as having

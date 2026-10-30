@@ -58,11 +58,12 @@ extension SlackToolHandler {
              too: a call made while another runs is an error and writes nothing. When Slack keeps rate limiting \
              after the client's retries, the call stops early and is not an error: the day files written so far \
              stay, the manifest's newest ts does not move, the point to continue below is recorded when the walk \
-             stopped above its lower bound, and the result has complete false, stopped_reason rate_limited, \
-             retry_after_seconds and a note; calling again later continues from there, or reads the same range \
-             again when nothing was recorded, and merges the blocks already written in place. Any other Slack error is an \
-             error result; the pages merged before it stay written and the manifest is left as it was. Returns \
-             the day files changed (relative to output_dir) and message counts, never message text.
+             stopped above its lower bound, a thread cut short in this call is recorded with the newest reply \
+             written (other reply records do not move), and the result has complete false, stopped_reason \
+             rate_limited, retry_after_seconds and a note; calling again later continues from there, or reads the \
+             same range again when nothing was recorded, and merges the blocks already written in place. Any other \
+             Slack error is an error result; the pages merged before it stay written and the manifest is left as \
+             it was. Returns the day files changed (relative to output_dir) and message counts, never message text.
              """,
              properties: workspaceProperty.merging([
                  "conversation_id": prop("string", "The conversation's id, such as C0123ABCD, from list_conversations."),
@@ -196,12 +197,22 @@ struct ConversationArchiver {
         /// Parents whose replies the reply page limit cut: the manifest's
         /// list, plus the threads cut in this run, less those finished.
         var unfinished: Set<String>
+        /// Threads cut in this run whose replies are read but not yet
+        /// written, with the newest reply read.
+        var cutPending: [String: String] = [:]
+        /// Threads cut in this run whose replies were written into the day
+        /// files, with the newest reply written: what a stopped run records.
+        var cutWritten: [String: String] = [:]
 
+        /// Records a batch merged into the day files: its top-level ts, and
+        /// the cut threads whose replies it held.
         mutating func wrote(_ topLevel: [String]) {
             for ts in topLevel {
                 walkNewest = ArchiveScope.newer(walkNewest, ts)
                 walkOldest = ArchiveScope.older(walkOldest, ts)
             }
+            cutWritten.merge(cutPending) { $1 }
+            cutPending = [:]
         }
     }
 
@@ -221,12 +232,18 @@ struct ConversationArchiver {
     ///   the unread range below the written messages would be skipped;
     /// - the manifest records the continuation (or the range's) below the
     ///   oldest top-level message written, and is written only when one of
-    ///   them moved, so a stop that wrote nothing to continue from leaves it
-    ///   byte-identical;
+    ///   them or a cut thread's record moved, so a stop that wrote nothing
+    ///   to continue from leaves it byte-identical;
     /// - reply bookmarks and the unfinished threads are not moved, even for
     ///   a thread written whole before the stop: the next run fetches it
     ///   again and merges it in place, at the cost of a request, rather than
-    ///   trust a run that stopped part way;
+    ///   trust a run that stopped part way. The exception is a thread cut
+    ///   short in this run whose replies were written before the stop: it
+    ///   is listed as unfinished with the newest reply written (spec:
+    ///   "Thread replies and lookback"), because the walk continues below
+    ///   the oldest message written, so a cut parent above that is not
+    ///   listed again and nothing else would bring the rest of its replies
+    ///   back;
     /// - `last_run` describes this run when the manifest is written.
     /// Any other error is thrown on, with the same files kept and the
     /// manifest, its continuation and range included, left as it was.
@@ -246,13 +263,8 @@ struct ConversationArchiver {
         } catch SlackError.rateLimited(let seconds) {
             progress.summary.files = progress.changed.sorted()
             progress.summary.stopRateLimited(retryAfterSeconds: seconds)
-            let continuation = continuation(scope: scope, progress: progress, previous: previous, stopped: true)
-            let range = range(scope: scope, progress: progress, previous: previous, stopped: true)
-            if continuation != previous?.continuation || range != previous?.range {
-                try directory.writeManifest(ArchiveManifest(
-                    teamID: directory.teamID, conversationID: request.conversationID, newestTS: scope.bookmark,
-                    newestReplyTS: previous?.newest_reply_ts ?? [:], continuation: continuation, range: range,
-                    unfinishedThreads: previous?.unfinished_threads ?? [], lastRun: lastRun(progress.summary)))
+            if let manifest = stoppedManifest(scope: scope, progress: progress, previous: previous) {
+                try directory.writeManifest(manifest)
             }
             return progress.summary
         }
@@ -322,7 +334,8 @@ struct ConversationArchiver {
     /// Slack returned (all of them are written now or were before). A
     /// thread longer than one walk leaves `complete` false and is listed as
     /// unfinished; its bookmark is then the newest reply read, so the next
-    /// run continues after it. A thread read to its end leaves the list.
+    /// run continues after it, and it waits in `cutPending` until its
+    /// replies are written. A thread read to its end leaves the list.
     private func replies(of parent: String, progress: inout Progress) async throws -> [SlackMessage] {
         let thread = try await client.conversationReplies(channel: request.conversationID, ts: parent,
                                                           oldest: progress.replyBookmarks[parent],
@@ -343,6 +356,7 @@ struct ConversationArchiver {
             progress.replyBookmarks[parent] = ArchiveScope.newer(progress.replyBookmarks[parent], reply.ts)
             if progress.seen.insert(reply.ts).inserted { replies.append(reply) }
         }
+        if thread.hasMore { progress.cutPending[parent] = progress.replyBookmarks[parent] }
         return replies
     }
 
@@ -368,6 +382,7 @@ struct ConversationArchiver {
             }
             try await write(replies, into: directory, names: &progress.names, summary: &progress.summary,
                             changed: &progress.changed)
+            progress.wrote([])
         }
     }
 
@@ -387,6 +402,30 @@ struct ConversationArchiver {
             range: range(scope: scope, progress: progress, previous: previous, stopped: !progress.reachedBound),
             unfinishedThreads: unfinished.sorted(by: SlackDayFile.precedes),
             lastRun: lastRun(progress.summary))
+    }
+
+    /// The manifest after a run a rate limit stopped, or nil to leave the
+    /// previous one byte-identical when nothing it records moved (see
+    /// `run(in:)`): `newest_ts` stays; the continuation or range records
+    /// where the walk stopped; reply bookmarks and unfinished threads stay
+    /// as they were, plus the threads cut in this run whose replies were
+    /// written, each with the newest reply written. A thread the manifest
+    /// already lists keeps its old bookmark unless it is one of those.
+    private func stoppedManifest(scope: ArchiveScope, progress: Progress,
+                                 previous: ArchiveManifest?) -> ArchiveManifest? {
+        let continuation = continuation(scope: scope, progress: progress, previous: previous, stopped: true)
+        let range = range(scope: scope, progress: progress, previous: previous, stopped: true)
+        let replyTS = previous?.newest_reply_ts ?? [:]
+        let listed = previous?.unfinished_threads ?? []
+        let cut = progress.cutWritten
+        let unfinished = cut.isEmpty ? listed : Set(listed).union(cut.keys).sorted(by: SlackDayFile.precedes)
+        let newReplyTS = replyTS.merging(cut) { $1 }
+        guard continuation != previous?.continuation || range != previous?.range || unfinished != listed
+                || newReplyTS != replyTS else { return nil }
+        return ArchiveManifest(
+            teamID: progress.summary.team_id, conversationID: progress.summary.conversation_id,
+            newestTS: scope.bookmark, newestReplyTS: newReplyTS, continuation: continuation, range: range,
+            unfinishedThreads: unfinished, lastRun: lastRun(progress.summary))
     }
 
     /// `newest_ts` after a run that was not stopped (spec: "Incremental
