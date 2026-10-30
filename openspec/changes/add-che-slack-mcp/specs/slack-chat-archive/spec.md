@@ -49,12 +49,22 @@ The body SHALL be the message text with Slack markup converted to markdown: a us
 
 ### Requirement: Incremental archive and manifest
 
-The tool SHALL keep `<output_dir>/<team_id>/<conversation_id>/manifest.json` holding the newest archived top-level `ts`, the newest archived reply `ts` per thread parent within the lookback window, the time of the last run, and message counts, and no message text, sender name or file name. Without `after_ts` and `since_date`, a run SHALL write only top-level messages newer than the manifest's newest top-level `ts`. When `thread_lookback_days` is greater than 0, the run SHALL also list the top-level messages inside the lookback window, only to read their `latest_reply` for the "Thread replies and lookback" requirement, and SHALL NOT write those listed messages again. Re-archiving a message that is already in a day file SHALL replace its block in place, so that running the tool twice with no new messages leaves every day file byte-identical. When a run stops before its walk reaches its lower bound, because of the per-call page limit or a rate limit, the manifest SHALL record where that walk continues: the newest top-level `ts` the walk started from and the oldest top-level `ts` it wrote. The next run SHALL first continue that walk below the recorded oldest `ts`, passing it to Slack as `latest`, down to the lower bound, and only when the walk reaches the lower bound SHALL the manifest's newest top-level `ts` advance, to the newest `ts` of that walk. A run SHALL NOT advance the newest top-level `ts` past messages it has not read.
+The tool SHALL keep `<output_dir>/<team_id>/<conversation_id>/manifest.json` holding the newest archived top-level `ts`, the newest archived reply `ts` per thread parent within the lookback window, the time of the last run, and message counts, and no message text, sender name or file name. Without `after_ts` and `since_date`, a run SHALL write only top-level messages newer than the manifest's newest top-level `ts`. When `thread_lookback_days` is greater than 0, the run SHALL also list the top-level messages inside the lookback window, only to read their `latest_reply` for the "Thread replies and lookback" requirement, and SHALL NOT write those listed messages again. Re-archiving a message that is already in a day file SHALL replace its block in place, so that running the tool twice with no new messages leaves every day file byte-identical. When a run stops before its walk reaches its lower bound, because of the per-call page limit or a rate limit, the manifest SHALL record where that walk continues: the newest top-level `ts` the walk started from and the oldest top-level `ts` it wrote. The next run SHALL first continue that walk below the recorded oldest `ts`, passing it to Slack as `latest`, down to the lower bound, and only when the walk reaches the lower bound SHALL the manifest's newest top-level `ts` advance, to the newest `ts` of that walk. A run SHALL NOT advance the newest top-level `ts` past messages it has not read. When `after_ts` or `since_date` is given, the run SHALL advance the newest top-level `ts` only when that lower bound is at or before the existing newest top-level `ts`, or when there is none, and only once its walk reaches that lower bound; a range that starts after the bookmark SHALL leave the bookmark unchanged. An explicit range whose walk stops before its lower bound SHALL be recorded together with that lower bound, and a later call with the same `after_ts` or `since_date` SHALL continue below where it stopped.
 
 #### Scenario: Second run with no new messages
 
 - **WHEN** the tool archives `C01` and then runs again with no new messages or replies
 - **THEN** every day file is byte-identical after the second run and the manifest records the second run's time
+
+#### Scenario: Explicit range newer than the bookmark keeps the bookmark
+
+- **WHEN** the manifest's newest top-level `ts` is `1789995600.000100` (2026-09-21 21:00 at +08:00) and a call gives `since_date` `2026-10-25` with `utc_offset` `+08:00`
+- **THEN** messages from 2026-10-25 on are written and the manifest's newest top-level `ts` is still `1789995600.000100`
+
+#### Scenario: Explicit range continues on the next call
+
+- **WHEN** a call with `since_date` `2026-01-01` on a conversation with 15000 top-level messages since then stops at the 50-page limit after writing the newest 10000
+- **THEN** a second call with the same `since_date` requests only history older than the oldest message written and writes the remaining 5000
 
 #### Scenario: Unfinished walk continues on the next call
 
@@ -63,12 +73,17 @@ The tool SHALL keep `<output_dir>/<team_id>/<conversation_id>/manifest.json` hol
 
 ### Requirement: Thread replies and lookback
 
-For each thread parent fetched in the run, and for each thread parent whose `ts` is within the last `thread_lookback_days` days and whose `latest_reply` is newer than the reply `ts` recorded in the manifest, the tool SHALL fetch the replies with `conversations.replies` and archive the ones not yet written. When the manifest records a reply `ts` for that parent, the replies SHALL be requested starting after it, passing it to Slack as `oldest`, so that a thread longer than one call's reply page limit is archived over successive calls. Replies to thread parents older than the lookback window SHALL NOT be fetched.
+For each thread parent fetched in the run, and for each thread parent whose `ts` is within the last `thread_lookback_days` days and whose `latest_reply` is newer than the reply `ts` recorded in the manifest, the tool SHALL fetch the replies with `conversations.replies` and archive the ones not yet written. When the manifest records a reply `ts` for that parent, the replies SHALL be requested starting after it, passing it to Slack as `oldest`, so that a thread longer than one call's reply page limit is archived over successive calls. A thread whose replies were cut short by that limit SHALL keep its reply bookmark in the manifest whatever its parent's age, and later runs SHALL continue it until all its replies are written, also when the parent is older than the lookback window or `thread_lookback_days` is 0; while such a thread remains, a run SHALL report `complete: false`. Otherwise, replies to thread parents older than the lookback window SHALL NOT be fetched.
 
 #### Scenario: Late reply outside the window is not fetched
 
 - **WHEN** `thread_lookback_days` is 30 and a thread whose parent is 45 days old receives a new reply
 - **THEN** the run does not call `conversations.replies` for that parent and the reply is not archived
+
+#### Scenario: Long thread outside the window continues
+
+- **WHEN** on a first archive with `thread_lookback_days` 30 a parent posted 60 days ago has 1300 replies
+- **THEN** the first call archives 1000 of them and reports `complete: false`, and the next call archives the remaining 300 although the parent is outside the window
 
 #### Scenario: Long thread continues on the next call
 

@@ -6,12 +6,17 @@ How che-slack-mcp stores, reads, imports and removes the per-workspace Slack ses
 
 ### Requirement: Keychain credential layout
 
-All items SHALL use the Keychain account `che-slack-mcp`. The service `SLACK_WORKSPACES` SHALL hold a JSON array of objects with the keys `team_id`, `domain`, `name` and `user_id`, and no credential, stored as the standard base64 encoding (RFC 4648, with padding) of its UTF-8 bytes so that the stored value contains only characters the write path accepts. A missing `SLACK_WORKSPACES` item SHALL be read as an empty list; a value that is not valid base64 or does not decode to such an array SHALL be reported as an error naming `SLACK_WORKSPACES`. For each workspace in that array the service `SLACK_TOKEN_<team_id>` SHALL hold its `xoxc` token and the service `SLACK_COOKIE_<team_id>` SHALL hold its `d` cookie value.
+All items SHALL use the Keychain account `che-slack-mcp`. The service `SLACK_WORKSPACES` SHALL hold a JSON array of objects with the keys `team_id`, `domain`, `name` and `user_id`, and no credential, stored as the standard base64 encoding (RFC 4648, with padding) of its UTF-8 bytes so that the stored value contains only characters the write path accepts. A missing `SLACK_WORKSPACES` item SHALL be read as an empty list; a value that is not valid base64 or does not decode to such an array SHALL be reported as an error naming `SLACK_WORKSPACES`. For each workspace in that array the service `SLACK_TOKEN_<team_id>` SHALL hold its `xoxc` token and the service `SLACK_COOKIE_<team_id>` SHALL hold its `d` cookie value. Before an import writes any token or cookie, it SHALL check that the merged `SLACK_WORKSPACES` value can be written in a single write as defined by "Keychain write keeps values off argv"; when it cannot, the import SHALL write nothing and stop with an error that gives the number of workspaces, says the index would not fit, and suggests removing workspaces with `slack-all auth remove`.
 
 #### Scenario: Index lists workspaces without credentials
 
 - **WHEN** workspaces `T01` (domain `alpha`) and `T02` (domain `beta`) have been imported
 - **THEN** the `SLACK_WORKSPACES` item base64-decodes to a JSON array of two objects with those team ids and domains, and the items `SLACK_TOKEN_T01`, `SLACK_COOKIE_T01`, `SLACK_TOKEN_T02` and `SLACK_COOKIE_T02` exist
+
+#### Scenario: Index that would not fit is refused before any write
+
+- **WHEN** an import would merge 40 workspaces into an index longer than one write accepts
+- **THEN** no `SLACK_TOKEN_*`, `SLACK_COOKIE_*` or `SLACK_WORKSPACES` item is created or changed, and the error names 40 and `slack-all auth remove`
 
 ### Requirement: Credential lookup is bounded
 
