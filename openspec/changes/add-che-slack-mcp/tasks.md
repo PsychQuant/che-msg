@@ -30,3 +30,10 @@
 
 - [x] 6.1 [after: 4.3, 5.3, 3.4] 依「獨立的 che-slack-mcp plugin」新增 `plugins/che-slack-mcp/`：wrapper 以 `DESIRED_VERSION` pin 本 repo 下一個 release 並下載 binary、不 export 任何憑證；README 寫安裝指令（`marketplace add …/che-msg` 與 `install che-slack-mcp@che-msg`）、匯入步驟、Enterprise Grid 與條款風險，免確認表依「send_message 不列入免確認清單」排除 `send_message` 與 `archive_conversation_to_markdown` 並寫明 auto 模式的行為與 ask 規則；在 `.claude-plugin/marketplace.json` 加條目；新增 `tests/che-slack-mcp/` 的結構與 wrapper 測試；更新根 `README.md` 的伺服器表與待辦清單、`CLAUDE.md` 的結構表與開發指令；建立 `openspec/LANGUAGE.md` 記下 workspace、conversation、session token。驗證：`bash tests/che-slack-mcp/*.sh`、`claude plugin validate plugins/che-slack-mcp`、`claude plugin validate .` 全部通過，既有的 `tests/che-telegram-mcp/*.sh` 與 `tests/che-archive-lines/*.sh` 仍通過，wrapper 測試斷言環境中沒有 Slack 憑證。
 - [x] 6.2 [after: 6.1] 端對端驗收：以本機 build 的 binary，在使用者自己的 workspace 依序執行桌面版匯入（`--from-desktop`；使用者只用 Slack 桌面版、瀏覽器沒有登入 Slack，剪貼簿匯入無法真機驗證，其流程由 `SlackAllCoreTests` 的單元測試涵蓋，說明與錯誤訊息的改善追蹤於 #103）、`list_workspaces`、`get_conversation_history`、`search_messages`、對自己的 DM 執行 `send_message` 一次、`archive_conversation_to_markdown` 兩次（第二次檔案不變）。驗證：`cd che-slack-mcp && swift test --skip E2ETests` 全部通過；手動結果（不含訊息內容與憑證）以 comment 記在 #99。
+
+## 7. Review 修正
+
+- [ ] 7.1 [after: 5.3] 依 Incremental archive and manifest 與 Archive concurrency and partial progress 的修訂，在 `manifest.json` 記下未走完那一段的起點與已寫到的最舊 `ts`；下一次呼叫先以該 `ts` 為 `latest` 接著往舊的方向抓，走到下界才把書籤推進到那一段的頂端；被頁數上限或限流中斷時都記錄接續點。驗證：spec 情境「Unfinished walk continues on the next call」（12000 則、第一次停在 50 頁、第二次只抓更舊的並補齊 2000 則後才設書籤）與修訂後的「限流中途停止」（manifest 記下 `1793498700.000100`）的測試，以及既有歸檔測試全數通過。
+- [ ] 7.2 [after: 7.1] 依 Thread replies and lookback 的修訂，`conversations.replies` 以 manifest 記錄的回覆 `ts` 為 `oldest`，長 thread 分次補齊。驗證：spec 情境「Long thread continues on the next call」（1300 則回覆，第一次 1000 則、第二次只抓之後的 300 則）的測試。
+- [ ] 7.3 合併桌面版匯入讀 `Slack Safe Storage` 時複製的子程序逾時處理（`SlackAllCore` 的 `BoundedChild`）與 `SlackWebLib` 的 `runBounded`／`OutputCollector`，改用 `package` 存取層級共用一份，`formatSeconds` 一併共用；行為不變。驗證：`swift test` 全數通過，`SafeStorageReaderTests` 的期望值不變。
+

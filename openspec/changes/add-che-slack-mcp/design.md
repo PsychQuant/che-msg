@@ -135,6 +135,8 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 - 回覆寫在它自己日期的檔案裡，標頭寫成 `**<HH:mm> <sender>** ↳ thread:<parent_ts>：`，主訊息的區塊不變。
 - 每次歸檔時，對 `ts` 落在最近 `thread_lookback_days` 天內（預設 30，範圍 0 到 365）、且 `latest_reply` 比 manifest 紀錄更新的主訊息，重新抓回覆。
 
+抓回覆時，若 manifest 已記錄該 thread 的回覆 `ts`，就以它為 `oldest` 從那之後接著抓，超過單次頁數上限的長 thread 會在後續呼叫補齊（review 發現原本每次都從第一則重讀）。
+
 30 天是選定的預設值，**沒有量測依據**。更早的 thread 若有遲到的回覆，不會被補抓，這是第一版刻意接受的漏洞；使用者可以用更大的 `thread_lookback_days` 重跑一次補齊。
 
 ### 第一版不下載檔案
@@ -161,12 +163,12 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 - 歸檔檔案格式與 manifest 見 `slack-chat-archive` spec。
 - 錯誤：MCP 工具一律回傳 `isError: true` 的工具結果，訊息依五類錯誤的文字；CLI 以非零 exit code 結束。
 - 參數上限與來源：`send_message` 的 `text` 上限 40000 字元，取自 Slack 文件「Slack will truncate messages containing more than 40,000 characters」，超過時改為報錯而不讓 Slack 截斷；`search_messages` 的 `count` 預設 20、上限 100，與 Slack 文件相同；`get_conversation_history` 的 `limit` 上限 200 取自 Slack 文件「We recommend no more than 200 results at a time」，預設 50 是自選值；Keychain 讀取逾時 10 秒是自選值，沒有量測依據。
-- 頁數上限（自選值，沒有量測依據）：`list_conversations` 每頁 200、最多 10 頁；thread 回覆每頁 200、最多 5 頁；歸檔的主訊息每頁 200、最多 50 頁，碰到上限時回 `complete: false` 且不推進書籤；`list_conversations` 解析 DM 名稱每次呼叫最多查 50 位使用者。
+- 頁數上限（自選值，沒有量測依據）：`list_conversations` 每頁 200、最多 10 頁；thread 回覆每頁 200、最多 5 頁；歸檔的主訊息每頁 200、最多 50 頁，碰到上限時回 `complete: false`、不推進書籤，並在 manifest 記下接續點，下一次從那裡往舊的方向接著抓；`list_conversations` 解析 DM 名稱每次呼叫最多查 50 位使用者。
 
 **失敗模式**
 
 - session 失效、Enterprise Grid 限制：明確告知，不自動重試。
-- 被限流：自動等待重試，超過上限才回報；歸檔保留已抓到的部分，但書籤不推進。Slack 從新到舊列訊息，中斷時已寫入的是最新的一段，若把書籤設成它，較舊、還沒抓到的訊息會被永久跳過（apply 時發現，使用者 2026-10-29 選定此解法，與 Telegram 的 `bookmark_safe` 一致）。重跑時重抓未完成的範圍，已寫入的區塊以 `ts` 就地合併。
+- 被限流：自動等待重試，超過上限才回報；歸檔保留已抓到的部分，但書籤不推進。Slack 從新到舊列訊息，中斷時已寫入的是最新的一段，若把書籤設成它，較舊、還沒抓到的訊息會被永久跳過（apply 時發現，使用者 2026-10-29 選定此解法，與 Telegram 的 `bookmark_safe` 一致）。manifest 記下這一段的起點與已寫到的最舊 `ts`，下一次從那裡接著往舊的方向抓，走到下界才推進書籤（review 發現「重跑重抓」在範圍超過每次 50 頁的上限時永遠停在同一處，使用者 2026-10-30 改選記下接續點）。
 - 任何錯誤訊息、日誌、工具結果都不含 token 或 cookie 的值。
 
 **驗收**
