@@ -250,7 +250,7 @@ public struct SlackDesktopImport: Sendable {
     private func decrypt(_ cookie: EncryptedCookie) async throws -> String {
         terminal.say("macOS will now ask whether security may use the Keychain item \"Slack Safe Storage\" "
             + "(type your login password if asked). Click Allow, not Always Allow: Always Allow would let any program "
-            + "read Slack's cookie key through security from then on. Waiting up to \(Self.seconds(safeStorage.timeout)) s.")
+            + "read Slack's cookie key through security from then on. Waiting up to \(formatSeconds(safeStorage.timeout)) s.")
         let password: String
         switch await safeStorage.readPassword() {
         case .found(let value):
@@ -260,7 +260,7 @@ public struct SlackDesktopImport: Sendable {
                 + "the Slack desktop app creates it when it first signs in.")
         case .timedOut(let seconds):
             throw SlackDesktopImportError(.readSafeStorage, "Reading \"Slack Safe Storage\" did not finish within "
-                + "\(Self.seconds(seconds)) s, so the macOS prompt was probably not answered.")
+                + "\(formatSeconds(seconds)) s, so the macOS prompt was probably not answered.")
         case .unavailable(let reason):
             throw SlackDesktopImportError(.readSafeStorage, "Reading \"Slack Safe Storage\" failed: \(reason). "
                 + "If you clicked Deny, run the command again and click Allow.")
@@ -277,9 +277,5 @@ public struct SlackDesktopImport: Sendable {
     private static func sentence(_ reason: String) -> String {
         guard let first = reason.first else { return reason }
         return first.uppercased() + reason.dropFirst() + (reason.hasSuffix(".") ? "" : ".")
-    }
-
-    private static func seconds(_ value: TimeInterval) -> String {
-        value == value.rounded() ? String(Int(value)) : String(value)
     }
 }

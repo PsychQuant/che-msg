@@ -83,6 +83,22 @@ final class SafeStorageReaderTests {
         #expect(Date().timeIntervalSince(start) < 10)
     }
 
+    @Test("a cancelled read stops waiting for output once the child has exited, like the Keychain reader")
+    func cancelledStopsWaiting() async throws {
+        // The child exits at once, but a background sleep inherits its stdout
+        // and holds the pipe open for 5 s, so EOF does not come: an
+        // uncancelled read waits the full 1 s output grace for it.
+        let fake = try script("printf 'pw\\n'\nsleep 5 &")
+        let reader = SecuritySafeStorageReader(executable: fake, timeout: 10)
+
+        let task = Task { await reader.readPassword() }
+        task.cancel()
+        let start = Date()
+        _ = await task.value
+
+        #expect(Date().timeIntervalSince(start) < 1)
+    }
+
     @Test("an executable that cannot be started is unavailable")
     func cannotStart() async {
         let missing = folder.appendingPathComponent("no-such-tool")
