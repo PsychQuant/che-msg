@@ -53,3 +53,7 @@
 - [x] 10.1 依 Session token request authentication 的修訂：正式的 transport 改用 ephemeral `URLSessionConfiguration`（`httpCookieStorage` 為 nil、`httpShouldSetCookies` 為 false、`httpCookieAcceptPolicy` 為 `.never`、`urlCache` 為 nil），`SlackWebClient` 組出的請求設 `httpShouldHandleCookies = false`。驗證：spec 情境「Cookies Slack sets are neither stored nor sent」的測試：session 設定沒有 cookie 存放區、不收 cookie、沒有快取，請求本身不處理 cookie（`URLProtocol` stub 回的 `Set-Cookie` 連有存放區的 session 都不會存，離線測不出實際行為，所以只驗設定與請求）。
 - [x] 10.2 `che-slack-mcp/Package.swift` 宣告 `swift-tools-version: 6.0` 並以 `swiftLanguageModes: [.v5]` 維持現有語言模式，讓 Swift 6 以前的工具鏈直接回報需要 6.0，而不是在 typed throws 報語法錯誤。驗證：`swift build`、`swift build -c release`、完整測試通過。
 
+## 11. 第五次 review 修正
+
+- [x] 11.1 依 Clipboard import 的修訂：`ImportVerifier.verifyAndStore` 不再接收開頭讀到的索引，改在容量預檢前、以及寫入索引的前一刻重新讀 `SLACK_WORKSPACES`，把這次匯入的併進最新的那份。驗證：spec 情境「Index changed while the import waits」的測試（等待 cookie 時另一個程序移除 `gamma`、加入 `epsilon`），剪貼簿與桌面版兩個入口都涵蓋；既有匯入測試全數通過。
+

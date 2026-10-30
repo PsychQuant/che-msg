@@ -182,6 +182,29 @@ final class DesktopImportTests {
         expectNoSecrets(error)
     }
 
+    /// "Index changed while the import waits", at the Safe Storage prompt.
+    @Test("an index change made by another process while Slack Safe Storage is read is kept")
+    func indexChangedWhileWaiting() async throws {
+        try makeSlackFolder(at: containerFolder)
+        let gamma = SlackWorkspace(teamID: "T03", domain: "gamma", name: "Gamma", userID: "U03")
+        let delta = SlackWorkspace(teamID: "T04", domain: "delta", name: "Delta", userID: "U04")
+        let epsilon = SlackWorkspace(teamID: "T05", domain: "epsilon", name: "Epsilon", userID: "U05")
+        try await store.saveWorkspaces([gamma, delta])
+        let changed = try await indexValue([delta, epsilon])
+        let keychain = self.keychain
+        let safeStorage = FakeSafeStorage(.found(CookieFixture.password), terminal: terminal, scratch: scratch) {
+            keychain.writeFromAnotherProcess(service: "SLACK_WORKSPACES", value: changed)
+        }
+        let transport = TokenTransport([Self.alphaToken: Fake.authTestOK(team: "T01", user: "U01"),
+                                        Self.betaToken: Fake.invalidAuth])
+
+        let (_, error) = await run(safeStorage, transport)
+
+        #expect(error == nil)
+        #expect(try await store.workspaces() == [delta, epsilon, Fake.alpha])
+        expectNoSecrets(error)
+    }
+
     @Test("before Slack Safe Storage is read, the user is told to click Allow and not Always Allow")
     func promptsBeforeKeychain() async throws {
         try makeSlackFolder(at: containerFolder)
@@ -376,16 +399,21 @@ final class FakeSafeStorage: SlackSafeStorageReader, @unchecked Sendable {
     private let lookup: KeychainLookup
     private let terminal: RecordingTerminal
     private let scratch: URL?
+    private let onRead: (@Sendable () -> Void)?
     private var count = 0
     private var linesAtRead: [String]?
     private var scratchListing: [String]?
 
     let timeout: TimeInterval = 180
 
-    init(_ lookup: KeychainLookup, terminal: RecordingTerminal, scratch: URL? = nil) {
+    /// `onRead` runs while the password is read, for a test that changes
+    /// something while the import waits at the Keychain prompt.
+    init(_ lookup: KeychainLookup, terminal: RecordingTerminal, scratch: URL? = nil,
+         onRead: (@Sendable () -> Void)? = nil) {
         self.lookup = lookup
         self.terminal = terminal
         self.scratch = scratch
+        self.onRead = onRead
     }
 
     var reads: Int { lock.withLock { count } }
@@ -395,6 +423,7 @@ final class FakeSafeStorage: SlackSafeStorageReader, @unchecked Sendable {
     func readPassword() async -> KeychainLookup {
         let lines = terminal.lines
         let listing = scratch.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0.path) }
+        onRead?()
         return lock.withLock {
             count += 1
             linesAtRead = lines

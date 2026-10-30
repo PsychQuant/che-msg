@@ -43,12 +43,17 @@ Writing an item SHALL start `/usr/bin/security -i` and send the line `add-generi
 
 ### Requirement: Clipboard import
 
-`slack-all auth import` SHALL print a one-line browser console command that copies, as JSON, the `id`, `domain`, `name`, `token` and `user_id` of every workspace in `localStorage.localConfig_v2` of `app.slack.com`, wait for the user to press Enter, and read the clipboard. It SHALL then ask the user to copy the `d` cookie value, wait for Enter, and read the clipboard again. For each workspace it SHALL call `auth.test` with that token and cookie, store only the workspaces whose call succeeds, update `SLACK_WORKSPACES`, and print one line per workspace with its name and the result. It SHALL clear the clipboard after the second read. It SHALL NOT print any token or cookie value. When the first clipboard read is not a JSON array of workspace objects, it SHALL stop with an error before asking for the cookie.
+`slack-all auth import` SHALL print a one-line browser console command that copies, as JSON, the `id`, `domain`, `name`, `token` and `user_id` of every workspace in `localStorage.localConfig_v2` of `app.slack.com`, wait for the user to press Enter, and read the clipboard. It SHALL then ask the user to copy the `d` cookie value, wait for Enter, and read the clipboard again. For each workspace it SHALL call `auth.test` with that token and cookie, store only the workspaces whose call succeeds, update `SLACK_WORKSPACES`, and print one line per workspace with its name and the result. The update SHALL merge the stored workspaces into `SLACK_WORKSPACES` as read immediately before it is written, not as read when the import started, so that a workspace another import added, or `slack-all auth remove` removed, while this import waited is kept, or stays removed. It SHALL clear the clipboard after the second read. It SHALL NOT print any token or cookie value. When the first clipboard read is not a JSON array of workspace objects, it SHALL stop with an error before asking for the cookie.
 
 #### Scenario: One of two workspaces fails verification
 
 - **WHEN** the clipboard holds workspaces `alpha` and `beta`, the cookie is valid for `alpha`, and `auth.test` for `beta` returns `invalid_auth`
 - **THEN** only `alpha` is stored, the output reports `alpha` as imported and `beta` as rejected with `invalid_auth`, and no line contains a token or cookie value
+
+#### Scenario: Index changed while the import waits
+
+- **WHEN** `SLACK_WORKSPACES` lists `gamma` and `delta` when the import starts, and while it waits for the cookie another process removes `gamma` and adds `epsilon`
+- **THEN** after `alpha` is imported the index lists `delta`, `epsilon` and `alpha`, and not `gamma`
 
 ### Requirement: Desktop import
 

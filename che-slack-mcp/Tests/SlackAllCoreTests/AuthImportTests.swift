@@ -16,8 +16,9 @@ struct AuthImportTests {
     var store: SlackCredentialStore { SlackCredentialStore(reader: keychain, writer: keychain) }
 
     /// Runs the import with the user copying `copies` in turn, one per Enter.
-    func runImport(copies: [String?], transport: TokenTransport) async -> (results: [SlackImportResult]?, terminal: ScriptedTerminal, error: (any Error)?) {
-        let terminal = ScriptedTerminal(clipboard: clipboard, copies: copies)
+    func runImport(copies: [String?], transport: TokenTransport,
+                   onEnter: (@Sendable (Int) -> Void)? = nil) async -> (results: [SlackImportResult]?, terminal: ScriptedTerminal, error: (any Error)?) {
+        let terminal = ScriptedTerminal(clipboard: clipboard, copies: copies, onEnter: onEnter)
         let command = SlackAuthImport(store: store, client: fakeClient(transport), clipboard: clipboard, terminal: terminal)
         do {
             return (try await command.run(), terminal, nil)
@@ -178,6 +179,26 @@ struct AuthImportTests {
 
         #expect(error == nil)
         #expect(try await store.workspaces() == [Fake.alpha, gamma])
+        expectNoSecrets(terminal.lines, error)
+    }
+
+    /// "Index changed while the import waits".
+    @Test("an index change made by another process while the import waits for the cookie is kept")
+    func indexChangedWhileWaiting() async throws {
+        let gamma = SlackWorkspace(teamID: "T03", domain: "gamma", name: "Gamma", userID: "U03")
+        let delta = SlackWorkspace(teamID: "T04", domain: "delta", name: "Delta", userID: "U04")
+        let epsilon = SlackWorkspace(teamID: "T05", domain: "epsilon", name: "Epsilon", userID: "U05")
+        try await store.saveWorkspaces([gamma, delta])
+        let changed = try await indexValue([delta, epsilon])
+        let transport = TokenTransport([Fake.alphaToken: Fake.authTestOK(team: "T01", user: "U01")])
+
+        let keychain = self.keychain
+        let (_, terminal, error) = await runImport(copies: [Fake.clipboardList, Fake.cookie], transport: transport) { enter in
+            if enter == 2 { keychain.writeFromAnotherProcess(service: "SLACK_WORKSPACES", value: changed) }
+        }
+
+        #expect(error == nil)
+        #expect(try await store.workspaces() == [delta, epsilon, Fake.alpha])
         expectNoSecrets(terminal.lines, error)
     }
 

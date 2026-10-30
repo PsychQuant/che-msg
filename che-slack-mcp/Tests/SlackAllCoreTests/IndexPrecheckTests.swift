@@ -166,7 +166,7 @@ struct IndexPrecheckTests {
         let candidates = try ClipboardImport.candidates(from: ManyWorkspaces.clipboardList(1...40))
 
         let error = await #expect(throws: SlackAuthCommandError.self) {
-            _ = try await verifier.verifyAndStore(candidates, cookie: Fake.cookie, existing: [],
+            _ = try await verifier.verifyAndStore(candidates, cookie: Fake.cookie,
                                                   redact: Redaction(secrets: candidates.map(\.token) + [Fake.cookie]))
         }
 

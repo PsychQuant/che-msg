@@ -70,7 +70,7 @@ Keychain 的 account 一律是 `che-slack-mcp`，service 分三種：
 
 讀取沿用 `SecurityCLICredentialSource` 的作法：呼叫 `/usr/bin/security find-generic-password -g`、stdin 接 null device、有逾時、值不快取，描述字串以 `<redacted>` 取代值。
 
-索引寫成一行 `security -i` 指令，一行最多 4094 bytes，依 workspace 名稱長度大約可放 25 到 37 個（review 估算，未實測）。匯入在寫入任何憑證之前先檢查合併後的索引放不放得下，放不下就什麼都不寫並說明上限（第二次 review 發現原本會先寫入所有憑證、最後才在索引失敗）。
+匯入在最後寫索引的前一刻重新讀一次 `SLACK_WORKSPACES`，把這次匯入的併進去，而不是用開頭讀到的那份（第五次 review 發現兩個終端機同時匯入，或匯入等待時跑了 `auth remove`，會互相蓋掉：留下選不到也刪不掉的憑證，或讓刪掉的 workspace 復活）。重讀到寫入之間仍有極短的空檔，不另加鎖。索引寫成一行 `security -i` 指令，一行最多 4094 bytes，依 workspace 名稱長度大約可放 25 到 37 個（review 估算，未實測）。匯入在寫入任何憑證之前先檢查合併後的索引放不放得下，放不下就什麼都不寫並說明上限（第二次 review 發現原本會先寫入所有憑證、最後才在索引失敗）。
 
 替代方案：Telegram 的 `KeychainCredential` 是寫死兩個 case 的 enum，Slack 的 workspace 數量不固定，因此改成「索引＋依 team id 組 service 名稱」。
 

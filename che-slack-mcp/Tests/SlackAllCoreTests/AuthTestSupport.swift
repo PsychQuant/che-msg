@@ -59,16 +59,20 @@ final class FakeClipboard: SlackClipboard, @unchecked Sendable {
 
 /// A terminal whose user, at each Enter, has just copied the next entry of
 /// `copies` to the clipboard. Once the entries run out, input has ended.
+/// `onEnter` runs at each Enter with its number (1 for the first), for a
+/// test that changes something while the import waits.
 final class ScriptedTerminal: SlackAuthTerminal, @unchecked Sendable {
     private let lock = NSLock()
     private let clipboard: FakeClipboard
+    private let onEnter: (@Sendable (Int) -> Void)?
     private var copies: [String?]
     private var said: [String] = []
     private var enterCount = 0
 
-    init(clipboard: FakeClipboard, copies: [String?] = []) {
+    init(clipboard: FakeClipboard, copies: [String?] = [], onEnter: (@Sendable (Int) -> Void)? = nil) {
         self.clipboard = clipboard
         self.copies = copies
+        self.onEnter = onEnter
     }
 
     var lines: [String] { lock.withLock { said } }
@@ -84,6 +88,7 @@ final class ScriptedTerminal: SlackAuthTerminal, @unchecked Sendable {
         }
         guard case .some(let copied) = next else { return false }
         clipboard.copy(copied)
+        onEnter?(enters)
         return true
     }
 }
@@ -111,6 +116,12 @@ final class MemoryKeychain: KeychainItemReader, KeychainItemWriter, @unchecked S
     var writes: [String] { lock.withLock { writeLog } }
     /// Services deleted, in order.
     var deletes: [String] { lock.withLock { deleteLog } }
+
+    /// Another process (a second `slack-all`) changing an item: not logged
+    /// in `writes`, which records this process's writes only.
+    func writeFromAnotherProcess(service: String, value: String?) {
+        lock.withLock { items[service] = value }
+    }
 
     func failWrites(to service: String, with error: SlackKeychainWriteError) {
         lock.withLock { writeFailures[service] = error }

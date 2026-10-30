@@ -112,7 +112,7 @@ public struct SlackAuthImport: Sendable {
         let cookie = try ClipboardImport.cookie(from: second)
         redact = Redaction(secrets: redact.secrets + [cookie])
 
-        return try await verifier.verifyAndStore(candidates, cookie: cookie, existing: existing, redact: redact)
+        return try await verifier.verifyAndStore(candidates, cookie: cookie, redact: redact)
     }
 
     /// 0 when at least one workspace was imported, else 1.
@@ -149,17 +149,24 @@ struct ImportVerifier: Sendable {
     let client: SlackWebClient
     let terminal: any SlackAuthTerminal
 
-    /// Checks the index first (`checkIndexFits`), then verifies and stores
-    /// each of `candidates` with `cookie`, in order, printing each line
-    /// through `redact`, then merges the imported ones into `existing` and
-    /// writes the index (only when one was imported).
+    /// Checks the index first (`checkIndexFits`, on the index read again
+    /// now), then verifies and stores each of `candidates` with `cookie`, in
+    /// order, printing each line through `redact`, then merges the imported
+    /// ones into the index as read once more just before it is written, and
+    /// writes it (only when one was imported). Not the index read when the
+    /// import started (spec: "Clipboard import"): the import may have waited
+    /// for Enter or for the `Slack Safe Storage` prompt meanwhile, and a
+    /// workspace another `slack-all` imported or removed then is kept, or
+    /// stays removed. The moment between that last read and the write is
+    /// not locked.
     ///
-    /// - Throws: `SlackAuthCommandError` when the index would not fit, before
-    ///   anything is verified or written, or when it cannot be written after
-    ///   an import; `CancellationError`.
-    func verifyAndStore(_ candidates: [ImportCandidate], cookie: String, existing: [SlackWorkspace],
+    /// - Throws: `SlackCredentialError` when the index cannot be read before
+    ///   anything is written; `SlackAuthCommandError` when the index would
+    ///   not fit, before anything is verified or written, or when it cannot
+    ///   be read again or written after an import; `CancellationError`.
+    func verifyAndStore(_ candidates: [ImportCandidate], cookie: String,
                         redact: Redaction) async throws -> [SlackImportResult] {
-        try checkIndexFits(candidates, existing: existing)
+        try checkIndexFits(candidates, existing: try await store.workspaces())
         var results: [SlackImportResult] = []
         for candidate in candidates {
             let result = try await verifyAndSave(candidate, cookie: cookie)
@@ -170,7 +177,7 @@ struct ImportVerifier: Sendable {
         let imported = results.filter { $0.outcome == .imported }.map(\.workspace)
         guard !imported.isEmpty else { return results }
         do {
-            try await store.saveWorkspaces(Self.merge(existing, imported))
+            try await store.saveWorkspaces(Self.merge(try await store.workspaces(), imported))
         } catch {
             let labels = imported.map(SlackAuthText.label).joined(separator: ", ")
             throw SlackAuthCommandError(redact("\(error) The credentials of \(labels) were written, but SLACK_WORKSPACES "

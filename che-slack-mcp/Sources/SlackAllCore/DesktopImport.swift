@@ -149,7 +149,7 @@ public struct SlackDesktopImport: Sendable {
         let cookie = try await decrypt(read.cookie)
         redact = Redaction(secrets: redact.secrets + [cookie])
 
-        return try await verifier.verifyAndStore(read.candidates, cookie: cookie, existing: existing, redact: redact)
+        return try await verifier.verifyAndStore(read.candidates, cookie: cookie, redact: redact)
     }
 
     // MARK: - Reading the copies
