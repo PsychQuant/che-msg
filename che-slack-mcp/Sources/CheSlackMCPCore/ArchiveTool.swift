@@ -14,8 +14,10 @@ extension SlackToolHandler {
     /// `archivePageSize`), so one call has a bounded cost; about 18 s of
     /// history requests at the default 350 ms pacing, plus one replies
     /// request per thread parent. Our own choice, without a measurement
-    /// behind it; `complete` is false when it stopped the walk, and the
-    /// manifest records where the next call continues.
+    /// behind it; `complete` is false when it stopped the walk above its
+    /// lower bound, and the manifest records where the next call continues;
+    /// when it stopped only the listing of the lookback window,
+    /// `lookback_complete` is false instead.
     static let archiveHistoryMaxPages = 50
 
     static let archiveTools: [Tool] = [
@@ -41,7 +43,11 @@ extension SlackToolHandler {
              move it aside to start over. At most \(archiveHistoryMaxPages) pages of \(archivePageSize) top-level \
              messages, and \(SlackWebClient.repliesMaxPages) pages of \(SlackWebClient.repliesPageSize) replies per \
              thread, are read per call; complete is false when messages were left out, so call again until it is \
-             true. A walk stopped before the manifest's newest ts (or the oldest message, on a first archive) is \
+             true. Listing the lookback window counts in the same page limit but does not by itself make complete \
+             false: every result has lookback_complete, false when the call did not list down to the start of the \
+             window, and when complete is true a note then says that the thread parents in the rest of the window \
+             were not checked for new replies and that a smaller thread_lookback_days lists fewer messages. A \
+             walk stopped before the manifest's newest ts (or the oldest message, on a first archive) is \
              recorded in the manifest as a continuation: the next call without after_ts or since_date first \
              continues it below the oldest message it wrote, and the newest ts moves, to the top of that walk, \
              only once it gets there; messages newer than that are read by the call after. A thread cut the same \
@@ -142,11 +148,21 @@ struct ConversationArchiver {
         var new_messages = 0
         /// Messages not written because their ts is not a Slack timestamp.
         var skipped_messages = 0
-        /// False when the page limit or a rate limit stopped the history
-        /// walk, a thread had more replies than one walk reads (and so is
-        /// still unfinished), or the call finished an unfinished walk or
-        /// range and so did not look for messages newer than it.
+        /// False when the page limit stopped the history walk above its
+        /// lower bound, a rate limit stopped the call, a thread had more
+        /// replies than one walk reads (and so is still unfinished), or the
+        /// call finished an unfinished walk or range and so did not look for
+        /// messages newer than it. A walk that wrote
+        /// every message above its bound and was then stopped by the page
+        /// limit while listing the lookback window leaves it true (spec:
+        /// "Incremental archive and manifest"); `lookback_complete` tells.
         var complete = true
+        /// True when the walk listed everything down to the start of the
+        /// lookback window, or down to its lower bound when the window
+        /// starts later or is 0 days; false when the page limit stopped it
+        /// first, above its bound or inside the window, or a rate limit
+        /// stopped it.
+        var lookback_complete = false
         /// Why the run stopped early; absent when it did not.
         enum StopReason: String, Encodable {
             /// Slack kept rate limiting after the client's retries.
@@ -157,7 +173,10 @@ struct ConversationArchiver {
         /// With `stopped_reason`: the wait Slack last asked for.
         var retry_after_seconds: Int?
         /// With `stopped_reason`: how many messages were written and how
-        /// to resume.
+        /// to resume. On a complete run whose `lookback_complete` is false:
+        /// that the thread parents in the rest of the window were not
+        /// checked, and that a smaller `thread_lookback_days` lists fewer
+        /// messages. Absent otherwise.
         var note: String?
 
         mutating func stopRateLimited(retryAfterSeconds seconds: Int) {
@@ -170,6 +189,15 @@ struct ConversationArchiver {
                 + "not move: calling the tool again, after retry_after_seconds, continues where the manifest records "
                 + "this walk stopped, or reads the same range again when nothing was recorded, and merges the blocks "
                 + "already written in place."
+        }
+
+        /// The note of a complete run whose walk the page limit stopped
+        /// inside the lookback window; nothing for any other run.
+        mutating func noteUnlistedWindow() {
+            guard complete, !lookback_complete else { return }
+            note = "All new messages were written, but the page limit stopped this call before it had listed the "
+                + "whole lookback window, so the thread parents in the rest of the window were not checked for new "
+                + "replies. A smaller thread_lookback_days lists fewer messages."
         }
     }
 
@@ -271,6 +299,7 @@ struct ConversationArchiver {
         // A finished continuation looked for nothing newer than its top.
         if scope.continuation != nil, progress.reachedBound { progress.summary.complete = false }
         if !progress.unfinished.isEmpty { progress.summary.complete = false }
+        progress.summary.noteUnlistedWindow()
         progress.summary.files = progress.changed.sorted()
         try directory.writeManifest(manifest(scope: scope, progress: progress, previous: previous))
         return progress.summary
@@ -283,7 +312,10 @@ struct ConversationArchiver {
     /// looked up, `users.info` being limited apart), then the rate limit is
     /// thrown on. A page whose name lookup is rate limited is not written:
     /// a message is written only with its sender's name. A continued walk
-    /// lists only below the continuation's `below_ts`.
+    /// lists only below the continuation's `below_ts`. The page limit makes
+    /// the call incomplete only when it stops the walk above its bound;
+    /// stopping it inside the lookback window leaves `lookback_complete`
+    /// false and nothing else.
     private func walk(_ scope: ArchiveScope, into directory: ArchiveDirectory,
                       progress: inout Progress) async throws {
         var cursor: String?
@@ -324,7 +356,12 @@ struct ConversationArchiver {
             if let stop { throw stop }
             cursor = page.nextCursor
         } while cursor != nil && pages < maxPages
-        if cursor == nil { progress.reachedBound = true } else { progress.summary.complete = false }
+        if cursor == nil {
+            progress.reachedBound = true
+            progress.summary.lookback_complete = true
+        } else if !progress.reachedBound {
+            progress.summary.complete = false
+        }
     }
 
     /// The replies of the thread `parent` not yet seen in this run, oldest

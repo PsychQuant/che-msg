@@ -71,9 +71,9 @@ struct ArchivePartialProgressTests {
         let result = await ArchiveToolTests.archive(try await Self.handler(slack), into: output, Self.lookback0)
 
         expectJSON(result, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
-                   + #""new_messages":1,"note":"\#(Self.note("1 message"))","retry_after_seconds":30,"#
-                   + #""skipped_messages":0,"stopped_reason":"rate_limited","team_id":"T01","thread_replies":0,"#
-                   + #""top_level_messages":1,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":false,"new_messages":1,"note":"\#(Self.note("1 message"))","#
+                   + #""retry_after_seconds":30,"skipped_messages":0,"stopped_reason":"rate_limited","team_id":"T01","#
+                   + #""thread_replies":0,"top_level_messages":1,"utc_offset":"+08:00"}"#)
         #expect(try output.read("T01/C01/2026-11-01.md").contains("<!-- msg:\(Self.newestTS) -->\n**10:05 Alex**："))
         #expect(try output.read("T01/C01/2026-10-31.md") == older)
         #expect(try ArchiveManifestTests.manifest(output) == ArchiveManifestTests.expected("""
@@ -116,8 +116,8 @@ struct ArchivePartialProgressTests {
         let result = await ArchiveToolTests.archive(try await Self.handler(resumed), into: output, Self.lookback0)
 
         expectJSON(result, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
-                   + #""new_messages":1,"skipped_messages":0,"team_id":"T01","thread_replies":0,"#
-                   + #""top_level_messages":1,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":true,"new_messages":1,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":0,"top_level_messages":1,"utc_offset":"+08:00"}"#)
         #expect(resumed.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": Self.bookmarkTS,
                                                     "latest": Self.newestTS])
         let file = try output.read("T01/C01/2026-11-01.md")
@@ -149,9 +149,9 @@ struct ArchivePartialProgressTests {
         let result = await ArchiveToolTests.archive(try await Self.handler(slack), into: output)
 
         expectJSON(result, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
-                   + #""new_messages":2,"note":"\#(Self.note("2 messages"))","retry_after_seconds":30,"#
-                   + #""skipped_messages":0,"stopped_reason":"rate_limited","team_id":"T01","thread_replies":0,"#
-                   + #""top_level_messages":2,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":false,"new_messages":2,"note":"\#(Self.note("2 messages"))","#
+                   + #""retry_after_seconds":30,"skipped_messages":0,"stopped_reason":"rate_limited","team_id":"T01","#
+                   + #""thread_replies":0,"top_level_messages":2,"utc_offset":"+08:00"}"#)
         #expect(slack.methods == ["conversations.history"] + Array(repeating: "conversations.replies", count: 4)
                 + ["users.info"])
         #expect(output.listing() == ["T01", "T01/C01", "T01/C01/2026-11-01.md", ArchiveManifestTests.manifestPath])
@@ -181,9 +181,9 @@ struct ArchivePartialProgressTests {
         let result = await ArchiveToolTests.archive(try await Self.handler(slack), into: output)
 
         expectJSON(result, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
-                   + #""new_messages":1,"note":"\#(Self.note("1 message"))","retry_after_seconds":30,"#
-                   + #""skipped_messages":0,"stopped_reason":"rate_limited","team_id":"T01","thread_replies":0,"#
-                   + #""top_level_messages":1,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":false,"new_messages":1,"note":"\#(Self.note("1 message"))","#
+                   + #""retry_after_seconds":30,"skipped_messages":0,"stopped_reason":"rate_limited","team_id":"T01","#
+                   + #""thread_replies":0,"top_level_messages":1,"utc_offset":"+08:00"}"#)
         #expect(try !output.read("T01/C01/2026-11-01.md").contains("1793494800.000200"))
         #expect(output.listing() == ["T01", "T01/C01", "T01/C01/2026-11-01.md", ArchiveManifestTests.manifestPath])
         #expect(try ArchiveManifestTests.manifest(output)["continuation"] as? NSDictionary
@@ -198,10 +198,10 @@ struct ArchivePartialProgressTests {
 
         let result = await ArchiveToolTests.archive(try await Self.handler(slack), into: output)
 
-        expectJSON(result, #"{"complete":false,"conversation_id":"C01","files":[],"new_messages":0,"#
-                   + #""note":"\#(Self.note("0 messages"))","retry_after_seconds":30,"skipped_messages":0,"#
-                   + #""stopped_reason":"rate_limited","team_id":"T01","thread_replies":0,"top_level_messages":0,"#
-                   + #""utc_offset":"+08:00"}"#)
+        expectJSON(result, #"{"complete":false,"conversation_id":"C01","files":[],"lookback_complete":false,"#
+                   + #""new_messages":0,"note":"\#(Self.note("0 messages"))","retry_after_seconds":30,"#
+                   + #""skipped_messages":0,"stopped_reason":"rate_limited","team_id":"T01","thread_replies":0,"#
+                   + #""top_level_messages":0,"utc_offset":"+08:00"}"#)
         #expect(!FileManager.default.fileExists(atPath: output.path), "created: \(output.listing())")
     }
 

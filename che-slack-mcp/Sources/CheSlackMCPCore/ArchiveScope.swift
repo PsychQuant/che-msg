@@ -70,8 +70,10 @@ struct ArchiveScope {
     /// history). Listing the window costs one more history page per 200
     /// top-level messages in it that are older than the bound, about 3 s for
     /// 1500 messages at the default 350 ms pacing, counted in the same page
-    /// limit. Without a bookmark nothing below the bound was archived, so
-    /// there is nothing to check again and the bound is used as it is.
+    /// limit; a walk the limit stops there has written every message above
+    /// the bound, so only `lookback_complete` is false. Without a bookmark
+    /// nothing below the bound was archived, so there is nothing to check
+    /// again and the bound is used as it is.
     var listOldest: String? {
         guard let bound, bookmark != nil, let windowStart else { return bound }
         let start = String(windowStart)

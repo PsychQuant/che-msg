@@ -83,9 +83,9 @@ struct ArchiveRangeTests {
         ])
 
         expectJSON(result, #"{"complete":true,"conversation_id":"C01","#
-                   + #""files":["T01/C01/2026-10-25.md","T01/C01/2026-10-26.md"],"new_messages":2,"#
-                   + #""skipped_messages":0,"team_id":"T01","thread_replies":0,"top_level_messages":2,"#
-                   + #""utc_offset":"+08:00"}"#)
+                   + #""files":["T01/C01/2026-10-25.md","T01/C01/2026-10-26.md"],"lookback_complete":true,"#
+                   + #""new_messages":2,"skipped_messages":0,"team_id":"T01","thread_replies":0,"#
+                   + #""top_level_messages":2,"utc_offset":"+08:00"}"#)
         #expect(Self.history(slack).map(\.parameters) == [["channel": "C01", "limit": "200", "oldest": "1790910300"]])
         #expect(try Self.state(output) == Self.expected(#""newest_ts": "1789995600.000100", "newest_reply_ts": {}"#))
     }
@@ -146,8 +146,8 @@ struct ArchiveRangeTests {
             Self.at(ArchiveManifestTests.firstRun + 7200, pages: 5, thirdHandler), into: output, since)
 
         expectJSON(thirdResult, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-01-02.md"],"#
-                   + #""new_messages":1,"skipped_messages":0,"team_id":"T01","thread_replies":0,"#
-                   + #""top_level_messages":1,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":true,"new_messages":1,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":0,"top_level_messages":1,"utc_offset":"+08:00"}"#)
         #expect(Self.history(third).map(\.parameters)
                     == [["channel": "C01", "limit": "200", "oldest": "1767290340.000100"]])
         #expect(try Self.state(output) == Self.expected(#""newest_ts": "1767290400.000100", "newest_reply_ts": {}"#))

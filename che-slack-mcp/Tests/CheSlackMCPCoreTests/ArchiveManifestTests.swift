@@ -89,9 +89,9 @@ struct ArchiveManifestTests {
 
         let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + Self.day, secondHandler), into: output)
 
-        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":[],"new_messages":0,"#
-                   + #""skipped_messages":0,"team_id":"T01","thread_replies":0,"top_level_messages":0,"#
-                   + #""utc_offset":"+08:00"}"#)
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":[],"lookback_complete":true,"#
+                   + #""new_messages":0,"skipped_messages":0,"team_id":"T01","thread_replies":0,"#
+                   + #""top_level_messages":0,"utc_offset":"+08:00"}"#)
         #expect(dayFile == SlackDayFileTests.exampleFile)
         #expect(try output.read("T01/C01/2026-11-01.md") == dayFile)
         #expect(output.listing() == ["T01", "T01/C01", "T01/C01/2026-11-01.md", Self.manifestPath])
@@ -118,6 +118,12 @@ struct ArchiveManifestTests {
 
     static let lookback30: [String: Value] = ["utc_offset": .string("+08:00"), "thread_lookback_days": .int(30)]
 
+    /// What the result says when every new message was written but the page
+    /// limit stopped the listing of the lookback window.
+    static let lookbackNote = "All new messages were written, but the page limit stopped this call before it had "
+        + "listed the whole lookback window, so the thread parents in the rest of the window were not checked for "
+        + "new replies. A smaller thread_lookback_days lists fewer messages."
+
     /// spec: "Late reply outside the window is not fetched". The second run
     /// is 45 days after the first, 2026-12-16 11:05 (`1797390300`); the
     /// window starts at `1797390300 - 30 * 86400 = 1794798300`, after the
@@ -135,9 +141,9 @@ struct ArchiveManifestTests {
         let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + 45 * Self.day, laterHandler), into: output,
                                                     Self.lookback30)
 
-        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":[],"new_messages":0,"#
-                   + #""skipped_messages":0,"team_id":"T01","thread_replies":0,"top_level_messages":0,"#
-                   + #""utc_offset":"+08:00"}"#)
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":[],"lookback_complete":true,"#
+                   + #""new_messages":0,"skipped_messages":0,"team_id":"T01","thread_replies":0,"#
+                   + #""top_level_messages":0,"utc_offset":"+08:00"}"#)
         #expect(later.methods == ["conversations.history"])
         #expect(later.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": "1793498700.000100"])
         #expect(output.listing() == ["T01", "T01/C01", "T01/C01/2026-11-01.md", Self.manifestPath])
@@ -170,8 +176,8 @@ struct ArchiveManifestTests {
                                                     Self.lookback30)
 
         expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-11-20.md"],"#
-                   + #""new_messages":1,"skipped_messages":0,"team_id":"T01","thread_replies":2,"#
-                   + #""top_level_messages":0,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":true,"new_messages":1,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":2,"top_level_messages":0,"utc_offset":"+08:00"}"#)
         #expect(later.methods == ["conversations.history", "conversations.replies", "users.info"])
         #expect(later.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": "1792638300"])
         #expect(later.calls.dropFirst().first?.parameters["ts"] == Self.parentTS)
@@ -203,7 +209,9 @@ struct ArchiveManifestTests {
     /// oldest message, so the bookmark stays null and the manifest records
     /// where the walk continues: it started at page 0's `1793498000.000100`
     /// and wrote down to page 49's `1793498000 - 49 = 1793497951.000100`;
-    /// the next call continues below that (ArchiveContinuationTests).
+    /// the next call continues below that (ArchiveContinuationTests). Not
+    /// complete, and the window was not listed either; no note, as the
+    /// lookback note is only for a complete run.
     @Test("a run cut by the page limit before its lower bound leaves newest_ts null and records where it continues")
     func pageCapKeepsBookmark() async throws {
         let transport = MethodTransport { call in
@@ -218,7 +226,8 @@ struct ArchiveManifestTests {
 
         let result = await ArchiveToolTests.archive(Self.at(Self.firstRun, handler), into: output)
 
-        #expect(text(result).contains(#""complete":false"#), "\(text(result))")
+        #expect(text(result).contains(#""complete":false"#) && text(result).contains(#""lookback_complete":false"#)
+                    && !text(result).contains(#""note""#), "\(text(result))")
         #expect(try Self.manifest(output) == Self.expected("""
             {"format": "che-slack-mcp archive manifest", "version": 1, "team_id": "T01", "conversation_id": "C01",
              "newest_ts": null, "newest_reply_ts": {},
@@ -230,10 +239,12 @@ struct ArchiveManifestTests {
 
     /// The limit stops the walk inside the lookback window, after it passed
     /// the bookmark: every message newer than the bookmark was read, so the
-    /// bookmark moves; `complete` is false because window parents were left
-    /// unchecked. The second run is 2026-11-02 11:05; its new message
-    /// `1793585100.000100` is 10:05 that day.
-    @Test("a run cut by the page limit after passing the bookmark still moves newest_ts to the newest message")
+    /// bookmark moves, no continuation is recorded and the call is complete;
+    /// only the window parents below where it stopped were left unchecked,
+    /// which `lookback_complete` false and the note say. The second run is
+    /// 2026-11-02 11:05; its new message `1793585100.000100` is 10:05 that
+    /// day.
+    @Test("a run cut by the page limit after passing the bookmark moves newest_ts and is complete, its lookback not")
     func pageCapAfterBookmark() async throws {
         let (handler, _) = try await readHandler(ArchiveToolTests.slack(
             history: ArchiveFake.history([ArchiveToolTests.alexPlain])))
@@ -250,10 +261,51 @@ struct ArchiveManifestTests {
 
         let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + Self.day, laterHandler), into: output)
 
-        #expect(text(result).contains(#""complete":false"#) && text(result).contains(#""new_messages":1"#),
-                "\(text(result))")
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-11-02.md"],"#
+                   + #""lookback_complete":false,"new_messages":1,"note":"\#(Self.lookbackNote)","#
+                   + #""skipped_messages":0,"team_id":"T01","thread_replies":0,"top_level_messages":1,"#
+                   + #""utc_offset":"+08:00"}"#)
         #expect(later.calls.filter { $0.method == "conversations.history" }.count == 50)
-        #expect(try Self.manifest(output)["newest_ts"] as? String == "1793585100.000100")
+        #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
+            "newest_ts": "1793585100.000100", "newest_reply_ts": {}
+            """))
+    }
+
+    /// spec: "Busy lookback window does not keep complete false", modelled
+    /// with a page limit of 2 pages (400 messages) instead of 50 (10000), so
+    /// 1000 older messages stand for the 12000. The bookmark is
+    /// `1793451600.000100` (2026-10-31 21:00); the 10 new messages are a
+    /// minute apart from `1793498700.000100` to `1793499240.000100`
+    /// (2026-11-01 10:05 to 10:14); the older ones a minute apart below the
+    /// bookmark down to `1793451600 - 60 * 1000 = 1793391600.000100`, all
+    /// inside the 30-day window, which starts at `1793502300 - 30 * 86400 =
+    /// 1790910300`. No thread is recorded as cut.
+    @Test("spec: 10 new messages and a window longer than the page limit: complete true, lookback_complete false, a note")
+    func busyLookbackWindow() async throws {
+        let new = (0..<10).reversed().map { "\(1_793_498_700 + 60 * $0).000100" }
+        let older = (1...1000).map { "\(1_793_451_600 - 60 * $0).000100" }
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        try ArchiveContinuationTests.preset(output, manifest: ArchiveManifestSafetyTests.manifest([
+            "newest_ts": #""1793451600.000100""#,
+        ]))
+        let slack = ArchiveRangeTests.paged(new + ["1793451600.000100"] + older)
+        let (handler, _) = try await readHandler(slack)
+
+        let result = await ArchiveToolTests.archive(ArchiveRangeTests.at(Self.firstRun, pages: 2, handler),
+                                                    into: output, Self.lookback30)
+
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
+                   + #""lookback_complete":false,"new_messages":10,"note":"\#(Self.lookbackNote)","#
+                   + #""skipped_messages":0,"team_id":"T01","thread_replies":0,"top_level_messages":10,"#
+                   + #""utc_offset":"+08:00"}"#)
+        #expect(ArchiveRangeTests.history(slack).map { $0.parameters["oldest"] } == ["1790910300", "1790910300"])
+        #expect(ArchiveRangeTests.history(slack).last?.parameters["cursor"] == "200")
+        #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
+            "newest_ts": "1793499240.000100", "newest_reply_ts": {}
+            """))
+        let anchors = try ArchiveContinuationTests.anchors(output)
+        #expect(anchors.count == 10 && anchors.allSatisfy { line in new.contains { line.contains($0) } })
     }
 
     /// A parent archived before it had replies has no reply record; its

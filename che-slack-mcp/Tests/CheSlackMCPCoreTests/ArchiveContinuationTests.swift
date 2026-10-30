@@ -209,8 +209,8 @@ struct ArchiveContinuationTests {
                                                                                  firstHandler), into: output)
 
         expectJSON(firstResult, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-10-31.md"],"#
-                   + #""new_messages":1001,"skipped_messages":0,"team_id":"T01","thread_replies":1000,"#
-                   + #""top_level_messages":1,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":true,"new_messages":1001,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":1000,"top_level_messages":1,"utc_offset":"+08:00"}"#)
         let firstReplies = first.calls.filter { $0.method == "conversations.replies" }
         #expect(firstReplies.count == 5 && firstReplies.allSatisfy { $0.parameters["oldest"] == nil })
         #expect(try ArchiveManifestTests.manifest(output)["newest_reply_ts"] as? NSDictionary
@@ -223,8 +223,8 @@ struct ArchiveContinuationTests {
             into: output)
 
         expectJSON(secondResult, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-10-31.md"],"#
-                   + #""new_messages":300,"skipped_messages":0,"team_id":"T01","thread_replies":300,"#
-                   + #""top_level_messages":0,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":true,"new_messages":300,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":300,"top_level_messages":0,"utc_offset":"+08:00"}"#)
         let secondReplies = second.calls.filter { $0.method == "conversations.replies" }
         #expect(secondReplies.map { $0.parameters["cursor"] } == [nil, "200"])
         #expect(secondReplies.allSatisfy {

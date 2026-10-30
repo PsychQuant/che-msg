@@ -73,8 +73,8 @@ struct ArchiveUnfinishedThreadTests {
                                                                                  firstHandler), into: output, options)
 
         expectJSON(firstResult, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-09-02.md"],"#
-                   + #""new_messages":1001,"skipped_messages":0,"team_id":"T01","thread_replies":1000,"#
-                   + #""top_level_messages":1,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":true,"new_messages":1001,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":1000,"top_level_messages":1,"utc_offset":"+08:00"}"#)
         #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
             "newest_ts": "\(Self.oldParent)", "newest_reply_ts": {"\(Self.oldParent)": "\(Self.thousandth)"},
             "unfinished_threads": ["\(Self.oldParent)"]
@@ -87,8 +87,8 @@ struct ArchiveUnfinishedThreadTests {
             into: output, options)
 
         expectJSON(secondResult, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-09-02.md"],"#
-                   + #""new_messages":300,"skipped_messages":0,"team_id":"T01","thread_replies":300,"#
-                   + #""top_level_messages":0,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":true,"new_messages":300,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":300,"top_level_messages":0,"utc_offset":"+08:00"}"#)
         #expect(second.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": Self.oldParent])
         #expect(Self.replies(second).map { $0.parameters["cursor"] } == [nil, "200"])
         #expect(Self.replies(second).allSatisfy {
@@ -227,7 +227,7 @@ struct ArchiveUnfinishedThreadTests {
                                                                                  firstHandler), into: output, options)
 
         expectJSON(firstResult, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-09-02.md"],"#
-                   + #""new_messages":1002,"#
+                   + #""lookback_complete":false,"new_messages":1002,"#
                    + #""note":"\#(ArchivePartialProgressTests.note("1002 messages"))","retry_after_seconds":30,"#
                    + #""skipped_messages":0,"stopped_reason":"rate_limited","team_id":"T01","thread_replies":1000,"#
                    + #""top_level_messages":2,"utc_offset":"+08:00"}"#)
@@ -253,7 +253,7 @@ struct ArchiveUnfinishedThreadTests {
             ArchiveManifestTests.at(ArchiveManifestTests.firstRun + 3600, secondHandler), into: output, options)
 
         expectJSON(secondResult, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-09-02.md"],"#
-                   + #""new_messages":301,"skipped_messages":0,"team_id":"T01","#
+                   + #""lookback_complete":true,"new_messages":301,"skipped_messages":0,"team_id":"T01","#
                    + #""thread_replies":300,"top_level_messages":1,"utc_offset":"+08:00"}"#)
         #expect(second.calls.first?.parameters == ["channel": "C01", "limit": "200", "latest": Self.olderTS])
         #expect(Self.replies(second).allSatisfy {
@@ -268,7 +268,7 @@ struct ArchiveUnfinishedThreadTests {
         let thirdResult = await ArchiveToolTests.archive(
             ArchiveManifestTests.at(ArchiveManifestTests.firstRun + 7200, thirdHandler), into: output, options)
 
-        expectJSON(thirdResult, #"{"complete":true,"conversation_id":"C01","files":[],"#
+        expectJSON(thirdResult, #"{"complete":true,"conversation_id":"C01","files":[],"lookback_complete":true,"#
                    + #""new_messages":0,"skipped_messages":0,"team_id":"T01","thread_replies":0,"#
                    + #""top_level_messages":0,"utc_offset":"+08:00"}"#)
         #expect(third.methods == ["conversations.history"])
@@ -313,7 +313,9 @@ struct ArchiveUnfinishedThreadTests {
     /// replies written; the next listed thread is then rate limited. The
     /// first moves to its 1000th reply after the recorded one,
     /// `1788318001 + 1000 = 1788319001.000200`; the second keeps its
-    /// bookmark. `1788400000.000100` is 2026-09-03 09:46:40.
+    /// bookmark. `1788400000.000100` is 2026-09-03 09:46:40. The walk had
+    /// listed its whole range before the stop, so `lookback_complete` is
+    /// true.
     @Test("a listed thread continued and still cut before a rate limit moves its bookmark; the stopped one keeps its own")
     func continuedCutThreadBeforeRateLimit() async throws {
         let stoppedTS = "1788400000.000100"
@@ -339,7 +341,8 @@ struct ArchiveUnfinishedThreadTests {
         let result = await ArchiveToolTests.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun, handler),
                                                     into: output)
 
-        #expect(text(result).contains(#""stopped_reason":"rate_limited""#)
+        #expect(text(result).contains(#""stopped_reason":"rate_limited""#) && text(result).contains(#""complete":false"#)
+                    && text(result).contains(#""lookback_complete":true"#)
                     && text(result).contains(#""thread_replies":1000"#), "\(text(result))")
         #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
             "newest_ts": "\(stoppedTS)",

@@ -50,8 +50,8 @@ struct ArchiveToolTests {
         let result = await Self.archive(handler, into: output)
 
         expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
-                   + #""new_messages":2,"skipped_messages":0,"team_id":"T01","thread_replies":1,"#
-                   + #""top_level_messages":1,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":true,"new_messages":2,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":1,"top_level_messages":1,"utc_offset":"+08:00"}"#)
         #expect(output.listing() == ["T01", "T01/C01", "T01/C01/2026-11-01.md", "T01/C01/manifest.json"])
         #expect(try output.read("T01/C01/2026-11-01.md") == SlackDayFileTests.exampleFile)
         #expect(try output.mode("") == 0o700)
@@ -132,8 +132,8 @@ struct ArchiveToolTests {
         let result = await Self.archive(handler, into: output)
 
         expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
-                   + #""new_messages":6,"skipped_messages":1,"team_id":"T01","thread_replies":1,"#
-                   + #""top_level_messages":5,"utc_offset":"+08:00"}"#)
+                   + #""lookback_complete":true,"new_messages":6,"skipped_messages":1,"team_id":"T01","#
+                   + #""thread_replies":1,"top_level_messages":5,"utc_offset":"+08:00"}"#)
         #expect(try output.read("T01/C01/2026-11-01.md") == """
             ---
             team_id: "T01"
