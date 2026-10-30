@@ -237,6 +237,35 @@ final class DesktopImportTests {
         expectNoSecrets(error)
     }
 
+    // MARK: - The index
+
+    /// spec: slack-credentials — "Keychain credential layout", scenario
+    /// "Index that would not fit is refused before any write", through the
+    /// desktop import.
+    @Test("40 workspaces whose index would not fit: stops before Slack Safe Storage is read, with nothing written and no auth.test")
+    func indexWouldNotFit() async throws {
+        #expect(try await !IndexLimit.fits((1...40).map(ManyWorkspaces.workspace)))
+        let teams = (1...40).map { #""\#(ManyWorkspaces.workspace($0).teamID)":"# + ManyWorkspaces.entry($0) }
+        try makeSlackFolder(at: containerFolder, config: Self.stored(#"{"teams":{"# + teams.joined(separator: ",") + "}}"))
+        let safeStorage = FakeSafeStorage(.found(CookieFixture.password), terminal: terminal, scratch: scratch)
+        let transport = ManyWorkspaces.transport(1...40)
+
+        let (results, error) = await run(safeStorage, transport)
+
+        #expect(results == nil)
+        let thrown = try #require(error as? SlackAuthCommandError, "\(String(describing: error))")
+        #expect(thrown.message.contains("would list up to 40 workspaces"))
+        #expect(thrown.message.contains("would not fit in one Keychain write"))
+        #expect(thrown.message.contains("slack-all auth remove"))
+        #expect(terminal.lines.contains { $0.hasPrefix("Read 40 workspace(s) from localConfig_v2") })
+        #expect(safeStorage.reads == 0)
+        #expect(keychain.writes.isEmpty)
+        #expect(transport.requests.isEmpty)
+        #expect(scratchContents.isEmpty)
+        ManyWorkspaces.expectNoTokens(terminal.lines, error)
+        expectNoSecrets(error)
+    }
+
     // MARK: - Stopping
 
     enum Breakage: String, CaseIterable {

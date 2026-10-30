@@ -89,8 +89,14 @@ final class ScriptedTerminal: SlackAuthTerminal, @unchecked Sendable {
 }
 
 /// An in-memory Keychain for the store: reads, writes and deletes, with
-/// failures injectable per service. Writes make no check of their own.
+/// failures injectable per service. Its `check` is the production writer's,
+/// line length included, so the store refuses here what it would refuse for
+/// real. Writes make no check of their own.
 final class MemoryKeychain: KeychainItemReader, KeychainItemWriter, @unchecked Sendable {
+    /// Only its `check` is used, and that starts nothing; the executable
+    /// cannot exist, so no call could start `security` either.
+    static let productionChecks = SecurityCLIKeychainWriter(executable: URL(fileURLWithPath: "/dev/null/security"))
+
     private let lock = NSLock()
     private var items: [String: String]
     private var writeLog: [String] = []
@@ -112,6 +118,10 @@ final class MemoryKeychain: KeychainItemReader, KeychainItemWriter, @unchecked S
 
     func failDeletes(of service: String, with error: SlackKeychainDeleteError) {
         lock.withLock { deleteFailures[service] = error }
+    }
+
+    func check(service: String, value: String) throws {
+        try Self.productionChecks.check(service: service, value: value)
     }
 
     func read(service: String) async -> KeychainLookup {
@@ -173,4 +183,42 @@ func indexValue(_ workspaces: [SlackWorkspace]) async throws -> String {
     let keychain = MemoryKeychain()
     try await SlackCredentialStore(reader: keychain, writer: keychain).saveWorkspaces(workspaces)
     return keychain.contents["SLACK_WORKSPACES"]!
+}
+
+/// Synthetic workspaces of a typical size, numbered from 1: an 11-character
+/// team id and user id, a 15-character domain and a 20-character name.
+enum ManyWorkspaces {
+    static func workspace(_ number: Int) -> SlackWorkspace {
+        let digits = String(format: "%010d", number)
+        return SlackWorkspace(teamID: "T\(digits)", domain: "workspace-\(digits.suffix(5))",
+                              name: "Example Team \(digits.suffix(7))", userID: "U\(digits)")
+    }
+
+    static func token(_ number: Int) -> String { "xoxc-fake-many-\(number)" }
+
+    /// One entry as the console command copies it.
+    static func entry(_ number: Int) -> String {
+        let workspace = workspace(number)
+        return #"{"id":"\#(workspace.teamID)","domain":"\#(workspace.domain)","name":"\#(workspace.name)","#
+            + #""token":"\#(token(number))","user_id":"\#(workspace.userID)"}"#
+    }
+
+    /// What the console command copies for `numbers`.
+    static func clipboardList(_ numbers: some Sequence<Int>) -> String {
+        "[" + numbers.map(entry).joined(separator: ",") + "]"
+    }
+
+    /// A transport whose `auth.test` verifies every one of `numbers`.
+    static func transport(_ numbers: some Sequence<Int>) -> TokenTransport {
+        TokenTransport(Dictionary(uniqueKeysWithValues: numbers.map { number in
+            let workspace = workspace(number)
+            return (token(number), Fake.authTestOK(team: workspace.teamID, user: workspace.userID))
+        }))
+    }
+
+    /// Records that none of these tokens appears in any line or in the error.
+    static func expectNoTokens(_ lines: [String], _ error: (any Error)? = nil) {
+        let texts = lines + (error.map { ["\($0)"] } ?? [])
+        #expect(!texts.contains { $0.contains("xoxc-fake-many-") }, "output contains a fake token")
+    }
 }
