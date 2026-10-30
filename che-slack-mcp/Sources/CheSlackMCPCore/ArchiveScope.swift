@@ -14,17 +14,26 @@ import SlackWebLib
 ///   only to read their `latest_reply`; they are not written again.
 /// - Replies fetched: for every parent written, and for every parent listed
 ///   but not written that `needsReplies` accepts.
+/// - Continued: when the manifest records an unfinished walk and neither
+///   `after_ts` nor `since_date` is given, only the history below its
+///   `below_ts` is listed (sent as `latest`), down to the same lower bound;
+///   messages newer than its `top_ts` wait for the next run.
 struct ArchiveScope {
     let request: ArchiveRequest
     /// The manifest's `newest_ts`, or nil without a manifest.
     let bookmark: String?
+    /// The manifest's unfinished walk that this run continues. Chosen:
+    /// nil when `after_ts` or `since_date` is given, which set a one-off
+    /// range that neither continues nor replaces it.
+    let continuation: ArchiveManifest.Continuation?
     /// The first second of the lookback window: `thread_lookback_days` days
     /// of 86400 seconds before the call's start; nil for a window of 0 days.
     let windowStart: Int64?
 
-    init(request: ArchiveRequest, bookmark: String?, now: Date) {
+    init(request: ArchiveRequest, bookmark: String?, continuation: ArchiveManifest.Continuation? = nil, now: Date) {
         self.request = request
         self.bookmark = bookmark
+        self.continuation = request.oldest == nil ? continuation : nil
         windowStart = request.threadLookbackDays > 0
             ? max(0, Int64(now.timeIntervalSince1970) - Int64(request.threadLookbackDays) * 86_400)
             : nil
@@ -52,6 +61,10 @@ struct ArchiveScope {
         let start = String(windowStart)
         return SlackDayFile.precedes(start, bound) ? start : bound
     }
+
+    /// The `latest` sent to `conversations.history` (exclusive, Slack's
+    /// default): the continued walk's `below_ts`, or nil.
+    var listLatest: String? { continuation?.below_ts }
 
     /// True for a parent ts inside the lookback window.
     func isInWindow(_ ts: String) -> Bool {
@@ -84,5 +97,12 @@ struct ArchiveScope {
         guard let a else { return b }
         guard let b else { return a }
         return SlackDayFile.precedes(a, b) ? b : a
+    }
+
+    /// The earlier of two ts, either of which may be absent.
+    static func older(_ a: String?, _ b: String?) -> String? {
+        guard let a else { return b }
+        guard let b else { return a }
+        return SlackDayFile.precedes(a, b) ? a : b
     }
 }

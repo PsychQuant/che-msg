@@ -26,15 +26,41 @@ import Foundation
 ///   only by a run whose history walk reached its lower bound, so every
 ///   message between the old and the new value was read.
 /// - `newest_reply_ts`: per thread parent whose ts is inside the last run's
-///   lookback window, the newest reply ts archived for it.
+///   lookback window, the newest reply ts archived for it; the next request
+///   for that thread's replies starts after it.
+/// - `continuation` (only while a walk is unfinished, so absent from the
+///   example): `{"top_ts": …, "below_ts": …}`, a walk from `top_ts` down
+///   to `newest_ts` (to the oldest message when null) that the page limit
+///   or a rate limit stopped after writing down to `below_ts`; see
+///   `Continuation`.
 /// - `last_run`: the run's start, at the run's `utc_offset`, and the counts
 ///   the run returned.
 ///
-/// A run stopped by a rate limit or ended by an error does not write the
-/// manifest, so none of these moves: the next run reads that range again.
+/// A run ended by an error does not write the manifest, so none of these
+/// moves and the next run reads that range again. A run stopped by a rate
+/// limit writes it only when its `continuation` moved, and then leaves
+/// `newest_ts` and `newest_reply_ts` as they were.
+///
+/// `version` stays 1: `continuation` is optional, so a manifest written
+/// before it existed is read as having no unfinished walk, and a build
+/// that does not know it ignores it and reads the unfinished range again
+/// from the top, which skips nothing.
 struct ArchiveManifest: Codable, Equatable {
     static let formatName = "che-slack-mcp archive manifest"
     static let currentVersion = 1
+
+    /// An unfinished walk (spec: "Incremental archive and manifest"): the
+    /// next run without `after_ts` or `since_date` continues it below
+    /// `below_ts`, sent as `latest`, down to `newest_ts`, before reading
+    /// anything newer; when it gets there, `newest_ts` becomes `top_ts`.
+    /// Every top-level message from `below_ts` to `top_ts` was written,
+    /// with the replies of the thread parents among them.
+    struct Continuation: Codable, Equatable {
+        /// The newest top-level ts the walk wrote.
+        let top_ts: String
+        /// The oldest top-level ts the walk wrote.
+        let below_ts: String
+    }
 
     struct LastRun: Codable, Equatable {
         let at: String
@@ -49,26 +75,29 @@ struct ArchiveManifest: Codable, Equatable {
     let conversation_id: String
     let newest_ts: String?
     let newest_reply_ts: [String: String]
+    let continuation: Continuation?
     let last_run: LastRun
 
     enum CodingKeys: String, CodingKey {
-        case format, version, team_id, conversation_id, newest_ts, newest_reply_ts, last_run
+        case format, version, team_id, conversation_id, newest_ts, newest_reply_ts, continuation, last_run
     }
 
     init(teamID: String, conversationID: String, newestTS: String?, newestReplyTS: [String: String],
-         lastRun: LastRun) {
+         continuation: Continuation? = nil, lastRun: LastRun) {
         format = Self.formatName
         version = Self.currentVersion
         team_id = teamID
         conversation_id = conversationID
         newest_ts = newestTS
         newest_reply_ts = newestReplyTS
+        self.continuation = continuation
         last_run = lastRun
     }
 
     /// Every field is required, `newest_ts` too (as a string or null), so
     /// a manifest missing its bookmark is refused rather than read as a
-    /// first run. A field of another JSON type fails the whole manifest.
+    /// first run; only `continuation` may be absent (or null). A field of
+    /// another JSON type fails the whole manifest.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         format = try container.decode(String.self, forKey: .format)
@@ -77,10 +106,12 @@ struct ArchiveManifest: Codable, Equatable {
         conversation_id = try container.decode(String.self, forKey: .conversation_id)
         newest_ts = try container.decode(String?.self, forKey: .newest_ts)
         newest_reply_ts = try container.decode([String: String].self, forKey: .newest_reply_ts)
+        continuation = try container.decodeIfPresent(Continuation.self, forKey: .continuation)
         last_run = try container.decode(LastRun.self, forKey: .last_run)
     }
 
-    /// `newest_ts` is written as null rather than left out.
+    /// `newest_ts` is written as null rather than left out; `continuation`
+    /// is left out when there is none.
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(format, forKey: .format)
@@ -89,6 +120,7 @@ struct ArchiveManifest: Codable, Equatable {
         try container.encode(conversation_id, forKey: .conversation_id)
         try container.encode(newest_ts, forKey: .newest_ts)
         try container.encode(newest_reply_ts, forKey: .newest_reply_ts)
+        try container.encodeIfPresent(continuation, forKey: .continuation)
         try container.encode(last_run, forKey: .last_run)
     }
 
@@ -123,8 +155,10 @@ extension ArchiveDirectory {
     /// the whole history). Never resets silently: a manifest that is not a
     /// regular file, cannot be read, is larger than `maxManifestBytes`, is
     /// not JSON in the shape `ArchiveManifest` writes, names another format,
-    /// version, workspace or conversation, or holds a ts that is not a
-    /// Slack timestamp refuses the call before Slack is called.
+    /// version, workspace or conversation, holds a ts that is not a Slack
+    /// timestamp, or a continuation whose `below_ts` is not newer than
+    /// `newest_ts` and at most `top_ts`, refuses the call before Slack is
+    /// called.
     func readManifest() throws(ToolFailure) -> ArchiveManifest? {
         guard try Self.checkRegularFile(manifestFile) else { return nil }
         let data = try readManifestData()
@@ -139,8 +173,16 @@ extension ArchiveDirectory {
         }
         let isTS = { (ts: String) in SlackDayFile.seconds(ofTS: ts) != nil }
         guard manifest.newest_ts.map(isTS) ?? true,
-              manifest.newest_reply_ts.allSatisfy({ isTS($0.key) && isTS($0.value) }) else {
+              manifest.newest_reply_ts.allSatisfy({ isTS($0.key) && isTS($0.value) }),
+              manifest.continuation.map({ isTS($0.top_ts) && isTS($0.below_ts) }) ?? true else {
             throw manifestRefusal("holds a ts that is not a Slack timestamp")
+        }
+        if let continuation = manifest.continuation {
+            guard !SlackDayFile.precedes(continuation.top_ts, continuation.below_ts),
+                  manifest.newest_ts.map({ SlackDayFile.precedes($0, continuation.below_ts) }) ?? true else {
+                throw manifestRefusal("holds a continuation whose below_ts is not newer than newest_ts and at most "
+                                      + "top_ts")
+            }
         }
         return manifest
     }

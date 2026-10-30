@@ -124,9 +124,13 @@ extension SlackWebClient {
     /// `next_cursor` for at most `maxPages` pages. Messages keep Slack's
     /// order (parent first, then replies oldest first); a message already
     /// seen on an earlier page (Slack may repeat the parent) is kept once.
-    /// `hasMore` is true when the page limit stopped the walk while Slack
-    /// still offered a cursor. A failure on any page fails the whole call.
-    public func conversationReplies(channel: String, ts: String,
+    /// `oldest`, sent only when given, asks for the replies after it
+    /// (exclusive, Slack's default), so a thread longer than `maxPages`
+    /// continues after the newest reply already read; the parent may still
+    /// come first. `hasMore` is true when the page limit stopped the walk
+    /// while Slack still offered a cursor. A failure on any page fails the
+    /// whole call.
+    public func conversationReplies(channel: String, ts: String, oldest: String? = nil,
                                     pageSize: Int = repliesPageSize, maxPages: Int = repliesMaxPages,
                                     credential: SlackCredential) async throws -> SlackMessagePage {
         var messages: [SlackMessage] = []
@@ -134,6 +138,7 @@ extension SlackWebClient {
         var cursor: String?
         for _ in 0..<max(1, maxPages) {
             var parameters = ["channel": channel, "ts": ts, "limit": String(pageSize)]
+            parameters["oldest"] = oldest
             parameters["cursor"] = cursor
             let answer = try Self.decode(MessagesAnswer.self,
                                          try await call("conversations.replies", parameters: parameters,

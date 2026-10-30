@@ -39,6 +39,20 @@ struct ArchiveManifestSafetyTests {
         ("another version", manifest(["version": "2"])),
         ("another conversation", manifest(["conversation_id": #""C02""#])),
         ("another workspace", manifest(["team_id": #""T02""#])),
+        ("a continuation that is not an object", manifest(["continuation": #""1793498000.000100""#])),
+        ("a continuation without below_ts", manifest(["continuation": #"{"top_ts": "1793585100.000100"}"#])),
+        ("a continuation ts as a number",
+         manifest(["continuation": #"{"top_ts": "1793585100.000100", "below_ts": 1793585000.000100}"#])),
+        ("a continuation ts that is not a Slack ts",
+         manifest(["continuation": #"{"top_ts": "1793585100.000100", "below_ts": "today"}"#])),
+        // Without newest_ts only the ts check can refuse it: "y" sorts after
+        // "x", so the order check alone would accept it.
+        ("continuation ts that are not Slack ts, with newest_ts null",
+         manifest(["newest_ts": "null", "continuation": #"{"top_ts": "y", "below_ts": "x"}"#])),
+        ("a continuation whose below_ts is newer than its top_ts",
+         manifest(["continuation": #"{"top_ts": "1793585000.000100", "below_ts": "1793585100.000100"}"#])),
+        ("a continuation whose below_ts is not newer than newest_ts",
+         manifest(["continuation": #"{"top_ts": "1793585100.000100", "below_ts": "1793498700.000100"}"#])),
     ]
 
     @Test("a manifest that is damaged, mistyped or not this conversation's refuses the call; nothing is written",
@@ -60,21 +74,27 @@ struct ArchiveManifestSafetyTests {
         #expect(try output.read(ArchiveManifestTests.manifestPath) == content, "\(name)")
     }
 
-    @Test("the well-formed manifest of the damaged cases is accepted")
-    func wellFormedManifest() async throws {
+    /// A manifest written before continuations existed has none: it is read
+    /// as having no unfinished walk. One with a continuation is continued.
+    @Test("the well-formed manifest of the damaged cases is accepted, with or without a continuation",
+          arguments: [(manifest(), nil as String?),
+                      (manifest(["continuation": #"{"top_ts": "1793585100.000100", "below_ts": "1793585000.000100"}"#]),
+                       "1793585000.000100")])
+    func wellFormedManifest(_ content: String, latest: String?) async throws {
         let transport = ArchiveSafetyTests.slack()
         let (handler, _) = try await readHandler(transport)
         let output = TemporaryDirectory()
         defer { output.remove() }
         let file = output.url.appendingPathComponent(ArchiveManifestTests.manifestPath)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Self.manifest().write(to: file, atomically: false, encoding: .utf8)
+        try content.write(to: file, atomically: false, encoding: .utf8)
 
         let result = await ArchiveToolTests.archive(handler, into: output, ["utc_offset": .string("+08:00"),
                                                                             "thread_lookback_days": .int(0)])
 
         #expect(result.isError == false, "\(text(result))")
         #expect(transport.calls.first?.parameters["oldest"] == "1793498700.000100")
+        #expect(transport.calls.first?.parameters["latest"] == latest)
     }
 
     @Test("a manifest that cannot be read (mode 000) refuses the call naming it")

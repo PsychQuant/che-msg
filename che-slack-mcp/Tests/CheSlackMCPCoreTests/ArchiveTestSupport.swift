@@ -78,6 +78,41 @@ enum ArchiveFake {
     }
 }
 
+/// A long conversation served the way Slack pages it, for walks longer
+/// than one call reads: `conversations.history` and `conversations.replies`
+/// honour `limit`, `oldest` and `latest` (both exclusive, Slack's default)
+/// and an offset `cursor`, and offer a next cursor while messages are left.
+enum PagedSlack {
+    /// One `conversations.history` page of `messages` (ts, newest first),
+    /// each a plain message from Alex (U02).
+    static func history(_ messages: [String], _ call: SlackCall) -> ScriptedAnswer {
+        let inRange = messages.filter { ts in
+            (call.parameters["latest"].map { SlackDayFile.precedes(ts, $0) } ?? true)
+                && (call.parameters["oldest"].map { SlackDayFile.precedes($0, ts) } ?? true)
+        }
+        let (page, next) = slice(inRange, call)
+        return .body(ArchiveFake.history(page.map { #"{"user":"U02","text":"m","ts":"\#($0)"}"# }, cursor: next))
+    }
+
+    /// One `conversations.replies` page of the thread `parent` (JSON, sent
+    /// first on every page, as Slack repeats it) whose replies are
+    /// `replies` (ts, oldest first), each from Kim (U03).
+    static func replies(parent: String, parentTS: String, _ replies: [String], _ call: SlackCall) -> ScriptedAnswer {
+        let after = replies.filter { ts in call.parameters["oldest"].map { SlackDayFile.precedes($0, ts) } ?? true }
+        let (page, next) = slice(after, call)
+        let messages = [parent] + page.map { #"{"user":"U03","text":"r","ts":"\#($0)","thread_ts":"\#(parentTS)"}"# }
+        let metadata = next.map { #","response_metadata":{"next_cursor":"\#($0)"}"# } ?? ""
+        return .body(#"{"ok":true,"messages":[\#(messages.joined(separator: ","))],"has_more":\#(next != nil)\#(metadata)}"#)
+    }
+
+    private static func slice(_ messages: [String], _ call: SlackCall) -> ([String], String?) {
+        let limit = Int(call.parameters["limit"] ?? "") ?? 100
+        let start = Int(call.parameters["cursor"] ?? "0") ?? 0
+        let page = Array(messages.dropFirst(start).prefix(limit))
+        return (page, start + limit < messages.count ? String(start + limit) : nil)
+    }
+}
+
 /// A one-shot signal. `pass()` returns once `open()` was called (at once if
 /// it already was) and throws `CancellationError` when the waiting task is
 /// cancelled first, so a test synchronizes without sleeping.

@@ -200,9 +200,11 @@ struct ArchiveManifestTests {
     }
 
     /// Silent-gap guard: the 50-page limit stopped a first run before the
-    /// oldest message, so the bookmark stays null and the next call reads
-    /// the whole history again rather than skipping what was left out.
-    @Test("a run cut by the page limit before its lower bound leaves newest_ts where it was (null on a first run)")
+    /// oldest message, so the bookmark stays null and the manifest records
+    /// where the walk continues: it started at page 0's `1793498000.000100`
+    /// and wrote down to page 49's `1793498000 - 49 = 1793497951.000100`;
+    /// the next call continues below that (ArchiveContinuationTests).
+    @Test("a run cut by the page limit before its lower bound leaves newest_ts null and records where it continues")
     func pageCapKeepsBookmark() async throws {
         let transport = MethodTransport { call in
             guard call.method == "conversations.history" else { return ArchiveFake.users(["U02": "Alex"], call) }
@@ -220,6 +222,7 @@ struct ArchiveManifestTests {
         #expect(try Self.manifest(output) == Self.expected("""
             {"format": "che-slack-mcp archive manifest", "version": 1, "team_id": "T01", "conversation_id": "C01",
              "newest_ts": null, "newest_reply_ts": {},
+             "continuation": {"top_ts": "1793498000.000100", "below_ts": "1793497951.000100"},
              "last_run": {"at": "2026-11-01T11:05:00+08:00", "top_level_messages": 50, "thread_replies": 0,
                           "new_messages": 50}}
             """))
