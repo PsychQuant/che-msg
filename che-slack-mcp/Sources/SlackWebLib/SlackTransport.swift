@@ -11,8 +11,25 @@ public protocol SlackTransport: Sendable {
 public struct URLSessionTransport: SlackTransport {
     private let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = URLSession(configuration: URLSessionTransport.sessionConfiguration())) {
         self.session = session
+    }
+
+    /// A session that keeps no HTTP state from Slack's answers (spec:
+    /// slack-web-client, "Session token request authentication"). Not
+    /// `URLSession.shared`: it stores every `Set-Cookie` Slack sends in
+    /// `~/Library/HTTPStorages/<executable>.binarycookies`, mode 0644, and
+    /// sends it with every later request, to any workspace. Here nothing is
+    /// stored or cached, and the only cookie sent is the `d` header the
+    /// client writes.
+    public static func sessionConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return configuration
     }
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {

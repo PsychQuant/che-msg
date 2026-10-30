@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
@@ -66,5 +66,8 @@ let package = Package(
             ],
             path: "Tests/CheSlackMCPCoreTests"
         ),
-    ]
+    ],
+    // Typed throws and Swift Testing need a Swift 6 toolchain; the code is
+    // still checked in the Swift 5 language mode.
+    swiftLanguageModes: [.v5]
 )

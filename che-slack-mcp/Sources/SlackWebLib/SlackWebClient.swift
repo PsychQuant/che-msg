@@ -26,11 +26,14 @@ public struct SlackWebClient: Sendable {
 
     /// Builds the POST for `method`: the token goes in the form body, the
     /// cookie in the `Cookie` header, and neither in the URL. Parameters
-    /// follow the token in name order so the body is deterministic.
+    /// follow the token in name order so the body is deterministic. Cookie
+    /// handling is off, so the URL loading system neither adds a stored
+    /// cookie to this header nor stores one from the answer.
     public func request(method: String, parameters: [String: String], credential: SlackCredential) -> URLRequest {
         var request = URLRequest(url: Self.baseURL.appendingPathComponent(method))
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpShouldHandleCookies = false
         request.setValue("d=\(credential.cookie)", forHTTPHeaderField: "Cookie")
         let fields = [("token", credential.token)] + parameters.sorted { $0.key < $1.key }
         let body = fields.map { "\(Self.formEncode($0.0))=\(Self.formEncode($0.1))" }.joined(separator: "&")

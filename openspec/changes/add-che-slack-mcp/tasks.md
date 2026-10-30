@@ -48,3 +48,8 @@
 - [x] 9.1 依 Thread replies and lookback 的修訂：限流中斷的那一次，這次才被回覆頁數上限截斷、回覆已寫入的 thread 要連同最新一則回覆記進 manifest 的截斷清單，其他回覆書籤照舊不動。驗證：spec 情境「Thread cut before a rate limit continues」（60 天前的主訊息、1300 則回覆，第 1000 則後在之後的歷史頁被限流）的測試，下一次之後補齊剩下 300 則。
 - [x] 9.2 [after: 9.1] 依 Incremental archive and manifest 的修訂：已走到下界、只是列回顧窗口時碰到每次頁數上限，不再讓 `complete` 變成 false；每個結果都回報 `lookback_complete`，窗口沒列完且 `complete` 為 true 時在 note 說明並建議調小 `thread_lookback_days`；tool 說明與兩份 README 同步。驗證：spec 情境「Busy lookback window does not keep complete false」的測試；把 `pageCapAfterBookmark` 改成新語意。
 
+## 10. 第四次 review 修正
+
+- [x] 10.1 依 Session token request authentication 的修訂：正式的 transport 改用 ephemeral `URLSessionConfiguration`（`httpCookieStorage` 為 nil、`httpShouldSetCookies` 為 false、`httpCookieAcceptPolicy` 為 `.never`、`urlCache` 為 nil），`SlackWebClient` 組出的請求設 `httpShouldHandleCookies = false`。驗證：spec 情境「Cookies Slack sets are neither stored nor sent」的測試：session 設定沒有 cookie 存放區、不收 cookie、沒有快取，請求本身不處理 cookie（`URLProtocol` stub 回的 `Set-Cookie` 連有存放區的 session 都不會存，離線測不出實際行為，所以只驗設定與請求）。
+- [x] 10.2 `che-slack-mcp/Package.swift` 宣告 `swift-tools-version: 6.0` 並以 `swiftLanguageModes: [.v5]` 維持現有語言模式，讓 Swift 6 以前的工具鏈直接回報需要 6.0，而不是在 typed throws 報語法錯誤。驗證：`swift build`、`swift build -c release`、完整測試通過。
+

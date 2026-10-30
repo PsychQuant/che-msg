@@ -6,7 +6,12 @@ A Foundation-only client that calls the Slack Web API as the signed-in user with
 
 ### Requirement: Session token request authentication
 
-The client SHALL send every Web API call as an HTTPS POST to `https://slack.com/api/<method>` with the body encoded as `application/x-www-form-urlencoded`, the workspace's `xoxc` token in the form field `token`, and the header `Cookie: d=<cookie value>`. The client SHALL NOT place the token or the cookie in the URL. The client SHALL accept its transport as an injected dependency so that requests can be observed without network access.
+The client SHALL send every Web API call as an HTTPS POST to `https://slack.com/api/<method>` with the body encoded as `application/x-www-form-urlencoded`, the workspace's `xoxc` token in the form field `token`, and the header `Cookie: d=<cookie value>`. The client SHALL NOT place the token or the cookie in the URL. The client SHALL accept its transport as an injected dependency so that requests can be observed without network access. The production transport SHALL keep no HTTP state from Slack's answers: it SHALL NOT store a cookie Slack sets, on disk or in memory, SHALL NOT cache responses, and SHALL send no cookie other than the `d` cookie of the workspace being called.
+
+#### Scenario: Cookies Slack sets are neither stored nor sent
+
+- **WHEN** the production transport's session is created and the client builds a request
+- **THEN** the session has no cookie storage, sets no cookies, accepts none and has no response cache, and the request has cookie handling turned off, so its only cookie is the `Cookie: d=<cookie value>` header the client wrote
 
 #### Scenario: Request carries token in the body and cookie in a header
 
