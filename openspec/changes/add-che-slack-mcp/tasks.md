@@ -39,7 +39,7 @@
 
 ## 8. 第二次 review 修正
 
-- [ ] 8.1 [after: 7.2] 依 Incremental archive and manifest 的修訂：帶 `after_ts`／`since_date` 時，只有起點不晚於書籤（或沒有書籤）且走到起點才推進書籤；明確範圍沒走完時連同下界記下接續點，以相同參數重跑接著往舊的抓。驗證：spec 情境「Explicit range newer than the bookmark keeps the bookmark」（書籤 `1789995600.000100`、`since_date` `2026-10-25`）與「Explicit range continues on the next call」（15000 則、第一次 10000、第二次補 5000）的測試，既有歸檔測試全數通過。
-- [ ] 8.2 [after: 8.1] 依 Thread replies and lookback 的修訂：被回覆頁數上限截斷的 thread 不論主訊息多舊都保留回覆書籤並在後續呼叫接續，未抓完前回報 `complete: false`。驗證：spec 情境「Long thread outside the window continues」（60 天前的主訊息、1300 則回覆）的測試，以及 `thread_lookback_days` 0 的情況。
-- [ ] 8.3 依 Keychain credential layout 的修訂：剪貼簿與桌面版匯入在寫入任何憑證前檢查合併後的 `SLACK_WORKSPACES` 是否放得下一次寫入，放不下就不寫並回報 workspace 數量與 `slack-all auth remove`；plugin README 與 che-slack-mcp README 寫明上限。驗證：spec 情境「Index that would not fit is refused before any write」（40 個 workspace）的測試，確認沒有任何 Keychain 項目被建立或修改。
+- [x] 8.1 [after: 7.2] 依 Incremental archive and manifest 的修訂：帶 `after_ts`／`since_date` 時，只有起點不晚於書籤（或沒有書籤）且走到起點才推進書籤；明確範圍沒走完時連同下界記下接續點，以相同參數重跑接著往舊的抓。驗證：spec 情境「Explicit range newer than the bookmark keeps the bookmark」（書籤 `1789995600.000100`、`since_date` `2026-10-25`）與「Explicit range continues on the next call」（15000 則、第一次 10000、第二次補 5000）的測試，既有歸檔測試全數通過。
+- [x] 8.2 [after: 8.1] 依 Thread replies and lookback 的修訂：被回覆頁數上限截斷的 thread 不論主訊息多舊都保留回覆書籤並在後續呼叫接續，未抓完前回報 `complete: false`。驗證：spec 情境「Long thread outside the window continues」（60 天前的主訊息、1300 則回覆）的測試，以及 `thread_lookback_days` 0 的情況。
+- [x] 8.3 依 Keychain credential layout 的修訂：剪貼簿與桌面版匯入在寫入任何憑證前檢查合併後的 `SLACK_WORKSPACES` 是否放得下一次寫入，放不下就不寫並回報 workspace 數量與 `slack-all auth remove`；plugin README 與 che-slack-mcp README 寫明上限。驗證：spec 情境「Index that would not fit is refused before any write」（40 個 workspace）的測試，確認沒有任何 Keychain 項目被建立或修改。
 
