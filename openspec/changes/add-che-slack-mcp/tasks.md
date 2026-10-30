@@ -43,3 +43,8 @@
 - [x] 8.2 [after: 8.1] 依 Thread replies and lookback 的修訂：被回覆頁數上限截斷的 thread 不論主訊息多舊都保留回覆書籤並在後續呼叫接續，未抓完前回報 `complete: false`。驗證：spec 情境「Long thread outside the window continues」（60 天前的主訊息、1300 則回覆）的測試，以及 `thread_lookback_days` 0 的情況。
 - [x] 8.3 依 Keychain credential layout 的修訂：剪貼簿與桌面版匯入在寫入任何憑證前檢查合併後的 `SLACK_WORKSPACES` 是否放得下一次寫入，放不下就不寫並回報 workspace 數量與 `slack-all auth remove`；plugin README 與 che-slack-mcp README 寫明上限。驗證：spec 情境「Index that would not fit is refused before any write」（40 個 workspace）的測試，確認沒有任何 Keychain 項目被建立或修改。
 
+## 9. 第三次 review 修正
+
+- [ ] 9.1 依 Thread replies and lookback 的修訂：限流中斷的那一次，這次才被回覆頁數上限截斷、回覆已寫入的 thread 要連同最新一則回覆記進 manifest 的截斷清單，其他回覆書籤照舊不動。驗證：spec 情境「Thread cut before a rate limit continues」（60 天前的主訊息、1300 則回覆，第 1000 則後在之後的歷史頁被限流）的測試，下一次之後補齊剩下 300 則。
+- [ ] 9.2 [after: 9.1] 依 Incremental archive and manifest 的修訂：已走到下界、只是列回顧窗口時碰到每次頁數上限，不再讓 `complete` 變成 false；每個結果都回報 `lookback_complete`，窗口沒列完且 `complete` 為 true 時在 note 說明並建議調小 `thread_lookback_days`；tool 說明與兩份 README 同步。驗證：spec 情境「Busy lookback window does not keep complete false」的測試；把 `pageCapAfterBookmark` 改成新語意。
+

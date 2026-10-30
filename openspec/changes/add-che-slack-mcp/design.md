@@ -137,7 +137,7 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 - 回覆寫在它自己日期的檔案裡，標頭寫成 `**<HH:mm> <sender>** ↳ thread:<parent_ts>：`，主訊息的區塊不變。
 - 每次歸檔時，對 `ts` 落在最近 `thread_lookback_days` 天內（預設 30，範圍 0 到 365）、且 `latest_reply` 比 manifest 紀錄更新的主訊息，重新抓回覆。
 
-抓回覆時，若 manifest 已記錄該 thread 的回覆 `ts`，就以它為 `oldest` 從那之後接著抓，超過單次頁數上限的長 thread 會在後續呼叫補齊（review 發現原本每次都從第一則重讀）。被頁數上限截斷的 thread 不論主訊息多舊都保留回覆書籤，直到抓完；在那之前回報 `complete: false`（第二次 review 發現窗口外的長 thread 會在第 1000 則停住）。
+抓回覆時，若 manifest 已記錄該 thread 的回覆 `ts`，就以它為 `oldest` 從那之後接著抓，超過單次頁數上限的長 thread 會在後續呼叫補齊（review 發現原本每次都從第一則重讀）。被頁數上限截斷的 thread 不論主訊息多舊都保留回覆書籤，直到抓完；在那之前回報 `complete: false`（第二次 review 發現窗口外的長 thread 會在第 1000 則停住）。限流中斷的那一次也要記下這次才截斷的 thread（第三次 review 發現它會被丟掉，接續點又在主訊息下面，剩下的回覆永遠抓不到）。回顧窗口只用來查舊 thread 有沒有新回覆，不影響 `complete`：新訊息都寫完、沒有截斷的 thread 就回報 `complete: true`，窗口沒列完另外回報 `lookback_complete: false` 並建議調小 `thread_lookback_days`（第三次 review 發現很忙的頻道窗口超過每次 50 頁，`complete` 永遠是 false；使用者選擇不另記窗口的接續點）。
 
 30 天是選定的預設值，**沒有量測依據**。更早的 thread 若有遲到的回覆，不會被補抓，這是第一版刻意接受的漏洞；使用者可以用更大的 `thread_lookback_days` 重跑一次補齊。
 
