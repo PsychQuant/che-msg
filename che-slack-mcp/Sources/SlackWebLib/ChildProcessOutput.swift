@@ -1,7 +1,10 @@
 import Foundation
 
+// Shared with SlackAllCore (the `Slack Safe Storage` reader) at `package`
+// access: callable from this package's targets, not part of the public API.
+
 /// How a child process ended, as far as a bounded lookup is concerned.
-enum ChildOutcome: Equatable, Sendable {
+package enum ChildOutcome: Equatable, Sendable {
     case exited(Int32)
     case timedOut
     case couldNotStart
@@ -9,8 +12,9 @@ enum ChildOutcome: Equatable, Sendable {
 
 /// Starts `process` and waits for it to exit or for `timeout` to pass,
 /// whichever comes first; on timeout, terminates it and kills it if it is
-/// still running `killGrace` seconds later.
-func runBounded(_ process: Process, timeout: TimeInterval, killGrace: TimeInterval) async -> ChildOutcome {
+/// still running `killGrace` seconds later. The caller sets up the child's
+/// standard streams. Cancelling the calling task does not stop the child.
+package func runBounded(_ process: Process, timeout: TimeInterval, killGrace: TimeInterval) async -> ChildOutcome {
     await withCheckedContinuation { (continuation: CheckedContinuation<ChildOutcome, Never>) in
         let once = ResumeOnce(continuation)
         process.terminationHandler = { finished in
@@ -36,18 +40,22 @@ func runBounded(_ process: Process, timeout: TimeInterval, killGrace: TimeInterv
     }
 }
 
-/// Collects a child's output in the background, up to `limit` bytes, so the
+/// Collects a child's output in the background, up to a byte limit, so the
 /// child never blocks on a full pipe and the caller never blocks on EOF.
-final class OutputCollector: @unchecked Sendable {
-    static let limit = 64 * 1024
+package final class OutputCollector: @unchecked Sendable {
+    /// The default limit.
+    package static let limit = 64 * 1024
     private let handle: FileHandle
+    private let maxBytes: Int
     private let lock = NSLock()
     private var data = Data()
     private var reachedEnd = false
     private var truncated = false
 
-    init(_ handle: FileHandle) {
+    /// Starts reading `handle`, keeping at most `limit` bytes.
+    package init(_ handle: FileHandle, limit: Int = OutputCollector.limit) {
         self.handle = handle
+        self.maxBytes = limit
         handle.readabilityHandler = { [weak self] readable in
             let chunk = readable.availableData
             guard let self else { return }
@@ -55,7 +63,7 @@ final class OutputCollector: @unchecked Sendable {
                 if chunk.isEmpty {
                     self.reachedEnd = true
                 } else {
-                    let room = Self.limit - self.data.count
+                    let room = self.maxBytes - self.data.count
                     if chunk.count > room { self.truncated = true }
                     if room > 0 { self.data.append(chunk.prefix(room)) }
                 }
@@ -65,8 +73,9 @@ final class OutputCollector: @unchecked Sendable {
     }
 
     /// Waits up to `seconds` for EOF, then stops reading and returns what
-    /// arrived, and whether more than `limit` bytes were written.
-    func finish(waitingUpTo seconds: TimeInterval) async -> (data: Data, truncated: Bool) {
+    /// arrived, and whether more than the limit was written. A cancelled
+    /// task stops waiting at once and gets whatever has arrived so far.
+    package func finish(waitingUpTo seconds: TimeInterval) async -> (data: Data, truncated: Bool) {
         let deadline = Date().addingTimeInterval(seconds)
         while !lock.withLock({ reachedEnd }), Date() < deadline, !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 10_000_000)

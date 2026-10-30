@@ -161,7 +161,8 @@ public struct SecurityCLIKeychainReader: KeychainItemReader {
     }
 }
 
-/// `10` for whole seconds, `0.5` otherwise.
-func formatSeconds(_ seconds: TimeInterval) -> String {
+/// `10` for whole seconds, `0.5` otherwise. `package` so SlackAllCore's
+/// messages format seconds the same way.
+package func formatSeconds(_ seconds: TimeInterval) -> String {
     seconds == seconds.rounded() ? String(Int(seconds)) : String(seconds)
 }

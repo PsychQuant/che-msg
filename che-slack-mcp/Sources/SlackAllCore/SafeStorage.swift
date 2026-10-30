@@ -24,6 +24,12 @@ public protocol SlackSafeStorageReader: Sendable {
 ///   default timeout is a generous 180 s (chosen, not measured). A child
 ///   still running then is terminated (killed a second later) and the result
 ///   is `timedOut`.
+/// - If the calling task is cancelled, the read stops waiting for stdout as
+///   soon as the child has exited and returns what has arrived, as
+///   `SecurityCLIKeychainReader` does (the two share `runBounded` and
+///   `OutputCollector`; the copy this reader used to have waited out the
+///   full output grace). Cancelling does not stop the child: that still
+///   takes its exit or the timeout.
 /// - `-w`, unlike `-g`, prints a value with non-ASCII bytes as bare hex; the
 ///   Safe Storage password Chromium generates is base64 text, so `-w` is
 ///   read as text as is.
@@ -41,9 +47,28 @@ public struct SecuritySafeStorageReader: SlackSafeStorageReader {
 
     static let arguments = ["find-generic-password", "-s", service, "-w"]
 
+    /// The most stdout kept; a password is far shorter.
+    static let outputLimit = 4096
+    /// How long to wait for stdout to reach EOF after the child has exited
+    /// (another process may have inherited it), and how long a terminated
+    /// child gets before it is killed.
+    static let outputGrace: TimeInterval = 1
+    static let killGrace: TimeInterval = 1
+
     public func readPassword() async -> KeychainLookup {
-        let (outcome, output, truncated) = await BoundedChild.run(executable, Self.arguments, timeout: timeout,
-                                                                  outputLimit: 4096)
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = Self.arguments
+        process.standardInput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        let collector = OutputCollector(stdout.fileHandleForReading, limit: Self.outputLimit)
+
+        let outcome = await runBounded(process, timeout: timeout, killGrace: Self.killGrace)
+        let waitForOutput = outcome == .timedOut || outcome == .couldNotStart ? 0 : Self.outputGrace
+        let (output, truncated) = await collector.finish(waitingUpTo: waitForOutput)
+
         switch outcome {
         case .timedOut:
             return .timedOut(after: timeout)
@@ -62,111 +87,6 @@ public struct SecuritySafeStorageReader: SlackSafeStorageReader {
             return text.isEmpty ? .absent : .found(text)
         case .exited(let status):
             return .unavailable(reason: "\(executable.lastPathComponent) exited with status \(status)")
-        }
-    }
-}
-
-/// Runs a child with stdin on the null device, stderr discarded and stdout
-/// collected up to a limit, and stops it at a timeout.
-enum BoundedChild {
-    enum Outcome: Equatable, Sendable {
-        case exited(Int32)
-        case timedOut
-        case couldNotStart
-    }
-
-    static let killGrace: TimeInterval = 1
-    static let outputGrace: TimeInterval = 1
-
-    /// How the child ended, its stdout (at most `outputLimit` bytes), and
-    /// whether it wrote more than that.
-    static func run(_ executable: URL, _ arguments: [String], timeout: TimeInterval,
-                    outputLimit: Int) async -> (Outcome, Data, Bool) {
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = arguments
-        process.standardInput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        let collector = Collector(pipe.fileHandleForReading, limit: outputLimit)
-
-        let outcome = await withCheckedContinuation { (continuation: CheckedContinuation<Outcome, Never>) in
-            let once = Once(continuation)
-            process.terminationHandler = { once.resume(.exited($0.terminationStatus)) }
-            do {
-                try process.run()
-            } catch {
-                once.resume(.couldNotStart)
-                return
-            }
-            let pid = process.processIdentifier
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                guard process.isRunning else { return }
-                once.resume(.timedOut)
-                process.terminate()
-                DispatchQueue.global().asyncAfter(deadline: .now() + killGrace) {
-                    if process.isRunning { kill(pid, SIGKILL) }
-                }
-            }
-        }
-        let wait = outcome == .timedOut || outcome == .couldNotStart ? 0 : outputGrace
-        let (data, truncated) = await collector.finish(waitingUpTo: wait)
-        return (outcome, data, truncated)
-    }
-
-    /// Reads a pipe in the background so the child never blocks on it.
-    private final class Collector: @unchecked Sendable {
-        private let handle: FileHandle
-        private let limit: Int
-        private let lock = NSLock()
-        private var data = Data()
-        private var ended = false
-        private var truncated = false
-
-        init(_ handle: FileHandle, limit: Int) {
-            self.handle = handle
-            self.limit = limit
-            handle.readabilityHandler = { [weak self] readable in
-                let chunk = readable.availableData
-                guard let self else { return }
-                self.lock.withLock {
-                    if chunk.isEmpty {
-                        self.ended = true
-                    } else {
-                        let room = self.limit - self.data.count
-                        if chunk.count > room { self.truncated = true }
-                        if room > 0 { self.data.append(chunk.prefix(room)) }
-                    }
-                }
-                if chunk.isEmpty { readable.readabilityHandler = nil }
-            }
-        }
-
-        func finish(waitingUpTo seconds: TimeInterval) async -> (Data, Bool) {
-            let deadline = Date().addingTimeInterval(seconds)
-            while !lock.withLock({ ended }), Date() < deadline {
-                try? await Task.sleep(nanoseconds: 10_000_000)
-            }
-            handle.readabilityHandler = nil
-            try? handle.close()
-            return lock.withLock { (data, truncated) }
-        }
-    }
-
-    /// Resumes a continuation once, whichever of exit and timeout is first.
-    private final class Once: @unchecked Sendable {
-        private let lock = NSLock()
-        private var continuation: CheckedContinuation<Outcome, Never>?
-
-        init(_ continuation: CheckedContinuation<Outcome, Never>) { self.continuation = continuation }
-
-        func resume(_ outcome: Outcome) {
-            let pending: CheckedContinuation<Outcome, Never>? = lock.withLock {
-                defer { continuation = nil }
-                return continuation
-            }
-            pending?.resume(returning: outcome)
         }
     }
 }
