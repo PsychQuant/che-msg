@@ -45,6 +45,6 @@
 
 ## 9. 第三次 review 修正
 
-- [ ] 9.1 依 Thread replies and lookback 的修訂：限流中斷的那一次，這次才被回覆頁數上限截斷、回覆已寫入的 thread 要連同最新一則回覆記進 manifest 的截斷清單，其他回覆書籤照舊不動。驗證：spec 情境「Thread cut before a rate limit continues」（60 天前的主訊息、1300 則回覆，第 1000 則後在之後的歷史頁被限流）的測試，下一次之後補齊剩下 300 則。
-- [ ] 9.2 [after: 9.1] 依 Incremental archive and manifest 的修訂：已走到下界、只是列回顧窗口時碰到每次頁數上限，不再讓 `complete` 變成 false；每個結果都回報 `lookback_complete`，窗口沒列完且 `complete` 為 true 時在 note 說明並建議調小 `thread_lookback_days`；tool 說明與兩份 README 同步。驗證：spec 情境「Busy lookback window does not keep complete false」的測試；把 `pageCapAfterBookmark` 改成新語意。
+- [x] 9.1 依 Thread replies and lookback 的修訂：限流中斷的那一次，這次才被回覆頁數上限截斷、回覆已寫入的 thread 要連同最新一則回覆記進 manifest 的截斷清單，其他回覆書籤照舊不動。驗證：spec 情境「Thread cut before a rate limit continues」（60 天前的主訊息、1300 則回覆，第 1000 則後在之後的歷史頁被限流）的測試，下一次之後補齊剩下 300 則。
+- [x] 9.2 [after: 9.1] 依 Incremental archive and manifest 的修訂：已走到下界、只是列回顧窗口時碰到每次頁數上限，不再讓 `complete` 變成 false；每個結果都回報 `lookback_complete`，窗口沒列完且 `complete` 為 true 時在 note 說明並建議調小 `thread_lookback_days`；tool 說明與兩份 README 同步。驗證：spec 情境「Busy lookback window does not keep complete false」的測試；把 `pageCapAfterBookmark` 改成新語意。
 
