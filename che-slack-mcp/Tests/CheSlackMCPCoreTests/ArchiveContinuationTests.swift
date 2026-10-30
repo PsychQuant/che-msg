@@ -154,9 +154,10 @@ struct ArchiveContinuationTests {
         #expect(try output.read(ArchiveManifestTests.manifestPath) == Self.pending)
     }
 
-    /// Chosen: after_ts and since_date set a one-off walk. With a
+    /// spec: after_ts and since_date read their own range. With a
     /// continuation pending they neither continue it nor move `newest_ts`
-    /// (the continuation's lower bound), and the continuation is kept.
+    /// (the continuation's lower bound), even for a range that starts below
+    /// `newest_ts` and reaches its bound; the continuation is kept.
     @Test("after_ts with a continuation pending sends no latest, keeps the continuation and leaves newest_ts")
     func explicitRangeKeepsContinuation() async throws {
         let output = TemporaryDirectory()

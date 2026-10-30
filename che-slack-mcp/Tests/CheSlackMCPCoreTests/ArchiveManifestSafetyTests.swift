@@ -53,6 +53,24 @@ struct ArchiveManifestSafetyTests {
          manifest(["continuation": #"{"top_ts": "1793585000.000100", "below_ts": "1793585100.000100"}"#])),
         ("a continuation whose below_ts is not newer than newest_ts",
          manifest(["continuation": #"{"top_ts": "1793585100.000100", "below_ts": "1793498700.000100"}"#])),
+        ("a range that is not an object", manifest(["range": #""1793400000.000100""#])),
+        ("a range without oldest_ts", manifest(["range": #"{"newest_ts": "1793460000.000100"}"#])),
+        ("a range without newest_ts", manifest(["range": #"{"oldest_ts": "1793400000.000100"}"#])),
+        ("a range ts as a number", manifest(["range": #"{"oldest_ts": 1793400000, "newest_ts": null}"#])),
+        ("a range ts that is not a Slack ts", manifest(["range": #"{"oldest_ts": "today", "newest_ts": null}"#])),
+        ("a range continuation ts that is not a Slack ts",
+         manifest(["range": #"{"oldest_ts": "1793400000.000100", "newest_ts": null, "continuation": {"top_ts": "1793460000.000100", "below_ts": "x"}}"#])),
+        ("a range whose newest_ts is not newer than its oldest_ts",
+         manifest(["range": #"{"oldest_ts": "1793400000.000100", "newest_ts": "1793400000.000100"}"#])),
+        ("a range continuation whose below_ts is newer than its top_ts",
+         manifest(["range": #"{"oldest_ts": "1793400000.000100", "newest_ts": null, "continuation": {"top_ts": "1793420200.000100", "below_ts": "1793460000.000100"}}"#])),
+        ("a range continuation whose below_ts is not newer than the range's oldest_ts",
+         manifest(["range": #"{"oldest_ts": "1793400000.000100", "newest_ts": null, "continuation": {"top_ts": "1793460000.000100", "below_ts": "1793400000.000100"}}"#])),
+        ("a range continuation whose below_ts is not newer than the range's newest_ts",
+         manifest(["range": #"{"oldest_ts": "1793400000.000100", "newest_ts": "1793430000.000100", "continuation": {"top_ts": "1793460000.000100", "below_ts": "1793420200.000100"}}"#])),
+        ("unfinished_threads that is not an array", manifest(["unfinished_threads": #""1788318000.000100""#])),
+        ("unfinished_threads holding a number", manifest(["unfinished_threads": "[1788318000.000100]"])),
+        ("unfinished_threads holding a non-ts", manifest(["unfinished_threads": #"["x"]"#])),
     ]
 
     @Test("a manifest that is damaged, mistyped or not this conversation's refuses the call; nothing is written",
@@ -74,12 +92,15 @@ struct ArchiveManifestSafetyTests {
         #expect(try output.read(ArchiveManifestTests.manifestPath) == content, "\(name)")
     }
 
-    /// A manifest written before continuations existed has none: it is read
-    /// as having no unfinished walk. One with a continuation is continued.
-    @Test("the well-formed manifest of the damaged cases is accepted, with or without a continuation",
+    /// A manifest written before continuations, explicit ranges and
+    /// unfinished threads existed has none of them: it is read as having no
+    /// unfinished walk. One with a continuation is continued; a recorded
+    /// range is not, by a call without after_ts or since_date.
+    @Test("the well-formed manifest of the damaged cases is accepted, with or without a continuation or a range",
           arguments: [(manifest(), nil as String?),
                       (manifest(["continuation": #"{"top_ts": "1793585100.000100", "below_ts": "1793585000.000100"}"#]),
-                       "1793585000.000100")])
+                       "1793585000.000100"),
+                      (manifest(["range": ArchiveRangeTests.otherRange, "unfinished_threads": "[]"]), nil)])
     func wellFormedManifest(_ content: String, latest: String?) async throws {
         let transport = ArchiveSafetyTests.slack()
         let (handler, _) = try await readHandler(transport)

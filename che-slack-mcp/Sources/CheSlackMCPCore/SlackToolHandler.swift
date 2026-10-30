@@ -16,6 +16,9 @@ struct SlackToolHandler: Sendable {
     /// thread lookback window and the run time the manifest records.
     /// Injectable so tests run on a fixed clock.
     var now: @Sendable () -> Date = { Date() }
+    /// History pages one archive call reads at most; injectable so tests
+    /// model the page limit with fewer messages.
+    var archiveMaxPages = SlackToolHandler.archiveHistoryMaxPages
 
     var resolver: WorkspaceResolver { WorkspaceResolver(store: store) }
 

@@ -5,8 +5,10 @@ import SlackWebLib
 /// (spec: slack-chat-archive, "Incremental archive and manifest" and
 /// "Thread replies and lookback"; design: thread 回覆以回顧窗口補抓).
 ///
-/// - Written: top-level messages after `after_ts`, else from `since_date`
-///   on, else after the manifest's `newest_ts` (the bookmark), else all.
+/// - Written: top-level messages after the `newest_ts` of the recorded
+///   range this run continues, else after `after_ts`, else from
+///   `since_date` on, else after the manifest's `newest_ts` (the bookmark),
+///   else all.
 /// - Listed: from the lower bound of the written ones, or from the start of
 ///   the lookback window when the manifest has a bookmark and the window
 ///   starts earlier. Slack has no request for "threads with new replies",
@@ -14,39 +16,54 @@ import SlackWebLib
 ///   only to read their `latest_reply`; they are not written again.
 /// - Replies fetched: for every parent written, and for every parent listed
 ///   but not written that `needsReplies` accepts.
-/// - Continued: when the manifest records an unfinished walk and neither
-///   `after_ts` nor `since_date` is given, only the history below its
-///   `below_ts` is listed (sent as `latest`), down to the same lower bound;
-///   messages newer than its `top_ts` wait for the next run.
+/// - Continued: when the manifest records an unfinished walk for this kind
+///   of call (its `continuation` without `after_ts` and `since_date`, its
+///   `range`'s with the same lower bound), only the history below that
+///   walk's `below_ts` is listed (sent as `latest`), down to the same lower
+///   bound; messages newer than its `top_ts` wait for the next run.
 struct ArchiveScope {
     let request: ArchiveRequest
     /// The manifest's `newest_ts`, or nil without a manifest.
     let bookmark: String?
-    /// The manifest's unfinished walk that this run continues. Chosen:
-    /// nil when `after_ts` or `since_date` is given, which set a one-off
-    /// range that neither continues nor replaces it.
+    /// The manifest's `range` when this call gives the same lower bound
+    /// (`oldest_ts` equal to `request.oldest`), so this run continues it;
+    /// nil otherwise, and always without `after_ts` and `since_date`.
+    let range: ArchiveManifest.ExplicitRange?
+    /// The unfinished walk this run continues: the manifest's
+    /// `continuation` without `after_ts` and `since_date`, else `range`'s.
     let continuation: ArchiveManifest.Continuation?
     /// The first second of the lookback window: `thread_lookback_days` days
     /// of 86400 seconds before the call's start; nil for a window of 0 days.
     let windowStart: Int64?
 
-    init(request: ArchiveRequest, bookmark: String?, continuation: ArchiveManifest.Continuation? = nil, now: Date) {
+    init(request: ArchiveRequest, manifest: ArchiveManifest?, now: Date) {
         self.request = request
-        self.bookmark = bookmark
-        self.continuation = request.oldest == nil ? continuation : nil
+        bookmark = manifest?.newest_ts
+        if let oldest = request.oldest {
+            range = manifest?.range.flatMap { $0.oldest_ts == oldest ? $0 : nil }
+            continuation = range?.continuation
+        } else {
+            range = nil
+            continuation = manifest?.continuation
+        }
         windowStart = request.threadLookbackDays > 0
             ? max(0, Int64(now.timeIntervalSince1970) - Int64(request.threadLookbackDays) * 86_400)
             : nil
     }
 
+    /// The ts the written messages are newer than (see `isWritten`), or nil
+    /// for the whole history.
+    var bound: String? { range?.newest_ts ?? request.oldest ?? bookmark }
+
     /// Whether a listed top-level message is written. Slack already applies
     /// `oldest`; this keeps out a message at the bound itself and the older
     /// ones listed only for the lookback window.
     func isWritten(_ ts: String) -> Bool {
-        if let after = request.afterTS { return SlackDayFile.precedes(after, ts) }
-        if let since = request.sinceSeconds { return (SlackDayFile.seconds(ofTS: ts) ?? 0) >= since }
-        if let bookmark { return SlackDayFile.precedes(bookmark, ts) }
-        return true
+        if range?.newest_ts == nil, let since = request.sinceSeconds {
+            return (SlackDayFile.seconds(ofTS: ts) ?? 0) >= since
+        }
+        guard let bound else { return true }
+        return SlackDayFile.precedes(bound, ts)
     }
 
     /// The `oldest` sent to `conversations.history` (nil: the whole
@@ -56,7 +73,6 @@ struct ArchiveScope {
     /// limit. Without a bookmark nothing below the bound was archived, so
     /// there is nothing to check again and the bound is used as it is.
     var listOldest: String? {
-        let bound = request.oldest ?? bookmark
         guard let bound, bookmark != nil, let windowStart else { return bound }
         let start = String(windowStart)
         return SlackDayFile.precedes(start, bound) ? start : bound

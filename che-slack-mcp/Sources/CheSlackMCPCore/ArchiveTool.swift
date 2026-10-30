@@ -31,8 +31,9 @@ extension SlackToolHandler {
              downloaded. A day file that already exists is merged by ts: its blocks are kept, and a message \
              archived again replaces its own block. Directories are created owner-only (0700), day files 0600. \
              A manifest.json next to the day files records the newest top-level ts archived, the newest reply ts \
-             of each thread parent inside the lookback window, the time of the last run and its counts, never \
-             message text or names. Without after_ts or since_date only messages newer than the manifest's newest \
+             of each thread parent inside the lookback window or not yet read to its end, the time of the last run \
+             and its counts, never message text or names. Without after_ts or since_date only messages newer than \
+             the manifest's newest \
              ts are written (the whole history when there is no manifest), and the thread parents archived in the \
              last thread_lookback_days days are listed again so that a parent whose latest reply is newer than \
              the recorded one gets its replies fetched, starting after that reply; older threads are not \
@@ -44,9 +45,16 @@ extension SlackToolHandler {
              recorded in the manifest as a continuation: the next call without after_ts or since_date first \
              continues it below the oldest message it wrote, and the newest ts moves, to the top of that walk, \
              only once it gets there; messages newer than that are read by the call after. A thread cut the same \
-             way continues after its newest reply recorded. after_ts and since_date read their own range: they do \
-             not continue or change a recorded continuation, and while one is recorded they do not move the \
-             newest ts. One archive of a conversation into an output_dir runs at a time, across server processes \
+             way is recorded too, and every later call continues it after its newest reply recorded, also when its \
+             parent is older than the lookback window. after_ts and since_date read their own range, from the newest \
+             message down to that bound, and do not continue or change the continuation above. They move the newest \
+             ts only when their bound is at or before it, once their walk gets there, and not while a continuation \
+             is recorded. A range stopped before its bound is recorded in the manifest with that bound, replacing a \
+             range recorded with another; the next call with the same after_ts or since_date continues it below the \
+             oldest message it wrote, the call after reads only messages newer than the newest it wrote, and once \
+             that one gets there the range is dropped. Calls without after_ts and since_date, or with another bound \
+             whose walk gets to it, leave a recorded range as it is. One archive of a conversation into an \
+             output_dir runs at a time, across server processes \
              too: a call made while another runs is an error and writes nothing. When Slack keeps rate limiting \
              after the client's retries, the call stops early and is not an error: the day files written so far \
              stay, the manifest's newest ts does not move but the point to continue below is recorded, and the \
@@ -88,7 +96,7 @@ extension SlackToolHandler {
             try Self.archiveRequest(args, localOffsetSeconds: localOffset)
         }) { request, selection in
             let archiver = ConversationArchiver(client: client, selection: selection, request: request,
-                                                maxPages: Self.archiveHistoryMaxPages, now: start)
+                                                maxPages: archiveMaxPages, now: start)
             return ToolResult.json(try await archiver.run())
         }
     }
@@ -97,15 +105,18 @@ extension SlackToolHandler {
 /// One archive call: takes the conversation's `ArchiveLock`, reads the
 /// manifest, then the history newest first by cursor within
 /// `ArchiveScope`, the replies of each thread parent written and of each
-/// parent in the lookback window with a newer reply, the names of senders
-/// and mentioned users (`users.info`, once per user per call); merges each
-/// page into the day files before reading the next, and replaces the
-/// manifest last. A walk stopped before its lower bound, by the page limit
-/// or a rate limit, is recorded as the manifest's `continuation`, so the
-/// next call continues below the oldest message written instead of reading
-/// the same newest pages again (spec: "Incremental archive and manifest").
-/// An error leaves the previous manifest, and the next call reads the same
-/// messages again and merges them in place.
+/// parent in the lookback window with a newer reply, then the replies of
+/// each thread the manifest lists as unfinished that the walk did not
+/// fetch, and the names of senders and mentioned users (`users.info`, once
+/// per user per call); merges each page and each such thread into the day
+/// files before reading the next, and replaces the manifest last. A walk
+/// stopped before its lower bound, by the page limit or a rate limit, is
+/// recorded as the manifest's `continuation` (its `range`, with
+/// `after_ts` or `since_date`), so the next such call continues below the
+/// oldest message written instead of reading the same newest pages again
+/// (spec: "Incremental archive and manifest"). An error leaves the
+/// previous manifest, and the next call reads the same messages again and
+/// merges them in place.
 struct ConversationArchiver {
     let client: SlackWebClient
     let selection: ResolvedWorkspace
@@ -130,9 +141,9 @@ struct ConversationArchiver {
         /// Messages not written because their ts is not a Slack timestamp.
         var skipped_messages = 0
         /// False when the page limit or a rate limit stopped the history
-        /// walk, a thread had more replies than one walk reads, or the call
-        /// finished an unfinished walk and so did not look for messages
-        /// newer than it.
+        /// walk, a thread had more replies than one walk reads (and so is
+        /// still unfinished), or the call finished an unfinished walk or
+        /// range and so did not look for messages newer than it.
         var complete = true
         /// Why the run stopped early; absent when it did not.
         enum StopReason: String, Encodable {
@@ -179,6 +190,11 @@ struct ConversationArchiver {
         /// Slack lists newest first, so a listed message that is not
         /// written (below the bound) means every newer one was listed.
         var reachedBound = false
+        /// Parents whose replies this run fetched.
+        var fetched: Set<String> = []
+        /// Parents whose replies the reply page limit cut: the manifest's
+        /// list, plus the threads cut in this run, less those finished.
+        var unfinished: Set<String>
 
         mutating func wrote(_ topLevel: [String]) {
             for ts in topLevel {
@@ -202,42 +218,46 @@ struct ConversationArchiver {
     /// merged before stays written, and:
     /// - `newest_ts` does not move, because Slack lists newest first and
     ///   the unread range below the written messages would be skipped;
-    /// - the manifest records the continuation below the oldest top-level
-    ///   message written, and is written only when that moved, so a stop
-    ///   that wrote nothing to continue from leaves it byte-identical;
-    /// - reply bookmarks are not moved, even for a thread written whole
-    ///   before the stop: the next run fetches it again and merges it in
-    ///   place, at the cost of a request, rather than trust a run that
-    ///   stopped part way;
+    /// - the manifest records the continuation (or the range's) below the
+    ///   oldest top-level message written, and is written only when one of
+    ///   them moved, so a stop that wrote nothing to continue from leaves it
+    ///   byte-identical;
+    /// - reply bookmarks and the unfinished threads are not moved, even for
+    ///   a thread written whole before the stop: the next run fetches it
+    ///   again and merges it in place, at the cost of a request, rather than
+    ///   trust a run that stopped part way;
     /// - `last_run` describes this run when the manifest is written.
     /// Any other error is thrown on, with the same files kept and the
-    /// manifest, its continuation included, left as it was.
+    /// manifest, its continuation and range included, left as it was.
     private func run(in directory: ArchiveDirectory) async throws -> Summary {
         // Again under the lock: a run that ended meanwhile may have written
         // day files at another offset.
         try directory.preflight(utcOffset: request.utcOffset)
         let previous = try directory.readManifest()
-        let scope = ArchiveScope(request: request, bookmark: previous?.newest_ts,
-                                 continuation: previous?.continuation, now: now)
+        let scope = ArchiveScope(request: request, manifest: previous, now: now)
         var progress = Progress(summary: Summary(team_id: directory.teamID, conversation_id: request.conversationID,
                                                  utc_offset: request.utcOffset),
-                                replyBookmarks: previous?.newest_reply_ts ?? [:])
+                                replyBookmarks: previous?.newest_reply_ts ?? [:],
+                                unfinished: Set(previous?.unfinished_threads ?? []))
         do {
             try await walk(scope, into: directory, progress: &progress)
+            try await continueThreads(previous?.unfinished_threads ?? [], into: directory, progress: &progress)
         } catch SlackError.rateLimited(let seconds) {
             progress.summary.files = progress.changed.sorted()
             progress.summary.stopRateLimited(retryAfterSeconds: seconds)
             let continuation = continuation(scope: scope, progress: progress, previous: previous, stopped: true)
-            if continuation != previous?.continuation {
+            let range = range(scope: scope, progress: progress, previous: previous, stopped: true)
+            if continuation != previous?.continuation || range != previous?.range {
                 try directory.writeManifest(ArchiveManifest(
                     teamID: directory.teamID, conversationID: request.conversationID, newestTS: scope.bookmark,
-                    newestReplyTS: previous?.newest_reply_ts ?? [:], continuation: continuation,
-                    lastRun: lastRun(progress.summary)))
+                    newestReplyTS: previous?.newest_reply_ts ?? [:], continuation: continuation, range: range,
+                    unfinishedThreads: previous?.unfinished_threads ?? [], lastRun: lastRun(progress.summary)))
             }
             return progress.summary
         }
         // A finished continuation looked for nothing newer than its top.
         if scope.continuation != nil, progress.reachedBound { progress.summary.complete = false }
+        if !progress.unfinished.isEmpty { progress.summary.complete = false }
         progress.summary.files = progress.changed.sorted()
         try directory.writeManifest(manifest(scope: scope, progress: progress, previous: previous))
         return progress.summary
@@ -277,7 +297,7 @@ struct ConversationArchiver {
                 if isNew ? ArchiveScope.isThreadParent(message)
                     : scope.needsReplies(message, recorded: progress.replyBookmarks[message.ts]) {
                     do {
-                        batch += try await replies(of: message, progress: &progress)
+                        batch += try await replies(of: message.ts, progress: &progress)
                     } catch SlackError.rateLimited(let seconds) {
                         stop = .rateLimited(retryAfterSeconds: seconds)
                         break messages
@@ -294,65 +314,148 @@ struct ConversationArchiver {
         if cursor == nil { progress.reachedBound = true } else { progress.summary.complete = false }
     }
 
-    /// The replies of `parent` not yet seen in this run, oldest first;
-    /// only those after the reply bookmark when one is recorded (spec:
-    /// "Thread replies and lookback"), the parent Slack still returns
-    /// first being left out. The bookmark becomes the newest reply Slack
-    /// returned (all of them are written now or were before). A thread
-    /// longer than one walk leaves `complete` false; its bookmark is then
-    /// the newest reply read, so the next run continues after it.
-    private func replies(of parent: SlackMessage, progress: inout Progress) async throws -> [SlackMessage] {
-        let thread = try await client.conversationReplies(channel: request.conversationID, ts: parent.ts,
-                                                          oldest: progress.replyBookmarks[parent.ts],
+    /// The replies of the thread `parent` not yet seen in this run, oldest
+    /// first; only those after the reply bookmark when one is recorded
+    /// (spec: "Thread replies and lookback"), the parent Slack still
+    /// returns first being left out. The bookmark becomes the newest reply
+    /// Slack returned (all of them are written now or were before). A
+    /// thread longer than one walk leaves `complete` false and is listed as
+    /// unfinished; its bookmark is then the newest reply read, so the next
+    /// run continues after it. A thread read to its end leaves the list.
+    private func replies(of parent: String, progress: inout Progress) async throws -> [SlackMessage] {
+        let thread = try await client.conversationReplies(channel: request.conversationID, ts: parent,
+                                                          oldest: progress.replyBookmarks[parent],
                                                           credential: credential)
-        if thread.hasMore { progress.summary.complete = false }
+        progress.fetched.insert(parent)
+        if thread.hasMore {
+            progress.summary.complete = false
+            progress.unfinished.insert(parent)
+        } else {
+            progress.unfinished.remove(parent)
+        }
         var replies: [SlackMessage] = []
-        for reply in thread.messages where reply.ts != parent.ts {
+        for reply in thread.messages where reply.ts != parent {
             guard SlackDayFile.seconds(ofTS: reply.ts) != nil else {
                 progress.summary.skipped_messages += 1
                 continue
             }
-            progress.replyBookmarks[parent.ts] = ArchiveScope.newer(progress.replyBookmarks[parent.ts], reply.ts)
+            progress.replyBookmarks[parent] = ArchiveScope.newer(progress.replyBookmarks[parent], reply.ts)
             if progress.seen.insert(reply.ts).inserted { replies.append(reply) }
         }
         return replies
     }
 
-    /// The manifest after a run that was not stopped. `newest_ts` moves
-    /// only when the walk reached its bound, to the newest message of the
-    /// whole walk (a continued one included): a walk the page limit stopped
-    /// above it left a gap below the messages it wrote, which a moved
-    /// bookmark would skip for good; that gap is the continuation instead.
-    /// Chosen: with `after_ts` or `since_date` and a continuation pending,
-    /// `newest_ts` stays, because it is the lower bound the continuation
-    /// still has to reach. Reply bookmarks are kept only for parents inside
-    /// this run's window; a parent that left it is dropped, and a later run
-    /// with a wider window has no record of it, so its replies are fetched
-    /// once more and merged in place.
+    /// Continues each thread in `parents` (the manifest's unfinished
+    /// threads, oldest first) that the walk did not fetch, whatever the
+    /// parent's age and the lookback window (spec: "Thread replies and
+    /// lookback"): its replies after its bookmark are written into the day
+    /// files of their own days, one thread at a time; the parent is not
+    /// written again. A rate limit is thrown on, as in the walk. Spec
+    /// silent, chosen: a thread Slack answers `thread_not_found` for (its
+    /// parent deleted, or removed by a retention policy) has no replies
+    /// left to write, so it leaves the list instead of failing every later
+    /// call.
+    private func continueThreads(_ parents: [String], into directory: ArchiveDirectory,
+                                 progress: inout Progress) async throws {
+        for parent in parents where !progress.fetched.contains(parent) {
+            let replies: [SlackMessage]
+            do {
+                replies = try await self.replies(of: parent, progress: &progress)
+            } catch SlackError.slackError(let code) where code == "thread_not_found" {
+                progress.unfinished.remove(parent)
+                continue
+            }
+            try await write(replies, into: directory, names: &progress.names, summary: &progress.summary,
+                            changed: &progress.changed)
+        }
+    }
+
+    /// The manifest after a run that was not stopped. Reply bookmarks are
+    /// kept for parents inside this run's window and for unfinished
+    /// threads, whatever their age; any other parent is dropped, and a
+    /// later run with a wider window has no record of it, so its replies
+    /// are fetched once more and merged in place.
     private func manifest(scope: ArchiveScope, progress: Progress, previous: ArchiveManifest?) -> ArchiveManifest {
-        let keepsBound = request.oldest != nil && previous?.continuation != nil
-        let walkTop = ArchiveScope.newer(scope.continuation?.top_ts, progress.walkNewest)
+        let unfinished = progress.unfinished
         return ArchiveManifest(
             teamID: progress.summary.team_id, conversationID: progress.summary.conversation_id,
-            newestTS: progress.reachedBound && !keepsBound ? ArchiveScope.newer(scope.bookmark, walkTop)
-                : scope.bookmark,
-            newestReplyTS: progress.replyBookmarks.filter { scope.isInWindow($0.key) },
+            newestTS: newestTS(scope: scope, progress: progress, previous: previous),
+            newestReplyTS: progress.replyBookmarks.filter { scope.isInWindow($0.key) || unfinished.contains($0.key) },
             continuation: continuation(scope: scope, progress: progress, previous: previous,
                                        stopped: !progress.reachedBound),
+            range: range(scope: scope, progress: progress, previous: previous, stopped: !progress.reachedBound),
+            unfinishedThreads: unfinished.sorted(by: SlackDayFile.precedes),
             lastRun: lastRun(progress.summary))
     }
 
+    /// `newest_ts` after a run that was not stopped (spec: "Incremental
+    /// archive and manifest"). It moves only when the walk reached its
+    /// bound: a walk the page limit stopped above it left a gap below the
+    /// messages it wrote, which a moved bookmark would skip for good; that
+    /// gap is the continuation instead. Without `after_ts` and `since_date`
+    /// it moves to the newest message of the whole walk, a continued one
+    /// included. With them it moves only when their lower bound is at or
+    /// before it (or there is none), so that every message between the two
+    /// was read, and no default continuation is pending, because
+    /// `newest_ts` is the lower bound that one still has to reach; it then
+    /// moves to the newest message the range has written contiguously from
+    /// its lower bound: that of the recorded range it continued, or of the
+    /// walk it continued, or of this walk.
+    private func newestTS(scope: ArchiveScope, progress: Progress, previous: ArchiveManifest?) -> String? {
+        guard progress.reachedBound else { return scope.bookmark }
+        let walkTop = ArchiveScope.newer(scope.continuation?.top_ts, progress.walkNewest)
+        guard let lower = request.oldest else { return ArchiveScope.newer(scope.bookmark, walkTop) }
+        guard previous?.continuation == nil, scope.bookmark.map({ !SlackDayFile.precedes($0, lower) }) ?? true
+        else { return scope.bookmark }
+        return ArchiveScope.newer(scope.bookmark, ArchiveScope.newer(scope.range?.newest_ts, walkTop))
+    }
+
     /// The unfinished walk the manifest records after this run, or nil.
-    /// Chosen: `after_ts` and `since_date` keep the previous one as it is,
-    /// and record none of their own (their range is the caller's, not the
-    /// manifest's). Otherwise a walk that reached its bound leaves none; a
-    /// stopped one keeps the top of the walk it continued, or its own
-    /// newest message, and continues below the oldest message written; a
-    /// stopped walk that wrote nothing keeps what was recorded.
+    /// `after_ts` and `since_date` keep the previous one as it is: their
+    /// own walk is recorded in `range`. Otherwise a walk that reached its
+    /// bound leaves none, and a stopped one is recorded by `stoppedWalk`.
     private func continuation(scope: ArchiveScope, progress: Progress, previous: ArchiveManifest?,
                               stopped: Bool) -> ArchiveManifest.Continuation? {
         guard request.oldest == nil else { return previous?.continuation }
-        guard stopped else { return nil }
+        return stopped ? stoppedWalk(scope: scope, progress: progress) : nil
+    }
+
+    /// The explicit range the manifest records after this run, or nil
+    /// (spec: "Incremental archive and manifest"):
+    /// - without `after_ts` and `since_date`, the previous one as it is;
+    /// - continuing the recorded range of the same lower bound: a stopped
+    ///   walk is recorded by `stoppedWalk`, keeping the range's `newest_ts`;
+    ///   a continued walk that reached the bound clears its continuation
+    ///   and moves `newest_ts` to the continuation's top (nothing newer was
+    ///   looked for, so the call is not complete); a walk from the top that
+    ///   reached it means the range caught up, and drops the record;
+    /// - with another lower bound, or none recorded: a walk stopped before
+    ///   its bound after writing something is recorded as a new range,
+    ///   replacing the previous one; otherwise the previous one stays. A
+    ///   rate limit after the walk reached its bound does not replace it.
+    private func range(scope: ArchiveScope, progress: Progress, previous: ArchiveManifest?,
+                       stopped: Bool) -> ArchiveManifest.ExplicitRange? {
+        guard let lower = request.oldest else { return previous?.range }
+        guard let recorded = scope.range else {
+            guard !progress.reachedBound, let walk = stoppedWalk(scope: scope, progress: progress)
+            else { return previous?.range }
+            return .init(oldest_ts: lower, newest_ts: nil, continuation: walk)
+        }
+        if stopped {
+            return .init(oldest_ts: lower, newest_ts: recorded.newest_ts,
+                         continuation: stoppedWalk(scope: scope, progress: progress))
+        }
+        guard let continued = recorded.continuation else { return nil }
+        return .init(oldest_ts: lower,
+                     newest_ts: ArchiveScope.newer(recorded.newest_ts,
+                                                   ArchiveScope.newer(continued.top_ts, progress.walkNewest)),
+                     continuation: nil)
+    }
+
+    /// Where a stopped walk continues: from the top of the walk it
+    /// continued, or its own newest message, below the oldest message
+    /// written. A stopped walk that wrote nothing keeps what was recorded.
+    private func stoppedWalk(scope: ArchiveScope, progress: Progress) -> ArchiveManifest.Continuation? {
         guard let top = scope.continuation?.top_ts ?? progress.walkNewest,
               let below = ArchiveScope.older(scope.continuation?.below_ts, progress.walkOldest)
         else { return scope.continuation }
