@@ -35,7 +35,24 @@
 #      that download fails, the existing binary is kept and started.
 #   8. A source build under ~/Developer/che-msg/che-slack-mcp is used as it
 #      is: no download, no sidecar written.
-#   9. No case reached curl except the download cases, and no case called
+#   9. Two starts at once against an empty HOME, with a fake curl that writes
+#      the payload slowly in chunks, both at the same time and with the second
+#      download's first byte late: both start a complete binary, the installed
+#      binary has the payload's checksum, the sidecar names the pinned version,
+#      one start installs and the other finds it installed, and no temporary
+#      file or install lock is left (task 12.6).
+#  10. A failed mv (a fake mv with no binary installed; a real one onto an
+#      immutable binary) writes no sidecar and leaves none changed, leaves no
+#      temporary file or lock, and takes the existing failure path: the
+#      startup error, or the existing binary kept and started.
+#  11. An install lock whose owner no longer runs, or older than five minutes
+#      without an owner, is taken over.
+#  12. An install lock held by a running process is waited for, and the
+#      install goes ahead once it is released.
+#  13. An install lock still held when the wait ends (a copy of the wrapper
+#      that waits 1 s) skips the install: the startup error, no sidecar, no
+#      temporary file, and the other process's lock left in place.
+#  14. No case reached curl except the download cases, and no case called
 #      security.
 #
 # Usage:
@@ -72,7 +89,8 @@ fail() { echo "  ✗ $1"; FAIL=$((FAIL + 1)); }
 test_case() { TOTAL=$((TOTAL + 1)); echo "Test: $1"; }
 
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/slack-wrapper-XXXXXX") || { echo "FAIL mktemp"; exit 1; }
-trap 'rm -rf "$SCRATCH"' EXIT
+# chflags: case 10 makes a binary immutable; clear it so rm can remove it.
+trap 'chflags -R nouchg "$SCRATCH" 2>/dev/null; rm -rf "$SCRATCH"' EXIT
 
 # fake_binary <path>: a CheSlackMCP stand-in. It records its environment
 # (env -0, so a value with a newline stays one record), its arguments and the
@@ -90,7 +108,7 @@ EOF
     chmod +x "$1"
 }
 
-# make_home <dir> [installed|none] [sidecar version] [curl: fail|serve]
+# make_home <dir> [installed|none] [sidecar version] [curl: fail|serve|slow]
 make_home() {
     local home=$1 binary=${2:-installed} sidecar=${3:-$DESIRED_VERSION} curl_mode=${4:-fail}
     mkdir -p "$home/bin" "$home/fakebin"
@@ -113,10 +131,14 @@ make_home() {
 }
 EOF
     fake_binary "$home/served-binary"
+    # slow: the download opens its output at the first byte, as curl does,
+    # then writes the payload in 8 chunks 0.15 s apart; every download but
+    # the first waits $HOME/curl.delay seconds before its first byte.
     cat > "$home/fakebin/curl" <<'EOF'
 #!/bin/bash
 echo "$*" >> "$HOME/curl.calls"
-[ "$(cat "$HOME/curl.mode" 2>/dev/null)" = serve ] || exit 22
+mode=$(cat "$HOME/curl.mode" 2>/dev/null)
+[ "$mode" = serve ] || [ "$mode" = slow ] || exit 22
 out=""; url=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -126,6 +148,18 @@ while [ $# -gt 0 ]; do
         *) url=$1; shift ;;
     esac
 done
+if [ -n "$out" ] && [ "$mode" = slow ]; then
+    echo "$url" >> "$HOME/curl.downloads"
+    mkdir "$HOME/curl.first" 2>/dev/null || sleep "$(cat "$HOME/curl.delay")"
+    exec 3> "$out" || exit 23
+    size=$(wc -c < "$HOME/served-binary")
+    chunk=$(( (size + 7) / 8 ))
+    for i in 0 1 2 3 4 5 6 7; do
+        dd if="$HOME/served-binary" bs="$chunk" skip="$i" count=1 2>/dev/null >&3
+        sleep 0.15
+    done
+    exit 0
+fi
 if [ -n "$out" ]; then
     echo "$url" >> "$HOME/curl.downloads"
     cp "$HOME/served-binary" "$out"
@@ -139,6 +173,22 @@ EOF
     chmod +x "$home/fakebin/security" "$home/fakebin/curl"
 }
 
+# make_payload <home>: replaces the served binary with a 64 KiB stand-in that,
+# when started, compares itself with the payload and appends "intact" or
+# "corrupt" to $HOME/started.
+make_payload() {
+    local i=0
+    {
+        echo '#!/bin/bash'
+        echo 'if cmp -s "$0" "$HOME/served-binary"; then echo intact >> "$HOME/started"; else echo corrupt >> "$HOME/started"; fi'
+        echo 'exit 0'
+        while [ "$i" -lt 1024 ]; do
+            printf '# padding %04d ..................................................\n' "$i"
+            i=$((i + 1))
+        done
+    } > "$1/served-binary"
+}
+
 # run_wrapper <home> <stdin-file> [VAR=value ...]: runs the wrapper in an empty
 # environment plus the given variables; stdout to $home/out, stderr to
 # $home/err; prints the exit status.
@@ -149,7 +199,26 @@ run_wrapper() {
     echo $?
 }
 
+# spawn_wrapper <home> <tag>: as run_wrapper, in the background, reading
+# $home/in; stdout to $home/out.<tag>, stderr to $home/err.<tag>. $! is its PID.
+spawn_wrapper() {
+    env -i HOME="$1" PATH="$1/fakebin:/usr/bin:/bin" \
+        /bin/bash "$WRAPPER" < "$1/in" > "$1/out.$2" 2> "$1/err.$2" &
+}
+
 initialize() { printf '{"jsonrpc":"2.0","id":%s,"method":"initialize","params":{}}\n' "$1"; }
+
+# now: wall-clock seconds with a fraction.
+now() { python3 -c 'import time; print(time.time())'; }
+
+# check_clean <home>: no temporary download and no install lock in ~/bin.
+check_clean() {
+    local f left=""
+    for f in "$1"/bin/CheSlackMCP.* "$1"/bin/.CheSlackMCP.lock*; do
+        [ -e "$f" ] && left="$left ${f##*/}"
+    done
+    if [ -z "$left" ]; then pass "no temporary file or install lock left in ~/bin"; else fail "left in ~/bin:$left"; fi
+}
 
 # check_started <home> <expected stdin line>
 check_started() {
@@ -250,7 +319,7 @@ RC=$(run_wrapper "$H" "$H/in")
 if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC"; fi
 check_error "$H" 9
 check_pinned_only "$H"
-if [ ! -e "$H/bin/CheSlackMCP" ] && [ ! -e "$H/bin/CheSlackMCP.tmp" ] && [ ! -e "$H/bin/.CheSlackMCP.version" ]; then
+if [ -z "$(ls -A "$H/bin")" ]; then
     pass "nothing left in ~/bin"
 else
     fail "files left in ~/bin: $(ls -A "$H/bin")"
@@ -277,7 +346,8 @@ if [ "$(cat "$H/curl.downloads" 2>/dev/null)" = "$ASSET_URL" ]; then
 else
     fail "downloaded: $(cat "$H/curl.downloads" 2>/dev/null || echo nothing)"
 fi
-if [ -x "$H/bin/CheSlackMCP" ] && [ ! -e "$H/bin/CheSlackMCP.tmp" ]; then pass "installed in ~/bin"; else fail "not installed in ~/bin"; fi
+if [ -x "$H/bin/CheSlackMCP" ]; then pass "installed in ~/bin"; else fail "not installed in ~/bin"; fi
+check_clean "$H"
 if [ "$(cat "$H/bin/.CheSlackMCP.version" 2>/dev/null)" = "$DESIRED_VERSION" ]; then
     pass "version sidecar says $DESIRED_VERSION"
 else
@@ -299,6 +369,7 @@ if [ "$RC" -eq 0 ]; then pass "exit status 0"; else fail "exit status $RC"; fi
 check_started "$H" "$(cat "$H/in")"
 if grep -q 'keeping existing binary' "$H/err"; then pass "stderr says the existing binary is kept"; else fail "stderr: $(head -c 300 "$H/err")"; fi
 if [ "$(cat "$H/bin/.CheSlackMCP.version")" = 0.0.1 ]; then pass "sidecar unchanged after the failed download"; else fail "sidecar changed"; fi
+check_clean "$H"
 
 # ----------------------------------------------------------------------
 test_case "A source build is used as it is"
@@ -312,10 +383,162 @@ if [ ! -e "$H/curl.calls" ]; then pass "no download attempted"; else fail "curl 
 if [ ! -e "$H/bin/CheSlackMCP" ] && [ ! -e "$H/bin/.CheSlackMCP.version" ]; then pass "nothing written to ~/bin"; else fail "~/bin was written"; fi
 
 # ----------------------------------------------------------------------
+# race <case dir> <delay> <id>: two wrappers start at once against an empty
+# HOME; the download that starts second waits <delay> s before its first byte.
+race() {
+    local H=$1 pid1 pid2 rc1 rc2 installed present
+    make_home "$H" none "" slow
+    make_payload "$H"
+    echo "$2" > "$H/curl.delay"
+    initialize "$3" > "$H/in"
+    spawn_wrapper "$H" 1; pid1=$!
+    spawn_wrapper "$H" 2; pid2=$!
+    wait "$pid1"; rc1=$?
+    wait "$pid2"; rc2=$?
+    if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ]; then
+        pass "both starts exit 0"
+    else
+        fail "exit statuses $rc1 and $rc2 (stderr: $(head -c 300 "$H/err.1") | $(head -c 300 "$H/err.2"))"
+    fi
+    if [ "$(grep -c . "$H/started" 2>/dev/null)" = 2 ] && ! grep -qv '^intact$' "$H/started"; then
+        pass "both starts ran a complete binary"
+    else
+        fail "binaries started: $(tr '\n' ' ' < "$H/started" 2>/dev/null || echo none)"
+    fi
+    if [ "$(shasum -a 256 < "$H/bin/CheSlackMCP" 2>/dev/null)" = "$(shasum -a 256 < "$H/served-binary")" ]; then
+        pass "the installed binary has the payload's checksum"
+    else
+        fail "the installed binary differs from the payload ($(wc -c < "$H/bin/CheSlackMCP" 2>/dev/null || echo 0) of $(wc -c < "$H/served-binary") bytes)"
+    fi
+    if [ "$(cat "$H/bin/.CheSlackMCP.version" 2>/dev/null)" = "$DESIRED_VERSION" ]; then
+        pass "version sidecar says $DESIRED_VERSION"
+    else
+        fail "version sidecar: $(cat "$H/bin/.CheSlackMCP.version" 2>/dev/null || echo missing)"
+    fi
+    installed=$(cat "$H/err.1" "$H/err.2" | grep -c "installed v$DESIRED_VERSION\$")
+    present=$(cat "$H/err.1" "$H/err.2" | grep -c "installed by another start")
+    if [ "$installed" = 1 ] && [ "$present" = 1 ]; then
+        pass "one start installed it, the other found it installed"
+    else
+        fail "$installed start(s) reported installing, $present found it installed"
+    fi
+    check_clean "$H"
+}
+
+test_case "Two starts at once install one complete binary"
+echo " (both downloads write at the same time)"
+race "$SCRATCH/race-together" 0 10
+echo " (the second download's first byte comes 0.9 s late)"
+race "$SCRATCH/race-staggered" 0.9 11
+
+# ----------------------------------------------------------------------
+test_case "A failed mv writes no sidecar and takes the existing failure path"
+H="$SCRATCH/mv-fails"; make_home "$H" none "" serve
+printf '#!/bin/bash\necho "$*" >> "$HOME/mv.calls"\nexit 1\n' > "$H/fakebin/mv"
+chmod +x "$H/fakebin/mv"
+initialize 12 > "$H/in"
+RC=$(run_wrapper "$H" "$H/in")
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC (stderr: $(head -c 300 "$H/err"))"; fi
+if [ -s "$H/mv.calls" ]; then pass "the replace step was reached"; else fail "mv was never called"; fi
+check_error "$H" 12
+if [ ! -e "$H/bin/.CheSlackMCP.version" ]; then pass "no sidecar written"; else fail "sidecar written: $(cat "$H/bin/.CheSlackMCP.version")"; fi
+if [ ! -e "$H/bin/CheSlackMCP" ]; then pass "nothing installed"; else fail "something was installed"; fi
+check_clean "$H"
+# A real mv failure: renaming onto an immutable binary fails (EPERM).
+H="$SCRATCH/mv-immutable"; make_home "$H" installed 0.0.1 serve
+make_payload "$H"
+chflags uchg "$H/bin/CheSlackMCP"
+initialize 13 > "$H/in"
+RC=$(run_wrapper "$H" "$H/in")
+chflags nouchg "$H/bin/CheSlackMCP"
+if [ "$RC" -eq 0 ]; then pass "exit status 0"; else fail "exit status $RC (stderr: $(head -c 300 "$H/err"))"; fi
+check_started "$H" "$(cat "$H/in")"
+if grep -q 'keeping existing binary' "$H/err"; then pass "stderr says the existing binary is kept"; else fail "stderr: $(head -c 300 "$H/err")"; fi
+if [ "$(cat "$H/bin/.CheSlackMCP.version")" = 0.0.1 ]; then pass "sidecar unchanged"; else fail "sidecar changed to $(cat "$H/bin/.CheSlackMCP.version")"; fi
+if ! cmp -s "$H/bin/CheSlackMCP" "$H/served-binary"; then pass "the existing binary is still installed"; else fail "the binary was replaced"; fi
+check_clean "$H"
+
+# ----------------------------------------------------------------------
+test_case "A stale install lock is taken over"
+H="$SCRATCH/lock-dead"; make_home "$H" none "" serve
+/usr/bin/true & dead=$!; wait "$dead"
+mkdir "$H/bin/.CheSlackMCP.lock"; echo "$dead" > "$H/bin/.CheSlackMCP.lock/pid"
+initialize 14 > "$H/in"
+RC=$(run_wrapper "$H" "$H/in")
+if [ "$RC" -eq 0 ]; then pass "owner gone: exit status 0"; else fail "owner gone: exit status $RC (stderr: $(head -c 300 "$H/err"))"; fi
+check_started "$H" "$(cat "$H/in")"
+if grep -q 'stale install lock' "$H/err"; then pass "owner gone: stderr says the stale lock was taken over"; else fail "owner gone: stderr: $(head -c 300 "$H/err")"; fi
+if [ "$(cat "$H/bin/.CheSlackMCP.version" 2>/dev/null)" = "$DESIRED_VERSION" ]; then pass "owner gone: installed"; else fail "owner gone: not installed"; fi
+check_clean "$H"
+H="$SCRATCH/lock-old"; make_home "$H" none "" serve
+mkdir "$H/bin/.CheSlackMCP.lock"
+python3 -c 'import os, sys, time; t = time.time() - 600; os.utime(sys.argv[1], (t, t))' "$H/bin/.CheSlackMCP.lock"
+initialize 15 > "$H/in"
+RC=$(run_wrapper "$H" "$H/in")
+if [ "$RC" -eq 0 ]; then pass "ten minutes old, no owner: exit status 0"; else fail "old lock: exit status $RC (stderr: $(head -c 300 "$H/err"))"; fi
+if grep -q 'stale install lock' "$H/err"; then pass "old lock: stderr says it was taken over"; else fail "old lock: stderr: $(head -c 300 "$H/err")"; fi
+if [ "$(cat "$H/bin/.CheSlackMCP.version" 2>/dev/null)" = "$DESIRED_VERSION" ]; then pass "old lock: installed"; else fail "old lock: not installed"; fi
+check_clean "$H"
+
+# ----------------------------------------------------------------------
+test_case "A lock held by a running process is waited for"
+H="$SCRATCH/lock-live"; make_home "$H" none "" serve
+/bin/sleep 30 & holder=$!
+mkdir "$H/bin/.CheSlackMCP.lock"; echo "$holder" > "$H/bin/.CheSlackMCP.lock/pid"
+( sleep 1; rm -rf "$H/bin/.CheSlackMCP.lock" ) & releaser=$!
+initialize 16 > "$H/in"
+T0=$(now)
+RC=$(run_wrapper "$H" "$H/in")
+T1=$(now)
+kill "$holder" 2>/dev/null; wait "$holder" "$releaser" 2>/dev/null
+if [ "$RC" -eq 0 ]; then pass "exit status 0"; else fail "exit status $RC (stderr: $(head -c 300 "$H/err"))"; fi
+if python3 -c 'import sys; sys.exit(float(sys.argv[2]) - float(sys.argv[1]) < 0.8)' "$T0" "$T1"; then
+    pass "waited for the lock to be released"
+else
+    fail "returned after $(python3 -c 'import sys; print(round(float(sys.argv[2]) - float(sys.argv[1]), 2))' "$T0" "$T1") s"
+fi
+if ! grep -q 'stale' "$H/err"; then pass "the live lock was not taken over"; else fail "stderr: $(head -c 300 "$H/err")"; fi
+if [ "$(cat "$H/bin/.CheSlackMCP.version" 2>/dev/null)" = "$DESIRED_VERSION" ]; then pass "installed after the release"; else fail "not installed"; fi
+check_clean "$H"
+
+# ----------------------------------------------------------------------
+test_case "A lock still held when the wait ends skips the install"
+H="$SCRATCH/lock-busy"; make_home "$H" none "" serve
+COPY="$SCRATCH/wrapper-wait-1s.sh"
+sed 's/^LOCK_WAIT_SECONDS=60$/LOCK_WAIT_SECONDS=1/' "$WRAPPER" > "$COPY"
+if [ "$(diff "$WRAPPER" "$COPY" | grep -c '^>')" = 1 ]; then
+    pass "a copy of the wrapper waits 1 s"
+else
+    fail "could not set LOCK_WAIT_SECONDS=1 in a copy (the wrapper has no LOCK_WAIT_SECONDS=60 line)"
+fi
+/bin/sleep 30 & holder=$!
+mkdir "$H/bin/.CheSlackMCP.lock"; echo "$holder" > "$H/bin/.CheSlackMCP.lock/pid"
+initialize 17 > "$H/in"
+SAVED_WRAPPER=$WRAPPER; WRAPPER=$COPY
+RC=$(run_wrapper "$H" "$H/in")
+WRAPPER=$SAVED_WRAPPER
+if [ "$RC" -eq 1 ]; then pass "exit status 1"; else fail "exit status $RC (stderr: $(head -c 300 "$H/err"))"; fi
+check_error "$H" 17
+if [ "$(cat "$H/bin/.CheSlackMCP.lock/pid" 2>/dev/null)" = "$holder" ]; then pass "the other process's lock is left in place"; else fail "the lock was removed or changed"; fi
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+if grep -q 'install lock' "$H/err"; then pass "stderr names the lock"; else fail "stderr: $(head -c 300 "$H/err")"; fi
+left=""
+for f in "$H"/bin/* "$H"/bin/.[!.]*; do
+    [ -e "$f" ] && [ "${f##*/}" != .CheSlackMCP.lock ] && left="$left ${f##*/}"
+done
+if [ -z "$left" ]; then pass "no binary, sidecar or temporary file in ~/bin"; else fail "left in ~/bin:$left"; fi
+
+# ----------------------------------------------------------------------
 test_case "Only the download cases reached curl, and nothing called security"
-others=$(ls "$SCRATCH"/*/curl.calls 2>/dev/null \
-    | grep -v -e '/nobinary/' -e '/nobinary-string/' -e '/download/' -e '/upgrade/' -e '/upgrade-fails/' || true)
-if [ -z "$others" ]; then pass "curl called only by the download cases"; else fail "curl was called: $others"; fi
+others=""
+for f in "$SCRATCH"/*/curl.calls; do
+    [ -e "$f" ] || continue
+    case "$(basename "$(dirname "$f")")" in
+        nobinary|nobinary-string|download|upgrade|upgrade-fails|race-*|mv-*|lock-*) ;;
+        *) others="$others $f" ;;
+    esac
+done
+if [ -z "$others" ]; then pass "curl called only by the download cases"; else fail "curl was called:$others"; fi
 calls=$(ls "$SCRATCH"/*/security.calls 2>/dev/null || true)
 if [ -z "$calls" ]; then pass "security never called in any case"; else fail "security called: $calls"; fi
 
