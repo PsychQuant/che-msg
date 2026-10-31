@@ -3,6 +3,8 @@ import XCTest
 
 /// Covers spec requirement: "Coalesced execution of authentication methods"
 /// Corresponds to design Decision 2: Coalesced Task pattern — pure helper at file scope.
+/// `coalescedRequest` is the form whose request is handed over when its task
+/// is created (PsychQuant/che-msg#98).
 ///
 /// Tests target the file-scope helper `coalesceTask(holder:body:)` and its
 /// supporting `TaskFieldHolder` class. No `TDLibClient` instantiation —
@@ -170,6 +172,67 @@ final class AuthCoalescingTests: XCTestCase {
         let count = await counter.value
         XCTAssertEqual(count, 1,
                        "Auto-fire and manual caller MUST coalesce — only one TDLib roundtrip")
+    }
+
+    // MARK: - A request handed over when its task is created (#98)
+
+    func testARequestInFlightIsHandedOverOnce() async throws {
+        let holder = TaskFieldHolder()
+        let sends = Deliveries()
+        let first = coalescedRequest(holder: holder) { sends.add($0) }
+        let second = coalescedRequest(holder: holder) { sends.add($0) }
+        XCTAssertEqual(sends.count, 1, "the second caller joins the request in flight")
+        sends.deliver(0, .success(()))
+        try await awaitCoalesced(first, holder: holder)
+        try await awaitCoalesced(second, holder: holder)
+    }
+
+    func testAnAnswerDeliveredWhileTheRequestIsHandedOverIsKept() async {
+        struct Refused: Swift.Error {}
+        let holder = TaskFieldHolder()
+        let task = coalescedRequest(holder: holder) { deliver in deliver(.failure(Refused())) }
+        let outcome = await finished(within: 2) { await Result { try await awaitCoalesced(task, holder: holder) } }
+        guard case .failure(let error)? = outcome else {
+            return XCTFail("the answer was lost: \(outcome.map { "\($0)" } ?? "still waiting after 2 s")")
+        }
+        XCTAssertTrue(error is Refused)
+    }
+
+    func testOnlyTheFirstAnswerCounts() async {
+        struct Late: Swift.Error {}
+        let holder = TaskFieldHolder()
+        let task = coalescedRequest(holder: holder) { deliver in
+            deliver(.success(()))
+            deliver(.failure(Late()))
+        }
+        let outcome = await finished(within: 2) { await Result { try await awaitCoalesced(task, holder: holder) } }
+        guard case .success? = outcome else {
+            return XCTFail("the first answer was not kept: \(outcome.map { "\($0)" } ?? "still waiting after 2 s")")
+        }
+    }
+
+    func testANewRequestIsHandedOverAfterTheLastOneWasAwaited() async throws {
+        let holder = TaskFieldHolder()
+        let sends = Deliveries()
+        let first = coalescedRequest(holder: holder) { sends.add($0) }
+        sends.deliver(0, .success(()))
+        try await awaitCoalesced(first, holder: holder)
+        let second = coalescedRequest(holder: holder) { sends.add($0) }
+        XCTAssertEqual(sends.count, 2)
+        sends.deliver(1, .success(()))
+        try await awaitCoalesced(second, holder: holder)
+    }
+}
+
+/// The deliver functions `coalescedRequest` handed over, answered when a test says.
+private final class Deliveries: @unchecked Sendable {
+    private let lock = NSLock()
+    private var list: [@Sendable (Result<Void, Error>) -> Void] = []
+    func add(_ deliver: @escaping @Sendable (Result<Void, Error>) -> Void) { lock.withLock { list.append(deliver) } }
+    var count: Int { lock.withLock { list.count } }
+    func deliver(_ index: Int, _ result: Result<Void, Error>) {
+        let deliver = lock.withLock { list[index] }
+        deliver(result)
     }
 }
 

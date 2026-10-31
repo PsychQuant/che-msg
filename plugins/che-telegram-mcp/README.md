@@ -43,7 +43,7 @@ security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_PHONE" -U -
 /che-telegram-mcp:auth
 ```
 
-From che-telegram-all-mcp 0.9.0, the server reads the phone number and the 2FA password from these Keychain items itself, only while Telegram is waiting for them, and keeps no copy. The wrapper never passes them on. An environment variable of the same name takes precedence; `auth_run`'s own arguments take precedence over both. If the stored 2FA password is wrong, every `auth_run` sends it again, so update the Keychain item instead of retrying. Before 0.9.0 these two items were not read at all, and the phone number and the password had to be typed into the conversation; items you stored back then are used from 0.9.0 on, so check that they are still current.
+From che-telegram-all-mcp 0.9.0, the server reads the phone number and the 2FA password from these Keychain items itself, only while Telegram is waiting for them, and keeps no copy. The wrapper never passes them on. An environment variable of the same name takes precedence; `auth_run`'s own arguments take precedence over both, except that a value passed while the stored or environment value for that step is already being sent is not sent: the call returns the answer to that request. If the stored 2FA password is wrong, every `auth_run` sends it again, so update the Keychain item instead of retrying. Before 0.9.0 these two items were not read at all, and the phone number and the password had to be typed into the conversation; items you stored back then are used from 0.9.0 on, so check that they are still current.
 
 What to expect once the items are stored:
 
