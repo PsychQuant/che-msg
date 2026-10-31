@@ -86,7 +86,7 @@ che-telegram-mcp 與 che-archive-lines 原本在 PsychQuant/psychquant-claude-pl
 - 結構測試的 check (j) 把關使用者會被導向哪個 marketplace，規則在 `tests/lib/install_refs.py`。它防的是不小心留下的舊引用，不防蓄意規避（能改 README 的人也能改這支測試）：
   - plugin 目錄內除最上層 CHANGELOG.md 以外的所有檔案、根 README.md、`.claude-plugin/marketplace.json` 裡，舊 marketplace 名稱只能出現在三種地方：uninstall 那一行的 install id、舊 repo 某個 issue／PR 的連結（`/issues/<n>`、`/pull/<n>`，不接受 `Owner/repo#N` 簡寫）、一般字詞。其他形式（`owner/舊名`，例如 `GITHUB_REPO`、`marketplace add` 的參數、plugin 的 `source`，以及任何指進舊 repo 的連結）都算錯
   - plugin README 的 `<plugin>@X` 都要是 `@che-msg`（uninstall 那行除外），而且至少要有一次 `install <plugin>@che-msg` 和一次 `marketplace add …/che-msg`。這兩項是「至少出現一次」，不擋另外再寫一行指向第三個 marketplace 的 `marketplace add`
-  - `bin/` 裡的 wrapper 要有 `docsUrl`（telegram），每個 `docsUrl` 都必須是同一個檔案 `GITHUB_REPO` 底下的 README 網址，anchor 要對得到標題
+  - `bin/` 裡的 wrapper 要有 `docsUrl`（telegram 與 slack），每個 `docsUrl` 都必須是同一個檔案 `GITHUB_REPO` 底下的 README 網址，anchor 要對得到標題
   - 讀不到、不是一般檔案、超過 2 MB 的檔案，以及指向目錄的 symlink、列不出內容的目錄，都會被回報，不會被略過
   - 散文能不能誤導人，這個檢查判斷不了；docstring 的 Not checked 列出所有沒檢查的項目
 - plugin 再搬家時，把它離開的 marketplace 名稱加進 `tests/lib/install_refs.py` 的 `FORMER`
