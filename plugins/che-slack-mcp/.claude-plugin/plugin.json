@@ -1,0 +1,8 @@
+{
+  "name": "che-slack-mcp",
+  "version": "0.1.0",
+  "description": "Slack MCP Server Plugin — 以本人身分（瀏覽器 session token）連上你登入的每個 Slack workspace：讀、搜尋、送訊息、把 conversation 歸檔成每日 markdown（9 個工具）。憑證只存 macOS Keychain，以 slack-all CLI 匯入；wrapper 不讀也不 export 任何憑證",
+  "author": { "name": "Che Cheng" },
+  "license": "MIT",
+  "keywords": ["mcp", "slack", "messaging", "chat", "archive", "macos", "keychain"]
+}

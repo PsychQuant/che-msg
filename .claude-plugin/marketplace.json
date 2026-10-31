@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "che-msg",
-  "description": "即時通訊 plugins：Telegram（Bot API + 個人帳號 TDLib）與 LINE 聊天記錄歸檔",
+  "description": "即時通訊 plugins：Telegram（Bot API + 個人帳號 TDLib）、Slack（以本人 session 連上每個 workspace）與 LINE 聊天記錄歸檔",
   "owner": {
     "name": "Che Cheng"
   },
@@ -14,6 +14,16 @@
         "name": "Che Cheng"
       },
       "source": "./plugins/che-telegram-mcp",
+      "category": "productivity"
+    },
+    {
+      "name": "che-slack-mcp",
+      "version": "0.1.0",
+      "description": "Slack MCP Server Plugin — 以本人身分（瀏覽器 session token）連上你登入的每個 Slack workspace：讀、搜尋、送訊息、把 conversation 歸檔成每日 markdown（9 個工具）。憑證只存 macOS Keychain，以 slack-all CLI 匯入；wrapper 不讀也不 export 任何憑證",
+      "author": {
+        "name": "Che Cheng"
+      },
+      "source": "./plugins/che-slack-mcp",
       "category": "productivity"
     },
     {
