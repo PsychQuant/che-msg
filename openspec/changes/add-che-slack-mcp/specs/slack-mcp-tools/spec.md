@@ -52,12 +52,17 @@ Every tool except `list_workspaces` SHALL accept an optional string argument `wo
 
 ### Requirement: Send message
 
-`send_message` SHALL take a required `conversation_id`, a required non-empty `text` of at most 40000 characters and an optional `thread_ts`, post the message as the user with `chat.postMessage`, and return the new message's `ts` and conversation id. When `thread_ts` is given the message SHALL be posted as a reply in that thread.
+`send_message` SHALL take a required `conversation_id`, a required non-empty `text` of at most 40000 characters and an optional `thread_ts`, post the message as the user with `chat.postMessage`, and return the new message's `ts` and conversation id. When `thread_ts` is given the message SHALL be posted as a reply in that thread. When the call fails in a way after which the message may still have been posted — a network error, an answer that is not the expected JSON, an HTTP status other than 200, or Slack's `internal_error` or `fatal_error` — the error result SHALL say that the message may have been posted, and tell the caller to check the conversation before sending again.
 
 #### Scenario: Reply in a thread
 
 - **WHEN** `send_message` is called with `conversation_id` `C01`, `text` `收到`, and `thread_ts` `1730000000.000100`
 - **THEN** `chat.postMessage` is called with `channel=C01`, `text=收到` and `thread_ts=1730000000.000100`, and the result returns the new `ts`
+
+#### Scenario: internal_error may have posted
+
+- **WHEN** `chat.postMessage` answers `{"ok": false, "error": "internal_error"}`
+- **THEN** the result has `isError: true` and says the message may have been posted, and tells the caller to check the conversation before sending again
 
 ### Requirement: Tool error results
 

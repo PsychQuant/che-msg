@@ -66,9 +66,14 @@ Writing an item SHALL start `/usr/bin/security -i` and send the line `add-generi
 
 ### Requirement: Workspace removal
 
-`slack-all auth remove <workspace>` SHALL accept a team id or a domain, delete that workspace's `SLACK_TOKEN_<team_id>` and `SLACK_COOKIE_<team_id>` items, and remove its entry from `SLACK_WORKSPACES`. A workspace that does not match SHALL produce an error listing the imported workspaces and SHALL change nothing.
+`slack-all auth remove <workspace>` SHALL accept a team id or a domain, delete that workspace's `SLACK_TOKEN_<team_id>` and `SLACK_COOKIE_<team_id>` items, and remove its entry from `SLACK_WORKSPACES` as read after those items are deleted, not as read when the command started, so that a workspace another `slack-all` imported or removed meanwhile is kept, or stays removed. A workspace that does not match SHALL produce an error listing the imported workspaces and SHALL change nothing.
 
 #### Scenario: Remove by domain
 
 - **WHEN** `alpha` (`T01`) and `beta` (`T02`) are imported and the user runs `slack-all auth remove alpha`
 - **THEN** the `T01` token and cookie items no longer exist, `SLACK_WORKSPACES` lists only `T02`, and the `T02` items are unchanged
+
+#### Scenario: Index changed during removal
+
+- **WHEN** `SLACK_WORKSPACES` lists `alpha` and `beta` when `slack-all auth remove alpha` starts, and another process adds `gamma` while alpha's items are deleted
+- **THEN** the index afterwards lists `beta` and `gamma`

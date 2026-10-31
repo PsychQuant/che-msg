@@ -173,6 +173,11 @@ Safari 的 console 是否提供 `copy()` 尚未確認；若沒有，CLI 改印�
 - 被限流：自動等待重試，超過上限才回報；歸檔保留已抓到的部分，但書籤不推進。Slack 從新到舊列訊息，中斷時已寫入的是最新的一段，若把書籤設成它，較舊、還沒抓到的訊息會被永久跳過（apply 時發現，使用者 2026-10-29 選定此解法，與 Telegram 的 `bookmark_safe` 一致）。manifest 記下這一段的起點與已寫到的最舊 `ts`，下一次從那裡接著往舊的方向抓，走到下界才推進書籤（review 發現「重跑重抓」在範圍超過每次 50 頁的上限時永遠停在同一處，使用者 2026-10-30 改選記下接續點）。
 - 帶 `after_ts`／`since_date` 時，起點晚於書籤則書籤不動；明確範圍沒走完也記下接續點與它的下界，用同樣的參數重跑就接著抓（第二次 review 發現起點晚於書籤時，書籤會跳過中間沒讀的訊息）。接續紀錄同時記下這個範圍已寫到的最新一則：走到下界的那次回報 `complete: false`，下一次只補比那一則新的訊息、追上後刪掉紀錄並回報 `complete: true`。否則呼叫端照說明「重跑到 complete 為 true」時，每次都會從頭讀起、在同一個頁數上限停住，永遠收不了尾。
 - HTTP 傳輸不用 `URLSession.shared`：它會把 Slack 回應裡的 `Set-Cookie` 存到 `~/Library/HTTPStorages/<執行檔名>.binarycookies`（權限 0644），並附到之後所有 workspace 的請求上。改用 ephemeral session，不存 cookie、不用快取，每個請求只帶自己 workspace 的 `d`（第四次 review 發現實測後磁碟上留了一個 `xoxd-` 開頭、2027 年才到期的 `uc` cookie）。
+- 再次歸檔保留既有區塊、不就地取代，與 telegram-chat-archive 一致：歸檔是長期紀錄，訊息被編輯或發言者改名後，歸檔仍保留第一次寫下的版本（2026-10-31 驗證後由使用者決定；原本的「以 ts 就地取代」會在重讀時覆寫原文）。回顧窗口只補已歸檔主訊息的回覆，避免寫出主訊息不在歸檔裡的孤兒回覆。
+- `send_message` 遇到網路錯誤、非預期回應、非 200，以及 Slack 的 `internal_error`、`fatal_error` 時，結果說明訊息可能已送出、請先確認再重送（Slack 文件說這兩個錯誤可能已部分完成）。
+- 正式 transport 不跟隨 redirect，避免手寫的 `Cookie` 與表單裡的 token 被帶到別的 URL。
+- 憑證以 `security` 寫入，所以同一使用者下的任何程式都能透過 `/usr/bin/security` 免提示讀出（與 Telegram 一致的取捨）；README 的風險段照實寫出這一點。
+- `slack-all` 暫時只能從原始碼 build，不隨 release 發佈（2026-10-31 使用者決定；發 binary 需要簽章、公證與 Gatekeeper 的處理，追蹤於 #112）。
 - 任何錯誤訊息、日誌、工具結果都不含 token 或 cookie 的值。
 
 **驗收**
@@ -212,3 +217,7 @@ task 1.1 的唯讀實測已在 2026-10-29 於使用者的 Mac（macOS 27.2、Mac
 - **macOS 授權：只有 Keychain 一次。** 從沙盒資料夾複製 `Cookies` 與 `Local Storage/leveldb` 時沒有跳出存取其他 app 資料的授權；讀 `Slack Safe Storage` 時跳出一次 Keychain 授權，使用者按「允許」後成功。
 - **範圍提醒：** 桌面 app 只登入了 1 個 workspace，`--from-desktop` 只拿得到桌面 app 登入過的 workspace；其他 workspace 要先在桌面 app 登入，或改用剪貼簿匯入。這點要寫進 plugin README（task 6.1）。
 - **未逐字元核對：** cookie `d` 是否只含寫入前檢查允許的字元（`A-Z a-z 0-9 - _ . % + / =`）沒有在實測中逐字元比對（避免再跳一次 Keychain 授權）；執行時由 Keychain write keeps values off argv 的寫入前檢查把關，不合法時會拒絕並點名 service。
+
+## 驗證後的 follow-up（2026-10-31）
+
+六方驗證中不擋合併的項目另開 issue：#104（單次歸檔的請求預算）、#105（`get_thread_replies` 的 `oldest`／`limit`）、#107（wrapper 的同時安裝與完整性檢查，含 Telegram）、#108（排隊請求的取消、`Retry-After` 上限）、#109（匯入的身分以 `auth.test` 為準、token 與 cookie 不留半套）、#110（夏令時間）、#111（歸檔位置與不受信任文字的標示）、#112（`slack-all` 的發佈）。
