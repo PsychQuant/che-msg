@@ -205,6 +205,79 @@ struct ArchiveManifestTests {
             """))
     }
 
+    /// A fake Slack holding `threads` (newest first): each parent, from Alex,
+    /// with its replies (ts, oldest first), each from Kim. History honours
+    /// `oldest`; replies honour `oldest` and send the parent first.
+    static func threads(_ threads: [(parent: String, replies: [String])]) -> MethodTransport {
+        let parentJSON = { (thread: (parent: String, replies: [String])) in
+            ArchiveUnfinishedThreadTests.parentJSON(thread.parent, replies: thread.replies.count,
+                                                    latest: thread.replies.last ?? "")
+        }
+        return MethodTransport { call in
+            switch call.method {
+            case "conversations.history":
+                let listed = threads.filter { thread in
+                    call.parameters["oldest"].map { SlackDayFile.precedes($0, thread.parent) } ?? true
+                }
+                return .body(ArchiveFake.history(listed.map(parentJSON)))
+            case "conversations.replies":
+                guard let thread = threads.first(where: { $0.parent == call.parameters["ts"] }) else {
+                    return .body(Fake.slackError("thread_not_found"))
+                }
+                let after = thread.replies.filter { ts in
+                    call.parameters["oldest"].map { SlackDayFile.precedes($0, ts) } ?? true
+                }
+                return .body(ArchiveFake.replies([parentJSON(thread)] + after.map {
+                    #"{"user":"U03","text":"r","ts":"\#($0)","thread_ts":"\#(thread.parent)"}"#
+                }))
+            default: return ArchiveFake.users(["U02": "Alex", "U03": "Kim"], call)
+            }
+        }
+    }
+
+    /// spec: "Lookback skips a parent that was never archived". The first
+    /// call (2026-11-01 11:05) archives from since_date 2026-10-25 at +08:00
+    /// (`1792857600`): the parent `1792980000.000100` (2026-10-26 10:00) and
+    /// its reply at 11:00, `1792983600.000200`. The parent
+    /// `1792461600.000100` (2026-10-20 10:00), whose reply is
+    /// `1792548000.000200` (10-21 10:00), is older and not archived. The next
+    /// call, without since_date, is a day later; its 30-day window starts at
+    /// `1793588700 - 30 * 86400 = 1790996700` (2026-10-02), so both parents
+    /// are listed. Only the one in its day file gets its replies fetched,
+    /// and its new reply `1793066400.000300` (10-27 10:00) is written.
+    @Test("spec: a parent listed only for the lookback window and never archived gets no replies; an archived one does")
+    func lookbackSkipsUnarchivedParent() async throws {
+        let (kept, keptReply, lateReply) = ("1792980000.000100", "1792983600.000200", "1793066400.000300")
+        let (unarchived, unarchivedReply) = ("1792461600.000100", "1792548000.000200")
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        let first = Self.threads([(kept, [keptReply]), (unarchived, [unarchivedReply])])
+        let (firstHandler, _) = try await readHandler(first)
+        let firstResult = await ArchiveToolTests.archive(Self.at(Self.firstRun, firstHandler), into: output,
+                                                         ["utc_offset": .string("+08:00"),
+                                                          "since_date": .string("2026-10-25")])
+        #expect(text(firstResult).contains(#""new_messages":2"#), "\(text(firstResult))")
+        let dayFile = try output.read("T01/C01/2026-10-26.md")
+        let later = Self.threads([(kept, [keptReply, lateReply]), (unarchived, [unarchivedReply])])
+        let (laterHandler, _) = try await readHandler(later)
+
+        let result = await ArchiveToolTests.archive(Self.at(Self.firstRun + Self.day, laterHandler), into: output,
+                                                    Self.lookback30)
+
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-10-27.md"],"#
+                   + #""lookback_complete":true,"new_messages":1,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":1,"top_level_messages":0,"utc_offset":"+08:00"}"#)
+        #expect(later.calls.first?.parameters == ["channel": "C01", "limit": "200", "oldest": "1790996700"])
+        #expect(later.calls.filter { $0.method == "conversations.replies" }.map { $0.parameters }
+                    == [["channel": "C01", "limit": "200", "ts": kept, "oldest": keptReply]])
+        #expect(output.listing() == ["T01", "T01/C01", "T01/C01/2026-10-26.md", "T01/C01/2026-10-27.md",
+                                     Self.manifestPath])
+        #expect(try output.read("T01/C01/2026-10-26.md") == dayFile)
+        #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
+            "newest_ts": "\(kept)", "newest_reply_ts": {"\(kept)": "\(lateReply)"}
+            """))
+    }
+
     /// Silent-gap guard: the 50-page limit stopped a first run before the
     /// oldest message, so the bookmark stays null and the manifest records
     /// where the walk continues: it started at page 0's `1793498000.000100`

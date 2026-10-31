@@ -127,6 +127,13 @@ struct ArchiveDirectory {
         return (true, added)
     }
 
+    /// The ts of every block in `day`'s file; empty when there is no file.
+    /// The file is checked as `write` checks it before merging.
+    func archivedTS(day: String, utcOffset: String) throws(ToolFailure) -> Set<String> {
+        let file = conversationDir.appendingPathComponent("\(day).md")
+        return try readExisting(file, utcOffset: utcOffset).map(SlackDayFile.anchoredTS) ?? []
+    }
+
     private func readExisting(_ file: URL, utcOffset: String) throws(ToolFailure) -> String? {
         guard try Self.checkRegularFile(file) else { return nil }
         guard let data = FileManager.default.contents(atPath: file.path),

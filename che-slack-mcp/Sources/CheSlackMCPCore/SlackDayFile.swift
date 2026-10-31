@@ -142,6 +142,11 @@ enum SlackDayFile {
                 + parts.preamble + body, added)
     }
 
+    /// The ts of every block in `content`, a day file's text.
+    static func anchoredTS(_ content: String) -> Set<String> {
+        Set(split(content).blocks.map(\.ts))
+    }
+
     /// The frontmatter dropped; text between it and the first anchor kept
     /// as `preamble`; each block runs from an anchor line to the next.
     private static func split(_ content: String) -> (preamble: String, blocks: [(ts: String, text: String)]) {

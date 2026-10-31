@@ -44,8 +44,10 @@ extension SlackToolHandler {
              ts are written (the whole history when there is no manifest), and the thread parents archived in the \
              last thread_lookback_days days are listed again so that a parent whose latest reply is newer than \
              the recorded one gets its replies fetched, starting after that reply; older threads are not \
-             checked. A manifest that cannot be read or was not written for this conversation refuses the call; \
-             move it aside to start over. At most \(archiveHistoryMaxPages) pages of \(archivePageSize) top-level \
+             checked, nor is a parent listed there whose block is not in its day file (one an earlier call with \
+             since_date or after_ts started after), so no reply is written without its parent. A manifest that \
+             cannot be read or was not written for this conversation refuses the call; move it aside to start \
+             over. At most \(archiveHistoryMaxPages) pages of \(archivePageSize) top-level \
              messages, and \(SlackWebClient.repliesMaxPages) pages of \(SlackWebClient.repliesPageSize) replies per \
              thread, are read per call; complete is false when messages were left out, by these limits or because \
              Slack said it had more without giving a cursor to read them, so call again until it is true. Listing \
@@ -119,7 +121,8 @@ extension SlackToolHandler {
 /// One archive call: takes the conversation's `ArchiveLock`, reads the
 /// manifest, then the history newest first by cursor within
 /// `ArchiveScope`, the replies of each thread parent written and of each
-/// parent in the lookback window with a newer reply, then the replies of
+/// parent in the lookback window with a newer reply whose block is in its
+/// day file, then the replies of
 /// each thread the manifest lists as unfinished that the walk did not
 /// fetch, and the names of senders and mentioned users (`users.info`, once
 /// per user per call); merges each page and each such thread into the day
@@ -244,6 +247,10 @@ struct ConversationArchiver {
         /// Threads cut in this run whose replies were written into the day
         /// files, with the newest reply written: what a stopped run records.
         var cutWritten: [String: String] = [:]
+        /// Per day, the ts of the blocks in its file, read once per run when
+        /// a parent listed for the lookback window is checked, and kept
+        /// current as the run writes that day.
+        var dayAnchors: [String: Set<String>] = [:]
 
         /// Records a batch merged into the day files: its top-level ts, and
         /// the cut threads whose replies it held.
@@ -358,8 +365,8 @@ struct ConversationArchiver {
                 guard progress.seen.insert(message.ts).inserted else { continue }
                 let isNew = scope.isWritten(message.ts)
                 if isNew { batch.append(message) } else { progress.reachedBound = true }
-                if isNew ? ArchiveScope.isThreadParent(message)
-                    : scope.needsReplies(message, recorded: progress.replyBookmarks[message.ts]) {
+                if try isNew ? ArchiveScope.isThreadParent(message)
+                    : needsReplies(message, scope: scope, in: directory, progress: &progress) {
                     do {
                         batch += try await replies(of: message.ts, progress: &progress)
                     } catch SlackError.rateLimited(let seconds) {
@@ -369,8 +376,7 @@ struct ConversationArchiver {
                 }
                 if isNew { topLevel.append(message.ts) }
             }
-            try await write(batch, into: directory, names: &progress.names, summary: &progress.summary,
-                            changed: &progress.changed)
+            try await write(batch, into: directory, progress: &progress)
             progress.wrote(topLevel)
             if let stop { throw stop }
             cursor = page.nextCursor
@@ -438,10 +444,27 @@ struct ConversationArchiver {
                 progress.unfinished.remove(parent)
                 continue
             }
-            try await write(replies, into: directory, names: &progress.names, summary: &progress.summary,
-                            changed: &progress.changed)
+            try await write(replies, into: directory, progress: &progress)
             progress.wrote([])
         }
+    }
+
+    /// Whether a thread parent listed but not written gets its replies
+    /// fetched (spec: "Thread replies and lookback"): `scope.needsReplies`
+    /// accepts it, and its block is already in its day file, or the
+    /// manifest lists its thread as unfinished. A parent at or below the
+    /// bookmark was not necessarily archived: an earlier call with
+    /// `since_date` or `after_ts` may have started after it, and its
+    /// replies would be written without their parent.
+    private func needsReplies(_ message: SlackMessage, scope: ArchiveScope, in directory: ArchiveDirectory,
+                              progress: inout Progress) throws -> Bool {
+        guard scope.needsReplies(message, recorded: progress.replyBookmarks[message.ts]) else { return false }
+        if progress.unfinished.contains(message.ts) { return true }
+        let day = SlackDayFile.dayKey(ts: message.ts, offsetSeconds: request.offsetSeconds)
+        if let anchors = progress.dayAnchors[day] { return anchors.contains(message.ts) }
+        let anchors = try directory.archivedTS(day: day, utcOffset: request.utcOffset)
+        progress.dayAnchors[day] = anchors
+        return anchors.contains(message.ts)
     }
 
     /// The manifest after a run that was not stopped. Reply bookmarks are
@@ -567,10 +590,13 @@ struct ConversationArchiver {
               new_messages: summary.new_messages)
     }
 
-    private func write(_ batch: [SlackMessage], into directory: ArchiveDirectory, names: inout DirectMessageNames,
-                       summary: inout Summary, changed: inout Set<String>) async throws {
+    /// Merges `batch` into the day files, names looked up first, and counts
+    /// it in the summary; every message of the batch has a block afterwards,
+    /// which `progress.dayAnchors` records for a day it holds.
+    private func write(_ batch: [SlackMessage], into directory: ArchiveDirectory,
+                       progress: inout Progress) async throws {
         guard !batch.isEmpty else { return }
-        let known = try await resolveNames(batch, names: &names)
+        let known = try await resolveNames(batch, names: &progress.names)
         let archived = batch.map { message in
             ArchivedMessage(ts: message.ts, parentTS: parentTS(message), sender: sender(message, known),
                             body: SlackMarkup.body(text: message.text, files: message.files ?? [],
@@ -579,14 +605,15 @@ struct ConversationArchiver {
         try directory.createDirectories()
         let days = SlackDayFile.byDay(archived, offsetSeconds: request.offsetSeconds)
         for day in days.keys.sorted() {
-            let (didChange, added) = try directory.write(day: day, messages: days[day] ?? [],
-                                                         utcOffset: request.utcOffset)
-            summary.new_messages += added.count
-            if didChange { changed.insert(directory.relativePath(day: day)) }
+            let messages = days[day] ?? []
+            let (didChange, added) = try directory.write(day: day, messages: messages, utcOffset: request.utcOffset)
+            progress.summary.new_messages += added.count
+            if didChange { progress.changed.insert(directory.relativePath(day: day)) }
+            progress.dayAnchors[day]?.formUnion(messages.map(\.ts))
         }
         let replies = archived.filter { $0.parentTS != nil }.count
-        summary.thread_replies += replies
-        summary.top_level_messages += archived.count - replies
+        progress.summary.thread_replies += replies
+        progress.summary.top_level_messages += archived.count - replies
     }
 
     /// Names for the senders (other than the user) and the mentioned users

@@ -15,7 +15,9 @@ import SlackWebLib
 ///   so the parents already archived inside the window are listed again
 ///   only to read their `latest_reply`; they are not written again.
 /// - Replies fetched: for every parent written, and for every parent listed
-///   but not written that `needsReplies` accepts.
+///   but not written that `needsReplies` accepts and whose block is already
+///   in its day file, or whose thread the manifest lists as unfinished (the
+///   archiver checks the day file, `ConversationArchiver`).
 /// - Continued: when the manifest records an unfinished walk for this kind
 ///   of call (its `continuation` without `after_ts` and `since_date`, its
 ///   `range`'s with the same lower bound), only the history below that
@@ -96,12 +98,15 @@ struct ArchiveScope {
         message.threadTS == message.ts && message.replyCount != 0
     }
 
-    /// Whether a parent listed but not written gets its replies fetched: it
-    /// was archived before (at or below the bookmark), its ts is inside the
-    /// lookback window, and Slack's `latest_reply` is newer than the reply
-    /// ts the manifest records for it, or none is recorded (its first reply
-    /// came after it was archived). A parent without a well-formed
-    /// `latest_reply` is not asked about.
+    /// Whether a parent listed but not written may get its replies fetched:
+    /// it is at or below the bookmark, its ts is inside the lookback window,
+    /// and Slack's `latest_reply` is newer than the reply ts the manifest
+    /// records for it, or none is recorded (its first reply came after it
+    /// was archived). A parent without a well-formed `latest_reply` is not
+    /// asked about. Being at or below the bookmark does not mean it was
+    /// archived (an earlier call may have started at `since_date` or
+    /// `after_ts` after it), so the archiver also requires its block in its
+    /// day file.
     func needsReplies(_ message: SlackMessage, recorded: String?) -> Bool {
         guard let bookmark, !SlackDayFile.precedes(bookmark, message.ts), Self.isThreadParent(message),
               isInWindow(message.ts), let latest = message.latestReply, SlackDayFile.seconds(ofTS: latest) != nil
