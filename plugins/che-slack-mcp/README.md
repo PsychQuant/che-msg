@@ -2,7 +2,7 @@
 
 Claude Code plugin for Slack. Claude reads, searches, sends and archives messages **as you**, in every Slack workspace you import — including workspaces someone else administers, where installing a Slack app or Slack's own MCP server needs an administrator's approval.
 
-It works with the same session your browser or the Slack desktop app uses: a `xoxc-` token plus the `d` cookie for each workspace. You import them once with the `slack-all` command-line tool; they are stored in the macOS Keychain and nowhere else. The plugin's wrapper reads no credential and exports none — the server reads the Keychain itself on each tool call.
+It works with the same session your browser or the Slack desktop app uses: a `xoxc-` token plus the `d` cookie for each workspace. You import them once with the `slack-all` command-line tool; they are stored in the macOS Keychain and nowhere else (see [Risks](#risks) for who can read them there). The plugin's wrapper reads no credential and exports none — the server reads the Keychain itself on each tool call.
 
 Read [Risks](#risks) before you import a workspace.
 
@@ -29,7 +29,7 @@ The server binary `CheSlackMCP` 0.9.0 ships with the che-msg release v0.9.0; the
 
 ## Get slack-all
 
-`slack-all` is built from source; the plugin does not download it. You need macOS 13 or later and a Swift 6 toolchain (Xcode 16, or its Command Line Tools).
+`slack-all` is built from source; the plugin does not download it, and for now no release carries it ([#112](https://github.com/PsychQuant/che-msg/issues/112)). You need macOS 13 or later and a Swift 6 toolchain (Xcode 16, or its Command Line Tools).
 
 ```bash
 git clone https://github.com/PsychQuant/che-msg.git ~/Developer/che-msg
@@ -57,7 +57,7 @@ The clipboard is cleared at the end. The command exits 0 when at least one works
 `slack-all auth import --from-desktop` reads the workspaces the Slack desktop app (Mac App Store or slack.com download) is signed in to, from temporary copies of its `Cookies` and `Local Storage/leveldb`, which it deletes before it ends.
 
 - **Only workspaces signed in to the desktop app are found.** Sign in to the others in the desktop app first, or import them from the browser.
-- macOS asks once whether `security` may use the Keychain item "Slack Safe Storage", the key Slack encrypts its cookie with. Click **Allow**, not **Always Allow**: Always Allow would let any program read Slack's cookie key through `security` from then on.
+- macOS asks once whether `security` may use the Keychain item "Slack Safe Storage", the key Slack encrypts its cookie with. Click **Allow**, not **Always Allow**: Always Allow would let any program read Slack's cookie key through `security` from then on. (The plugin's own items are different: see [Risks](#risks).)
 
 ### Check and remove
 
@@ -155,7 +155,7 @@ So in auto mode a message can be sent without a prompt: add the ask rule above i
 
 `archive_conversation_to_markdown` writes `<output_dir>/<team_id>/<conversation_id>/<YYYY-MM-DD>.md`, one file per local day, in the same layout as che-telegram-mcp's archives: YAML frontmatter, then one block per message anchored by `<!-- msg:<ts> -->`. Thread replies go in the file of their own day, marked `↳ thread:<parent_ts>`. Directories are owner-only (0700), files 0600.
 
-- **Re-runs add only what is new.** A `manifest.json` next to the day files records the newest message archived (no message text, names or file names); the next run starts after it. Messages archived again replace their own block, so a re-run with nothing new leaves the files unchanged.
+- **Re-runs add only what is new.** A `manifest.json` next to the day files records the newest message archived (no message text, names or file names); the next run starts after it. A message already in a day file is left as it was archived first, as in the Telegram archive: an edited message keeps its archived text, and a re-run with nothing new leaves the files unchanged.
 - **Thread replies** are fetched again for threads started in the last `thread_lookback_days` days (default 30). A late reply in an older thread is not picked up; run once with a larger `thread_lookback_days` to catch up. In a busy channel the window can be longer than one call's page limit: the result then has `lookback_complete: false` and a note saying the rest of the window was not checked, while `complete` stays true once every new message is written. A smaller `thread_lookback_days` lists fewer messages.
 - **Files are not downloaded.** An attachment is written as `[file: <name>](<permalink>)`.
 - **Rate limits, and the page limit before every new message is written,** stop a run early without an error (`complete: false`): what was written stays, the bookmark does not move, and the manifest records where the unfinished range continues, so the next run picks up from there and only moves the bookmark once that range is complete. An `after_ts` or `since_date` range continues the same way when you call again with the same argument; a range that starts after the bookmark never moves it. Threads longer than one call's reply limit are likewise continued after the last reply archived, even when they started before the `thread_lookback_days` window.
@@ -165,7 +165,7 @@ So in auto mode a message can be sent without a prompt: add the ask rule above i
 
 ## Risks
 
-- **The session token is your signed-in session.** Anyone who has the token and the `d` cookie can act as you in that workspace. They stay in the Keychain; they never pass through Claude, tool arguments, the environment or the command line, and no output prints them. Remove a workspace you no longer use with `slack-all auth remove`.
+- **The session token is your signed-in session.** Anyone who has the token and the `d` cookie can act as you in that workspace. They stay in the Keychain and never appear in tool arguments, tool results, the environment, the command line or any output. They are not hidden from programs running as you: `slack-all` writes them with `security`, so `security` itself can read them back without a prompt — and so can any program you run that calls it, including a command Claude runs for you in a terminal. Telegram's items in che-telegram-mcp work the same way. Remove a workspace you no longer use with `slack-all auth remove`.
 - **Enterprise Grid.** Organisations on Slack Enterprise Grid may detect automated use of a session, end it, and notify their administrators. When Slack answers with an Enterprise Grid restriction the tools say so; use Slack's official MCP server for such a workspace instead.
 - **Rate and pacing.** Requests to one workspace start at least 350 ms apart, at most 3 at a time; when Slack rate limits, the server waits as Slack asks and retries up to 3 times. These defaults were not measured in this project. They lower the chance of tripping Slack's anomaly detection, they cannot remove it. If a session gets signed out, slow down first by setting `SLACK_MCP_MIN_INTERVAL_MS` (0–60000) and `SLACK_MCP_MAX_CONCURRENCY` (1–10) for the server, for example in `~/.claude/settings.json`: `{ "env": { "SLACK_MCP_MIN_INTERVAL_MS": "1000", "SLACK_MCP_MAX_CONCURRENCY": "1" } }`. A value outside its range is ignored with a warning.
 - **Slack's API Terms.** Archiving touches Slack's API Terms of Service, which speak of archiving Slack data; whether they cover a personal archive of conversations you take part in is not clear. Whether to use `archive_conversation_to_markdown` is your decision. This version never downloads files, which keeps an archive further from a bulk export.
