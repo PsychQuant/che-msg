@@ -19,10 +19,17 @@ public struct SlackAuthRemove: Sendable {
     /// already gone is not an error); the reverse order could leave a
     /// credential in the Keychain that no index entry points to.
     ///
-    /// - Throws: `SlackCredentialError` when the index cannot be read;
-    ///   `SlackAuthCommandError` when nothing is imported, the query matches
-    ///   no workspace or more than one (nothing is changed), or a delete or
-    ///   the index write fails. The query is never repeated in a message.
+    /// The query is matched against the index as read at the start, so
+    /// nothing is deleted when nothing matches. The entry is dropped from
+    /// the index as read again after the deletes, so a workspace another
+    /// `slack-all` imported or removed meanwhile is kept, or stays removed.
+    /// When that index no longer lists the workspace, it is not written.
+    ///
+    /// - Throws: `SlackCredentialError` when the index cannot be read at the
+    ///   start; `SlackAuthCommandError` when nothing is imported, the query
+    ///   matches no workspace or more than one (nothing is changed), or a
+    ///   delete, the second read of the index or its write fails. The query
+    ///   is never repeated in a message.
     public func run(_ query: String) async throws {
         let workspaces = try await store.workspaces()
         guard !workspaces.isEmpty else {
@@ -47,7 +54,10 @@ public struct SlackAuthRemove: Sendable {
         let token = SlackKeychain.tokenService(teamID: target.teamID)
         let cookie = SlackKeychain.cookieService(teamID: target.teamID)
         do {
-            try await store.saveWorkspaces(workspaces.filter { $0.teamID != target.teamID })
+            let current = try await store.workspaces()
+            if current.contains(where: { $0.teamID == target.teamID }) {
+                try await store.saveWorkspaces(current.filter { $0.teamID != target.teamID })
+            }
         } catch {
             throw SlackAuthCommandError("Deleted \(token) and \(cookie), but \(error) \(again)")
         }

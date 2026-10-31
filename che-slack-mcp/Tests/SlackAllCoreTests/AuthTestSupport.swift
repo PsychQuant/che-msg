@@ -108,6 +108,7 @@ final class MemoryKeychain: KeychainItemReader, KeychainItemWriter, @unchecked S
     private var deleteLog: [String] = []
     private var writeFailures: [String: SlackKeychainWriteError] = [:]
     private var deleteFailures: [String: SlackKeychainDeleteError] = [:]
+    private var deleteHooks: [String: @Sendable () -> Void] = [:]
 
     init(_ items: [String: String] = [:]) { self.items = items }
 
@@ -131,6 +132,12 @@ final class MemoryKeychain: KeychainItemReader, KeychainItemWriter, @unchecked S
         lock.withLock { deleteFailures[service] = error }
     }
 
+    /// Runs `hook` right after `service` is deleted, outside the lock, so it
+    /// can stand for another process acting while the deletes run.
+    func afterDelete(of service: String, run hook: @escaping @Sendable () -> Void) {
+        lock.withLock { deleteHooks[service] = hook }
+    }
+
     func check(service: String, value: String) throws {
         try Self.productionChecks.check(service: service, value: value)
     }
@@ -148,11 +155,13 @@ final class MemoryKeychain: KeychainItemReader, KeychainItemWriter, @unchecked S
     }
 
     func delete(service: String) async throws {
-        try lock.withLock {
+        let hook = try lock.withLock { () throws -> (@Sendable () -> Void)? in
             if let error = deleteFailures[service] { throw error }
             deleteLog.append(service)
             items[service] = nil
+            return deleteHooks[service]
         }
+        hook?()
     }
 }
 
