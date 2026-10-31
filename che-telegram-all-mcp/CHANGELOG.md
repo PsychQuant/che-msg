@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Changed
-- Tool results are compact JSON: no line breaks, indentation or spaces around colons ([#101](https://github.com/PsychQuant/che-msg/issues/101)). Keys, values and key order are unchanged. On a synthetic 20-message `get_chat_history` result this is 28.4% fewer bytes (5851 → 4192). `TDLibClient` and `LocalTDLibReader` now share one serializer, `JSONOutput`.
+- The results `TDLibClient` and `LocalTDLibReader` return are compact JSON: no line breaks, indentation or spaces around colons ([#101](https://github.com/PsychQuant/che-msg/issues/101)). Keys, values and key order are unchanged. On a synthetic 20-message `get_chat_history` result this is 28.4% fewer bytes (5851 → 4192). The two now share one serializer, `JSONOutput`. This covers every tool that returns their JSON and the `telegram-all` CLI commands that print it, which now print one line (pipe through `jq .` to indent). Results built elsewhere (auth, logout, error payloads, archive and dump summaries, and the short `{"ok": true}` replies) are unchanged.
 
 ## [0.8.0] - 2026-10-14
 
