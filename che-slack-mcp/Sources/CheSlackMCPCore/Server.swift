@@ -12,6 +12,20 @@ public final class CheSlackMCPServer {
     /// own copy of the same number (Sources/slack-all/main.swift); bump both.
     public static let version = "0.9.0"
 
+    /// The line `CheSlackMCP --version` prints. The release build runs the
+    /// built binary with `--version` and expects exactly this line
+    /// (PsychQuant/che-msg#114); change it only together with
+    /// scripts/release/build-release.sh.
+    public static var versionLine: String { "\(name) \(version)" }
+
+    /// Whether argv asks for the version: its first argument is `--version`,
+    /// as for che-telegram-all-mcp. `main.swift` answers before anything else,
+    /// so the answer reads no Keychain item, no stdin and nothing from the
+    /// network. Every other argv starts the server, as before.
+    public static func asksForVersion(_ arguments: [String]) -> Bool {
+        arguments.count > 1 && arguments[1] == "--version"
+    }
+
     private let server: Server
     private let transport: StdioTransport
     let handler: SlackToolHandler
