@@ -185,7 +185,8 @@ struct SendMessageArgumentTests {
 
 /// Slack refusing the message is an error result naming Slack's error and
 /// the workspace; the post is sent once and not retried. Slack said no, so
-/// the result does not suggest the message may have been posted.
+/// the result does not suggest the message may have been posted, except
+/// after `internal_error` and `fatal_error`.
 @Suite("send_message Slack errors")
 struct SendMessageSlackErrorTests {
     static let mayHavePosted = "may have been posted"
@@ -242,6 +243,23 @@ struct SendMessageSlackErrorTests {
         let result = try await Self.send(transport)
 
         expectError(result, containing: ["T01 alpha", phrase, Self.mayHavePosted])
+        #expect(transport.methods == ["chat.postMessage"])
+    }
+
+    /// spec: "internal_error may have posted". Slack's chat.postMessage
+    /// reference says that after `internal_error` or `fatal_error` part of
+    /// the operation may have succeeded, so these two `ok: false` codes do
+    /// not mean "nothing was sent"; `channel_not_found` still does.
+    @Test("internal_error and fatal_error say the message may have been posted; channel_not_found does not",
+          arguments: [("internal_error", true), ("fatal_error", true), ("channel_not_found", false)])
+    func okFalseMayHavePosted(code: String, mayHavePosted: Bool) async throws {
+        let transport = MethodTransport(["chat.postMessage": Fake.slackError(code)])
+
+        let result = try await Self.send(transport)
+
+        expectError(result, containing: ["T01 alpha", code])
+        #expect(text(result).contains(Self.mayHavePosted) == mayHavePosted)
+        #expect(text(result).contains("get_conversation_history before sending it again") == mayHavePosted)
         #expect(transport.methods == ["chat.postMessage"])
     }
 }

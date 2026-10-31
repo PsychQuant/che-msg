@@ -96,6 +96,71 @@ struct AuthRemoveTests {
         expectNoSecrets(terminal.lines, error)
     }
 
+    /// "Index changed during removal".
+    @Test("a workspace another process adds while alpha's items are deleted is kept in the index")
+    func indexChangedDuringRemoval() async throws {
+        let gamma = SlackWorkspace(teamID: "T03", domain: "gamma", name: "Gamma", userID: "U03")
+        let changed = try await indexValue([Fake.alpha, Fake.beta, gamma])
+        let keychain = self.keychain
+        keychain.afterDelete(of: "SLACK_COOKIE_T01") {
+            keychain.writeFromAnotherProcess(service: "SLACK_WORKSPACES", value: changed)
+        }
+
+        let error = await remove("alpha")
+
+        #expect(error == nil)
+        #expect(try await store.workspaces() == [Fake.beta, gamma])
+        #expect(keychain.deletes == ["SLACK_TOKEN_T01", "SLACK_COOKIE_T01"])
+        expectNoSecrets(terminal.lines, error)
+    }
+
+    @Test("a workspace another process removes while alpha's items are deleted stays removed")
+    func otherRemovalDuringRemoval() async throws {
+        let changed = try await indexValue([Fake.alpha])
+        let keychain = self.keychain
+        keychain.afterDelete(of: "SLACK_COOKIE_T01") {
+            keychain.writeFromAnotherProcess(service: "SLACK_WORKSPACES", value: changed)
+        }
+
+        let error = await remove("alpha")
+
+        #expect(error == nil)
+        #expect(try await store.workspaces() == [])
+        expectNoSecrets(terminal.lines, error)
+    }
+
+    @Test("when another process already dropped alpha from the index during the deletes, the index is not written")
+    func alreadyDroppedDuringRemoval() async throws {
+        let changed = try await indexValue([Fake.beta])
+        let keychain = self.keychain
+        keychain.afterDelete(of: "SLACK_COOKIE_T01") {
+            keychain.writeFromAnotherProcess(service: "SLACK_WORKSPACES", value: changed)
+        }
+
+        let error = await remove("alpha")
+
+        #expect(error == nil)
+        #expect(try await store.workspaces() == [Fake.beta])
+        #expect(keychain.writes.isEmpty)
+        expectNoSecrets(terminal.lines, error)
+    }
+
+    @Test("an index that cannot be read again after the deletes is an error saying both items were deleted")
+    func rereadFails() async throws {
+        let keychain = self.keychain
+        keychain.afterDelete(of: "SLACK_COOKIE_T01") {
+            keychain.writeFromAnotherProcess(service: "SLACK_WORKSPACES", value: "not base64!")
+        }
+
+        let error = await remove("alpha")
+
+        let message = try #require((error as? SlackAuthCommandError)?.message)
+        #expect(message.contains("Deleted SLACK_TOKEN_T01 and SLACK_COOKIE_T01"))
+        #expect(message.contains("slack-all auth remove T01 again"))
+        #expect(keychain.writes.isEmpty)
+        expectNoSecrets(terminal.lines, error)
+    }
+
     @Test("a query that matches two workspaces (one's team id, another's domain) is an error and nothing changes")
     func ambiguous() async throws {
         let odd = SlackWorkspace(teamID: "T03", domain: "t01", name: "Odd", userID: "U03")
