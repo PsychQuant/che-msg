@@ -36,17 +36,19 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 |------|------|------|
 | `che-telegram-bot-mcp` | Telegram Bot API | Swift + MCP SDK |
 | `che-telegram-all-mcp` | Telegram 個人帳號 (MTProto/TDLib) | Swift + TDLibKit |
-| `plugins/che-telegram-mcp` | Claude Code plugin：包上面兩個 MCP server（wrapper 從本 repo 的 release 下載 binary） | bash wrapper + skills |
+| `che-slack-mcp` | Slack，以本人的瀏覽器 session（`xoxc` token + cookie `d`）連上每個匯入的 workspace；含 CLI `slack-all` | Swift + MCP SDK |
+| `plugins/che-telegram-mcp` | Claude Code plugin：包上面兩個 Telegram MCP server（wrapper 從本 repo 的 release 下載 binary） | bash wrapper + skills |
+| `plugins/che-slack-mcp` | Claude Code plugin：包 `CheSlackMCP`（server 名 `slack`；wrapper 從本 repo 的 release 下載 binary，不讀也不 export 憑證） | bash wrapper |
 | `plugins/che-archive-lines` | Claude Code plugin：LINE macOS「儲存聊天」自動化 | bash + cliclick |
-| `.claude-plugin/marketplace.json` | marketplace `che-msg`，用相對路徑列出上面兩個 plugin | — |
-| `tests/` | 兩個 plugin 的結構、wrapper、設定檔測試（`tests/che-telegram-mcp/`、`tests/che-archive-lines/`）；`tests/release/` 是發布腳本的測試，`tests/frontmatter-subset-fuzz/` 比對兩種 YAML 解析器，`tests/lib/` 是共用 helper | bash + python3 |
+| `.claude-plugin/marketplace.json` | marketplace `che-msg`，用相對路徑列出上面三個 plugin | — |
+| `tests/` | 三個 plugin 的結構、wrapper、設定檔測試（`tests/che-telegram-mcp/`、`tests/che-slack-mcp/`、`tests/che-archive-lines/`）；`tests/release/` 是發布腳本的測試，`tests/frontmatter-subset-fuzz/` 比對兩種 YAML 解析器，`tests/lib/` 是共用 helper | bash + python3 |
 | `scripts/release/` | 發布腳本：版號一致性檢查、universal build、簽章與 notarize、打包（#40） | bash |
 | `Makefile` | 發布入口：`check-versions`、`check-pins`、`sign-check`、`release-signed`、`test-release` | make |
 | `RELEASING.md` | 發布 binary 的步驟；以它為準，這份檔案只摘要 | — |
 
 ## 架構
 
-兩個 MCP 都拆為三層，共用一個底層 library：
+Telegram 的兩個 MCP 都拆為三層，共用一個底層 library：
 
 **bot-mcp**
 
@@ -64,21 +66,35 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 | `CheTelegramAllMCP` | MCP Server entry point | TelegramAllLib + MCP SDK |
 | `telegram-all` | CLI 工具 | TelegramAllLib + ArgumentParser |
 
+**slack-mcp**（#99）
+
+| Target | 用途 | 依賴 |
+|--------|------|------|
+| `SlackWebLib` | Slack Web API client、五類錯誤、pacing、Keychain 讀寫（經 `/usr/bin/security`） | Foundation only |
+| `CheSlackMCPCore` | MCP 工具（9 個）、workspace 選擇、歸檔 | SlackWebLib + MCP SDK |
+| `SlackAllCore` | 剪貼簿與桌面 app 匯入、status、remove | SlackWebLib |
+| `CheSlackMCP` | MCP Server entry point | CheSlackMCPCore |
+| `slack-all` | CLI 工具（`auth import [--from-desktop]`、`auth status`、`auth remove`） | SlackAllCore + ArgumentParser |
+
+憑證只在 Keychain（account `che-slack-mcp`，service `SLACK_WORKSPACES`、`SLACK_TOKEN_<TEAM_ID>`、`SLACK_COOKIE_<TEAM_ID>`）。用詞（workspace、conversation、session token）見 `openspec/LANGUAGE.md`。
+
 ## Claude Code plugins
 
-這兩個 plugin 原本在 PsychQuant/psychquant-claude-plugins，`06d073e` 時原樣搬進來（#42）。舊歷史留在那個 repo。
+che-telegram-mcp 與 che-archive-lines 原本在 PsychQuant/psychquant-claude-plugins，`06d073e` 時原樣搬進來（#42）。舊歷史留在那個 repo。che-slack-mcp 從一開始就在這裡（#99）。
 
 - 安裝：`claude plugin marketplace add PsychQuant/che-msg`，再 `claude plugin install <plugin>@che-msg`
 - 改版：`plugins/<name>/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json` 的 `version` 一起改，CHANGELOG 同步；che-telegram-mcp 還要改 README 的 "Plugin version"，CHANGELOG 的 `## [P]` 段要寫出它 pin 的 binary 版本（`check-versions.sh` 會查，見 `RELEASING.md` 第 1 步）
-- binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（目前 0.8.0）。`scripts/release/check-versions.sh` 從這一行讀 pin（找「目前」接一個半形空格再接數字的地方），所以這句的寫法要保留，這份檔案的其他地方也不要出現「目前」加空格再接數字
+- binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（Telegram 目前 0.8.0）。`scripts/release/check-versions.sh` 從這一行讀 pin（找「目前」接一個半形空格再接數字的地方），所以這句的寫法要保留，這份檔案的其他地方也不要出現「目前」加空格再接數字
 - 發新 binary 的順序照 `RELEASING.md`：先在 branch 上把所有 pin（上一條的「目前」那句、兩支 wrapper、plugin 版號等）一起 bump，`make check-versions` 在 build 前要求它們一致；GitHub release 建好之後才用 merge commit（不是 squash 或 rebase）合進 `main`，讓打 tag 的 commit 留在 `main` 上。這樣 `main` 上的 pin 永遠指向已存在的 release
+- che-slack-mcp 的 wrapper pin 0.9.0，只下載這個 tag 的 asset `CheSlackMCP`（不退回 `releases/latest`）。pin 必須等於 `CheSlackMCPServer.version` 與 `slack-all` 的 `version`（結構測試 (b2) 把關），三處一起改。`slack-all` 不經 wrapper 下載，README 教使用者從原始碼 build
 - 結構測試的 check (j) 把關使用者會被導向哪個 marketplace，規則在 `tests/lib/install_refs.py`。它防的是不小心留下的舊引用，不防蓄意規避（能改 README 的人也能改這支測試）：
   - plugin 目錄內除最上層 CHANGELOG.md 以外的所有檔案、根 README.md、`.claude-plugin/marketplace.json` 裡，舊 marketplace 名稱只能出現在三種地方：uninstall 那一行的 install id、舊 repo 某個 issue／PR 的連結（`/issues/<n>`、`/pull/<n>`，不接受 `Owner/repo#N` 簡寫）、一般字詞。其他形式（`owner/舊名`，例如 `GITHUB_REPO`、`marketplace add` 的參數、plugin 的 `source`，以及任何指進舊 repo 的連結）都算錯
   - plugin README 的 `<plugin>@X` 都要是 `@che-msg`（uninstall 那行除外），而且至少要有一次 `install <plugin>@che-msg` 和一次 `marketplace add …/che-msg`。這兩項是「至少出現一次」，不擋另外再寫一行指向第三個 marketplace 的 `marketplace add`
-  - `bin/` 裡的 wrapper 要有 `docsUrl`（telegram），每個 `docsUrl` 都必須是同一個檔案 `GITHUB_REPO` 底下的 README 網址，anchor 要對得到標題
+  - `bin/` 裡的 wrapper 要有 `docsUrl`（telegram 與 slack），每個 `docsUrl` 都必須是同一個檔案 `GITHUB_REPO` 底下的 README 網址，anchor 要對得到標題
   - 讀不到、不是一般檔案、超過 2 MB 的檔案，以及指向目錄的 symlink、列不出內容的目錄，都會被回報，不會被略過
   - 散文能不能誤導人，這個檢查判斷不了；docstring 的 Not checked 列出所有沒檢查的項目
 - plugin 再搬家時，把它離開的 marketplace 名稱加進 `tests/lib/install_refs.py` 的 `FORMER`
+- che-slack-mcp 的 README 給的權限規則名是 `mcp__plugin_che-slack-mcp_slack__<tool>`，`slack` 來自 `.mcp.json` 的 server 名；改 server 名會讓那些規則失效，結構測試 (b)(e) 會擋。免確認表永遠不放 `send_message` 與 `archive_conversation_to_markdown`
 
 ## 開發
 
@@ -92,6 +108,9 @@ swift build -c release --product telegram-bot
 # all-mcp
 cd che-telegram-all-mcp && swift build -c release
 swift build -c release --product telegram-all
+
+# slack-mcp（需要 Swift 6 toolchain；一次 build 出 CheSlackMCP 與 slack-all）
+cd che-slack-mcp && swift build -c release
 ```
 
 ## 測試
@@ -107,11 +126,17 @@ swift test --filter E2ETests
 
 注意：TDLib receive loop 是 process-global，all-mcp 的 unit tests 和 E2E tests 必須分開跑。
 
+slack-mcp 的測試全部離線（假的傳輸層、暫存 keychain 檔案、合成的桌面 app fixture）：
+
+```bash
+cd che-slack-mcp && swift test
+```
+
 Plugin 測試（repo 根目錄執行，需要 python3 + PyYAML；全部用 scratch 目錄與 stub，不會點擊滑鼠、不會碰真的 TDLib lock）：
 
 ```bash
-for t in tests/che-telegram-mcp/*.sh tests/che-archive-lines/*.sh; do bash "$t" >/dev/null || echo "FAIL: $t"; done
-claude plugin validate . && claude plugin validate plugins/che-telegram-mcp && claude plugin validate plugins/che-archive-lines
+for t in tests/che-telegram-mcp/*.sh tests/che-slack-mcp/*.sh tests/che-archive-lines/*.sh; do bash "$t" >/dev/null || echo "FAIL: $t"; done
+claude plugin validate . && claude plugin validate plugins/che-telegram-mcp && claude plugin validate plugins/che-slack-mcp && claude plugin validate plugins/che-archive-lines
 bash tests/frontmatter-subset-fuzz/run.sh   # 另需 bun：比對 PyYAML 與 Bun.YAML 對 frontmatter 的讀法
 ```
 
@@ -136,5 +161,5 @@ telegram-all auth-status   # 應顯示 "Authenticated ✓"
 ## 未來擴展
 
 - LINE MCP（目前 `che-archive-lines` 是純腳本自動化，待升級為 MCP；見 #41）
-- Slack / Discord 等即時通訊整合
+- Discord 等即時通訊整合
 - che-telegram-all-mcp 簡化：以讀取 local 對話記錄為主
