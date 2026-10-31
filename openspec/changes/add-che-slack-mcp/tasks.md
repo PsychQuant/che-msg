@@ -59,11 +59,11 @@
 
 ## 12. 六方驗證修正
 
-- [ ] 12.1 依 Incremental archive and manifest 的修訂：再次歸檔時保留已在 day file 裡的區塊、只插入新訊息（依 ts 排序）；`has_more: true` 卻沒有 next cursor 時，歷史與 thread 回覆都視為沒走完。驗證：spec 情境「Edited message keeps its archived text」「has_more without a cursor does not move the bookmark」的測試；既有「重跑逐 byte 相同」的測試仍通過；改掉 `ArchiveTool.swift` 開頭宣稱單次呼叫成本有上限的註解（見 #104）。
-- [ ] 12.2 [after: 12.1] 依 Thread replies and lookback 的修訂：只為本次寫入、記為截斷、或區塊已在 day file 裡的主訊息抓回覆。驗證：spec 情境「Lookback skips a parent that was never archived」的測試（先以 `since_date` 歸檔，再以預設呼叫，窗口內較早的主訊息不寫任何回覆）。
-- [ ] 12.3 依 Send message 的修訂：`internal_error`、`fatal_error` 也回報訊息可能已送出，並更正說每個 `ok: false` 都表示沒送出的註解。驗證：spec 情境「internal_error may have posted」的測試，以及 `fatal_error`。
-- [ ] 12.4 依 Workspace removal 的修訂：`slack-all auth remove` 在刪除憑證之後重新讀 `SLACK_WORKSPACES` 再移除該 workspace。驗證：spec 情境「Index changed during removal」的測試。
-- [ ] 12.5 依 Session token request authentication 的修訂：正式 transport 的 session 拒絕所有 redirect，redirect 歸為 network 錯誤。驗證：spec 情境「A redirect is not followed」的測試（以 `URLProtocol` stub 回 302 到另一個 host，第二個 host 收不到任何請求、錯誤不含 token 與 cookie）。
-- [ ] 12.6 `plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh`：每個程序用自己的 `mktemp` 暫存檔下載，安裝（chmod、取代、寫版本檔）在跨程序的鎖內進行，`mv` 成功後才寫版本檔與回報成功。驗證：`tests/che-slack-mcp/test-wrapper.sh` 新增兩個 wrapper 同時下載的測試（安裝後 binary 完整、版本檔正確），以及 `mv` 失敗時不寫版本檔；既有 wrapper 測試全數通過。Telegram 兩個 wrapper 留給 #107。
-- [ ] 12.7 文件：兩份 README 與 design 的 Keychain 風險說明照實寫出「同一使用者的任何程式都能透過 `security` 免提示讀出」，並讓 Always Allow 那句前後一致；README 寫明 `slack-all` 只能從原始碼 build（#112）與再次歸檔保留既有區塊；CLAUDE.md 的 check (j) 說明改成 `docsUrl` 也適用 Slack wrapper。驗證：`tests/che-slack-mcp/*.sh`、`claude plugin validate` 通過，兩份 README 的說法彼此一致。
+- [x] 12.1 依 Incremental archive and manifest 的修訂：再次歸檔時保留已在 day file 裡的區塊、只插入新訊息（依 ts 排序）；`has_more: true` 卻沒有 next cursor 時，歷史與 thread 回覆都視為沒走完。驗證：spec 情境「Edited message keeps its archived text」「has_more without a cursor does not move the bookmark」的測試；既有「重跑逐 byte 相同」的測試仍通過；改掉 `ArchiveTool.swift` 開頭宣稱單次呼叫成本有上限的註解（見 #104）。
+- [x] 12.2 [after: 12.1] 依 Thread replies and lookback 的修訂：只為本次寫入、記為截斷、或區塊已在 day file 裡的主訊息抓回覆。驗證：spec 情境「Lookback skips a parent that was never archived」的測試（先以 `since_date` 歸檔，再以預設呼叫，窗口內較早的主訊息不寫任何回覆）。
+- [x] 12.3 依 Send message 的修訂：`internal_error`、`fatal_error` 也回報訊息可能已送出，並更正說每個 `ok: false` 都表示沒送出的註解。驗證：spec 情境「internal_error may have posted」的測試，以及 `fatal_error`。
+- [x] 12.4 依 Workspace removal 的修訂：`slack-all auth remove` 在刪除憑證之後重新讀 `SLACK_WORKSPACES` 再移除該 workspace。驗證：spec 情境「Index changed during removal」的測試。
+- [x] 12.5 依 Session token request authentication 的修訂：正式 transport 的 session 拒絕所有 redirect，redirect 歸為 network 錯誤。驗證：spec 情境「A redirect is not followed」的測試（以 `URLProtocol` stub 回 302 到另一個 host，第二個 host 收不到任何請求、錯誤不含 token 與 cookie）。
+- [x] 12.6 `plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh`：每個程序用自己的 `mktemp` 暫存檔下載，安裝（chmod、取代、寫版本檔）在跨程序的鎖內進行，`mv` 成功後才寫版本檔與回報成功。驗證：`tests/che-slack-mcp/test-wrapper.sh` 新增兩個 wrapper 同時下載的測試（安裝後 binary 完整、版本檔正確），以及 `mv` 失敗時不寫版本檔；既有 wrapper 測試全數通過。Telegram 兩個 wrapper 留給 #107。
+- [x] 12.7 文件：兩份 README 與 design 的 Keychain 風險說明照實寫出「同一使用者的任何程式都能透過 `security` 免提示讀出」，並讓 Always Allow 那句前後一致；README 寫明 `slack-all` 只能從原始碼 build（#112）與再次歸檔保留既有區塊；CLAUDE.md 的 check (j) 說明改成 `docsUrl` 也適用 Slack wrapper。驗證：`tests/che-slack-mcp/*.sh`、`claude plugin validate` 通過，兩份 README 的說法彼此一致。
 
