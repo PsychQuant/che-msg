@@ -10,7 +10,8 @@
 # Auto-upgrade, as in che-telegram-mcp:
 # - DESIRED_VERSION below pins the binary version this plugin expects.
 # - ~/bin/.CheSlackMCP.version records what the wrapper installed.
-# - On a mismatch it downloads that release's asset again (.tmp, then mv).
+# - On a mismatch it downloads that release's asset again, to a temporary
+#   file of its own, and installs it under a lock ("Download and install").
 # - Only the pinned release is asked for, never releases/latest: a newer
 #   binary under the pinned version's sidecar would no longer be a pin.
 # - Builds under $HOME/Developer/... are never replaced.
@@ -63,6 +64,96 @@ fail_startup() {
     exit 1
 }
 
+# --- Download and install (#99) ---
+# Every Claude Code session can start this wrapper, so several may download at
+# once. Each downloads to a temporary file of its own next to the installed
+# binary, so the final mv is an atomic rename on one filesystem. The install
+# (chmod, mv, sidecar) runs under a lock, after reading the sidecar again: when
+# another start has installed the pinned version meanwhile, the download is
+# discarded. The sidecar is written, and "installed" reported, only after chmod
+# and mv succeeded; otherwise the wrapper falls back as for a failed download.
+#
+# The lock is a directory (mkdir is atomic) holding its owner's PID. It is
+# stale when that PID no longer runs, or when it is older than
+# LOCK_STALE_MINUTES: its owner only renames files, so an older lock was left
+# by a process killed before it wrote its PID, or one whose PID now belongs to
+# another process. A stale lock is taken over. A live one is waited for,
+# polling every 0.2 s for LOCK_WAIT_SECONDS at most; then the install is
+# skipped. Two starts taking over the same stale lock may both install, which
+# still never leaves a partial binary: each moves a complete file into place.
+LOCK_DIR="$INSTALL_DIR/.${BINARY_NAME}.lock"
+LOCK_WAIT_SECONDS=60
+LOCK_STALE_MINUTES=5
+LOCK_HELD=false
+TMP_BINARY=""
+INSTALL_RESULT=""
+
+lock_is_stale() {
+    local owner
+    owner=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+    if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+        return 0
+    fi
+    [[ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +"$LOCK_STALE_MINUTES" 2>/dev/null)" ]]
+}
+
+acquire_install_lock() {
+    local polls=$((LOCK_WAIT_SECONDS * 5))
+    while (( polls > 0 )); do
+        if mkdir "$LOCK_DIR" 2>/dev/null; then
+            LOCK_HELD=true
+            echo "$$" > "$LOCK_DIR/pid"
+            return 0
+        fi
+        polls=$((polls - 1))
+        if lock_is_stale; then
+            echo "$BINARY_NAME: taking over the stale install lock $LOCK_DIR" >&2
+            mv -f "$LOCK_DIR" "$LOCK_DIR.stale.$$" 2>/dev/null && rm -rf "$LOCK_DIR.stale.$$"
+        else
+            sleep 0.2
+        fi
+    done
+    return 1
+}
+
+release_install_lock() {
+    $LOCK_HELD || return 0
+    LOCK_HELD=false
+    # Only while the lock is still ours: a waiter may have taken it over.
+    [[ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" == "$$" ]] || return 0
+    rm -f "$LOCK_DIR/pid"
+    rmdir "$LOCK_DIR" 2>/dev/null
+}
+
+# Removes this start's temporary file and lock; also the EXIT trap.
+cleanup_install() {
+    if [[ -n "$TMP_BINARY" ]]; then
+        rm -f "$TMP_BINARY"
+        TMP_BINARY=""
+    fi
+    release_install_lock
+}
+
+# With the lock held: sets INSTALL_RESULT to present (another start installed
+# the pinned version), installed, or install-failed.
+install_download() {
+    local current=""
+    [[ -f "$VERSION_FILE" ]] && current=$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null || true)
+    if [[ "$current" == "$DESIRED_VERSION" ]] && [[ -x "$INSTALLED_BINARY" ]]; then
+        INSTALL_RESULT=present
+        return
+    fi
+    INSTALL_RESULT=install-failed
+    chmod 755 "$TMP_BINARY" || return
+    xattr -dr com.apple.quarantine "$TMP_BINARY" 2>/dev/null || true
+    mv -f "$TMP_BINARY" "$INSTALLED_BINARY" || return
+    TMP_BINARY=""
+    if ! echo "$DESIRED_VERSION" > "$VERSION_FILE"; then
+        echo "$BINARY_NAME: WARNING — could not write $VERSION_FILE; the next start downloads v$DESIRED_VERSION again" >&2
+    fi
+    INSTALL_RESULT=installed
+}
+
 # Find the binary: the copy this wrapper installs first, then source builds.
 BINARY=""
 for loc in "$INSTALLED_BINARY" "/usr/local/bin/$BINARY_NAME" "$HOME/.local/bin/$BINARY_NAME" "$HOME/Developer/che-msg/che-slack-mcp/.build/release/$BINARY_NAME"; do
@@ -86,6 +177,10 @@ fi
 if $NEED_DOWNLOAD; then
     echo "$BINARY_NAME: $REASON — downloading v$DESIRED_VERSION from $GITHUB_REPO..." >&2
     mkdir -p "$INSTALL_DIR"
+    trap cleanup_install EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
 
     # -f: an HTTP error (404 before the release exists) is a failure, not a
     # page saved as the binary.
@@ -93,25 +188,45 @@ if $NEED_DOWNLOAD; then
         | grep '"browser_download_url"' | grep "/$BINARY_NAME\"" | head -1 \
         | sed 's/.*"\(https[^"]*\)".*/\1/')
 
-    if [[ -n "$URL" ]] && curl -fsSL --max-time "$DOWNLOAD_TIMEOUT" "$URL" -o "${INSTALLED_BINARY}.tmp" 2>/dev/null; then
-        chmod +x "${INSTALLED_BINARY}.tmp"
-        xattr -dr com.apple.quarantine "${INSTALLED_BINARY}.tmp" 2>/dev/null || true
-        mv "${INSTALLED_BINARY}.tmp" "$INSTALLED_BINARY"
-        echo "$DESIRED_VERSION" > "$VERSION_FILE"
-        echo "$BINARY_NAME: installed v$DESIRED_VERSION" >&2
-        BINARY="$INSTALLED_BINARY"
-    else
-        rm -f "${INSTALLED_BINARY}.tmp" 2>/dev/null
-        if [[ -n "$BINARY" ]]; then
-            echo "$BINARY_NAME: WARNING — download of v$DESIRED_VERSION failed, keeping existing binary" >&2
+    INSTALL_RESULT=download-failed
+    if [[ -n "$URL" ]] && TMP_BINARY=$(mktemp "${INSTALLED_BINARY}.XXXXXX" 2>/dev/null) \
+        && curl -fsSL --max-time "$DOWNLOAD_TIMEOUT" "$URL" -o "$TMP_BINARY" 2>/dev/null; then
+        if acquire_install_lock; then
+            install_download
         else
-            echo "$BINARY_NAME: ERROR — could not download $BINARY_NAME v$DESIRED_VERSION from $GITHUB_REPO." >&2
-            echo "  Install it by hand: https://github.com/$GITHUB_REPO/releases/tag/v$DESIRED_VERSION" >&2
-            echo "  Or build it from source:" >&2
-            echo "    git clone https://github.com/$GITHUB_REPO.git ~/Developer/che-msg" >&2
-            echo "    cd ~/Developer/che-msg/che-slack-mcp && swift build -c release" >&2
-            fail_startup "CheSlackMCP is not installed and v$DESIRED_VERSION could not be downloaded. Install or build it as the che-slack-mcp README describes, then reconnect with /mcp."
+            INSTALL_RESULT=lock-busy
         fi
+    fi
+    cleanup_install
+
+    PROBLEM=""
+    case "$INSTALL_RESULT" in
+        installed)
+            echo "$BINARY_NAME: installed v$DESIRED_VERSION" >&2
+            BINARY="$INSTALLED_BINARY" ;;
+        present)
+            echo "$BINARY_NAME: v$DESIRED_VERSION was installed by another start meanwhile" >&2
+            BINARY="$INSTALLED_BINARY" ;;
+        download-failed) PROBLEM="download of v$DESIRED_VERSION failed" ;;
+        install-failed) PROBLEM="install of v$DESIRED_VERSION in $INSTALL_DIR failed" ;;
+        lock-busy) PROBLEM="another start held the install lock $LOCK_DIR for ${LOCK_WAIT_SECONDS} s" ;;
+    esac
+
+    if [[ -n "$PROBLEM" ]] && [[ -n "$BINARY" ]]; then
+        echo "$BINARY_NAME: WARNING — $PROBLEM, keeping existing binary" >&2
+    elif [[ -n "$PROBLEM" ]]; then
+        if [[ "$INSTALL_RESULT" == download-failed ]]; then
+            echo "$BINARY_NAME: ERROR — could not download $BINARY_NAME v$DESIRED_VERSION from $GITHUB_REPO." >&2
+            STARTUP_ERROR="CheSlackMCP is not installed and v$DESIRED_VERSION could not be downloaded."
+        else
+            echo "$BINARY_NAME: ERROR — $PROBLEM, and $BINARY_NAME is not installed." >&2
+            STARTUP_ERROR="CheSlackMCP is not installed and v$DESIRED_VERSION could not be installed in ~/bin."
+        fi
+        echo "  Install it by hand: https://github.com/$GITHUB_REPO/releases/tag/v$DESIRED_VERSION" >&2
+        echo "  Or build it from source:" >&2
+        echo "    git clone https://github.com/$GITHUB_REPO.git ~/Developer/che-msg" >&2
+        echo "    cd ~/Developer/che-msg/che-slack-mcp && swift build -c release" >&2
+        fail_startup "$STARTUP_ERROR Install or build it as the che-slack-mcp README describes, then reconnect with /mcp."
     fi
 fi
 
@@ -120,4 +235,5 @@ fi
 # outlives it, so the wrapper simply becomes the binary; stdin, stdout and the
 # environment (including SLACK_MCP_MIN_INTERVAL_MS and
 # SLACK_MCP_MAX_CONCURRENCY) pass through unchanged.
+trap - EXIT HUP INT TERM
 exec "$BINARY" "$@"
