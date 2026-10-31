@@ -150,6 +150,7 @@ while [ $# -gt 0 ]; do
 done
 if [ -n "$out" ] && [ "$mode" = slow ]; then
     echo "$url" >> "$HOME/curl.downloads"
+    echo "$out" >> "$HOME/curl.outputs"
     mkdir "$HOME/curl.first" 2>/dev/null || sleep "$(cat "$HOME/curl.delay")"
     exec 3> "$out" || exit 23
     size=$(wc -c < "$HOME/served-binary")
@@ -414,6 +415,19 @@ race() {
         pass "version sidecar says $DESIRED_VERSION"
     else
         fail "version sidecar: $(cat "$H/bin/.CheSlackMCP.version" 2>/dev/null || echo missing)"
+    fi
+    # Each start must write its own file: with a shared one, one start's mv
+    # can install a file the other is still writing. Timing alone does not
+    # show this (two downloads of the same bytes to one file can still end
+    # up complete), so the paths are checked directly.
+    local outs
+    outs=$(sort -u "$H/curl.outputs" 2>/dev/null | grep -c .)
+    if [ "$(grep -c . "$H/curl.outputs" 2>/dev/null)" = 2 ] && [ "$outs" = 2 ] \
+        && ! grep -qx -e "$H/bin/CheSlackMCP" -e "$H/bin/CheSlackMCP.tmp" "$H/curl.outputs" \
+        && ! grep -qv "^$H/bin/CheSlackMCP\.[A-Za-z0-9]\{6,\}\$" "$H/curl.outputs"; then
+        pass "each download wrote its own temporary file next to the binary"
+    else
+        fail "download outputs: $(tr '\n' ' ' < "$H/curl.outputs" 2>/dev/null || echo none)"
     fi
     installed=$(cat "$H/err.1" "$H/err.2" | grep -c "installed v$DESIRED_VERSION\$")
     present=$(cat "$H/err.1" "$H/err.2" | grep -c "installed by another start")

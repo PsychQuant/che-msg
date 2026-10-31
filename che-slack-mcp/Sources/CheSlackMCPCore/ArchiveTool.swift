@@ -45,7 +45,8 @@ extension SlackToolHandler {
              last thread_lookback_days days are listed again so that a parent whose latest reply is newer than \
              the recorded one gets its replies fetched, starting after that reply; older threads are not \
              checked, nor is a parent listed there whose block is not in its day file (one an earlier call with \
-             since_date or after_ts started after), so no reply is written without its parent. A manifest that \
+             since_date or after_ts started after), so the lookback fetches no replies of a parent missing from the \
+             archive; a reply also sent to the conversation is archived with its top-level messages. A manifest that \
              cannot be read or was not written for this conversation refuses the call; move it aside to start \
              over. At most \(archiveHistoryMaxPages) pages of \(archivePageSize) top-level \
              messages, and \(SlackWebClient.repliesMaxPages) pages of \(SlackWebClient.repliesPageSize) replies per \

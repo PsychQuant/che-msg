@@ -1,6 +1,6 @@
 ## Purpose
 
-How che-slack-mcp stores, reads, imports and removes the per-workspace Slack session credentials in the macOS Keychain. It exists so that a credential that is equivalent to the user's signed-in session never passes through MCP tool arguments, the conversation with Claude, environment variables or process arguments.
+How che-slack-mcp stores, reads, imports and removes the per-workspace Slack session credentials in the macOS Keychain. It exists so that a credential that is equivalent to the user's signed-in session never passes through MCP tool arguments, tool results, environment variables or process arguments. Programs running as the same user can still read the items back with `security` without a prompt; the plugin README says so.
 
 ## ADDED Requirements
 
