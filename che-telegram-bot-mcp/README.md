@@ -33,6 +33,16 @@ Binary location: `.build/release/CheTelegramBotMCP`
 
 ## Installation
 
+> **Prefer the plugin.** The [`che-telegram-mcp` plugin](../plugins/che-telegram-mcp/README.md)'s wrapper reads `TELEGRAM_BOT_TOKEN` from the Keychain at launch. The options below run the server on its own. A token in a process's environment can be read by other processes of the same user (`ps -E`), and a token in `~/.claude.json` or the Claude Desktop config sits there in plain text. To keep it out of the configuration file, read it from the Keychain at launch ([#97](https://github.com/PsychQuant/che-msg/issues/97)):
+>
+> ```bash
+> claude mcp add che-telegram-bot-mcp -s user -- /bin/sh -c \
+>   'token=$(security find-generic-password -a che-telegram-bot-mcp -s TELEGRAM_BOT_TOKEN -w) || exit 1
+>    TELEGRAM_BOT_TOKEN=$token exec /path/to/che-telegram-bot-mcp/.build/release/CheTelegramBotMCP'
+> ```
+>
+> Store the token first with the plugin README's command (`-w` last, so `security` prompts for it). If the item is missing or the Keychain is locked, the launcher stops and `security`'s message is in the server's stderr. The token is still in the server's environment while it runs.
+
 ### Option A: Claude Code CLI
 
 ```bash

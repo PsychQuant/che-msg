@@ -1,6 +1,5 @@
 .build/
 .swiftpm/
-Package.resolved
 *.xcodeproj
 *.xcworkspace
 DerivedData/
@@ -11,3 +10,5 @@ mcpb/server/*
 
 # Build artifacts
 *.mcpb
+# Tracked: the release build uses exactly these versions (PsychQuant/che-msg#92).
+!/Package.resolved

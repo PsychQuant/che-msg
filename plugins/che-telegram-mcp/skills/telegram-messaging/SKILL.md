@@ -29,16 +29,16 @@ Tool names: `mcp__plugin_che-telegram-mcp_telegram-all__<tool>`
 
 Auth state persists in `~/Library/Application Support/che-telegram-all-mcp/tdlib/`.
 
-**Always check `auth_status` before doing real work.** It returns `{state, next_step, last_error, connection_state, unsynced_seconds, sync_stalled}`.
+**Always check `auth_status` before doing real work.** It returns `{state, next_step, last_error, keychain_lookup, connection_state, unsynced_seconds, sync_stalled}`. `keychain_lookup` is null unless the server waits for the phone number or the 2FA password and its Keychain lookup found nothing; it then says why (`not_stored`, `timed_out`, `unavailable`). Do not ask the user to type the 2FA password into the conversation: follow `next_step.hint`, which puts the Keychain first.
 
 - If `state == "ready"` and `sync_stalled` is `false`, skip auth. If `connection_state` is not `connectionStateReady`, TDLib is still catching up with Telegram (or has no network): reads may miss recent messages — say so to the user.
 - If `state == "ready"` and `sync_stalled` is `true`, TDLib has been updating for 2+ minutes without finishing — most likely Telegram invalidated the session, and every read returns old data. Tell the user; do not treat the data as current.
 - Otherwise, prefer `auth_run` (v0.5.0+) which drives the state machine in one tool:
   ```
   auth_run                         → fires auto-set params (if env present)
-  auth_run                         → fires auto-send phone (if env present)
+  auth_run                         → fires auto-send phone (env, or the Keychain from 0.9.0)
   auth_run(code: "12345")          → caller MUST supply SMS code (never auto-fired)
-  auth_run                         → fires auto-send 2FA password (if env present)
+  auth_run                         → fires auto-send 2FA password (env, or the Keychain from 0.9.0)
   auth_run                         → state == "ready"
   ```
 - Legacy per-step tools (`auth_set_parameters`, `auth_send_phone`, `auth_send_code`, `auth_send_password`) are still available as escape hatches.

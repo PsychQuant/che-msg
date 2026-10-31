@@ -43,7 +43,7 @@ swift build -c release --product telegram-bot
 .build/release/telegram-bot --help
 ```
 
-See each server's README for installation and configuration details.
+See each server's README for installation and configuration details. Cutting a release of the binaries: [RELEASING.md](RELEASING.md).
 
 ## Structure
 
@@ -59,7 +59,8 @@ che-msg/
 │   └── telegram-all/               #   CLI tool (10 commands)
 ├── .claude-plugin/marketplace.json # The che-msg plugin marketplace
 ├── plugins/                        # Claude Code plugins (che-telegram-mcp, che-archive-lines)
-├── tests/                          # Plugin tests
+├── scripts/release/                # Release build: version check, signing, notarization
+├── tests/                          # Plugin and release-tooling tests
 └── ...                             # More messaging MCPs planned
 ```
 

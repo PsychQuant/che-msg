@@ -171,4 +171,145 @@ final class AuthRunHandlerTests: XCTestCase {
         XCTAssertEqual(action, .callSendPassword("callerSecret"),
                        "Caller-supplied password MUST take precedence over env var")
     }
+
+    // MARK: - Keychain as the third source (PsychQuant/che-msg#49; spec example "source precedence")
+
+    private func phoneAction(arg: String?, env: String?, keychain: String?) -> AuthRunAction {
+        decideAuthRunAction(state: .waitingForPhoneNumber, phone: arg, code: nil, password: nil,
+                            envApiId: nil, envApiHash: nil, envPhone: env, envPassword: nil,
+                            keychainPhone: keychain, keychainPassword: nil)
+    }
+
+    private func passwordAction(arg: String?, env: String?, keychain: String?) -> AuthRunAction {
+        decideAuthRunAction(state: .waitingForPassword, phone: nil, code: nil, password: arg,
+                            envApiId: nil, envApiHash: nil, envPhone: nil, envPassword: env,
+                            keychainPhone: nil, keychainPassword: keychain)
+    }
+
+    func testPhonePrecedence_callerArgumentWins() {
+        XCTAssertEqual(phoneAction(arg: "+886911111111", env: "+886922222222", keychain: "+886933333333"),
+                       .callSendPhone("+886911111111"))
+    }
+
+    func testPhonePrecedence_environmentBeatsKeychain() {
+        XCTAssertEqual(phoneAction(arg: nil, env: "+886922222222", keychain: "+886933333333"),
+                       .callSendPhone("+886922222222"))
+    }
+
+    func testPhonePrecedence_keychainWhenNothingElse() {
+        XCTAssertEqual(phoneAction(arg: nil, env: nil, keychain: "+886933333333"), .callSendPhone("+886933333333"))
+    }
+
+    func testPhonePrecedence_nothingAnywhereNeedsTheArgument() {
+        XCTAssertEqual(phoneAction(arg: nil, env: nil, keychain: nil), .needsArgs(["phone"]))
+    }
+
+    func testPasswordPrecedence() {
+        XCTAssertEqual(passwordAction(arg: "from-arg", env: "from-env", keychain: "from-keychain"), .callSendPassword("from-arg"))
+        XCTAssertEqual(passwordAction(arg: nil, env: "from-env", keychain: "from-keychain"), .callSendPassword("from-env"))
+        XCTAssertEqual(passwordAction(arg: nil, env: nil, keychain: "from-keychain"), .callSendPassword("from-keychain"))
+        XCTAssertEqual(passwordAction(arg: nil, env: nil, keychain: nil), .needsArgs(["password"]))
+    }
+
+    /// Spec: the Keychain is never consulted for the SMS code.
+    func testCodeIgnoresKeychainValues() {
+        let action = decideAuthRunAction(state: .waitingForCode, phone: nil, code: nil, password: nil,
+                                         envApiId: nil, envApiHash: nil, envPhone: nil, envPassword: nil,
+                                         keychainPhone: "+886933333333", keychainPassword: "from-keychain")
+        XCTAssertEqual(action, .needsArgs(["code"]))
+    }
+
+    func testParametersIgnoreKeychainValues() {
+        let action = decideAuthRunAction(state: .waitingForParameters, phone: nil, code: nil, password: nil,
+                                         envApiId: nil, envApiHash: nil, envPhone: nil, envPassword: nil,
+                                         keychainPhone: "+886933333333", keychainPassword: "from-keychain")
+        XCTAssertEqual(action, .needsArgs(["api_id", "api_hash"]))
+    }
+
+    // MARK: - When auth_run reads the Keychain at all
+
+    func testKeychainIsReadOnlyWhenArgumentAndEnvironmentAreBothMissing() {
+        XCTAssertEqual(authRunKeychainLookup(state: .waitingForPhoneNumber, phone: nil, password: nil,
+                                             envPhone: nil, envPassword: nil), .phone)
+        XCTAssertEqual(authRunKeychainLookup(state: .waitingForPassword, phone: nil, password: nil,
+                                             envPhone: nil, envPassword: nil), .password)
+        XCTAssertNil(authRunKeychainLookup(state: .waitingForPhoneNumber, phone: "+886911111111", password: nil,
+                                           envPhone: nil, envPassword: nil))
+        XCTAssertNil(authRunKeychainLookup(state: .waitingForPhoneNumber, phone: nil, password: nil,
+                                           envPhone: "+886922222222", envPassword: nil))
+        XCTAssertNil(authRunKeychainLookup(state: .waitingForPassword, phone: nil, password: "pw",
+                                           envPhone: nil, envPassword: nil))
+        XCTAssertNil(authRunKeychainLookup(state: .waitingForPassword, phone: nil, password: nil,
+                                           envPhone: nil, envPassword: "pw"))
+    }
+
+    func testKeychainIsNeverReadForTheCodeOrOtherStates() {
+        for state in [TDLibClient.AuthState.waitingForCode, .waitingForParameters, .ready, .closed] {
+            XCTAssertNil(authRunKeychainLookup(state: state, phone: nil, password: nil, envPhone: nil, envPassword: nil),
+                         "\(state)")
+        }
+    }
+
+    // MARK: - A Keychain value read before the state moved on (verify round 1)
+
+    func testAKeychainValueIsUsedWhileTheStateStillAsksForIt() {
+        let values = authRunKeychainValues(lookedUp: .password, value: "from-keychain", stateNow: .waitingForPassword,
+                                           phone: nil, password: nil, envPhone: nil, envPassword: nil)
+        XCTAssertEqual(values.phone, nil)
+        XCTAssertEqual(values.password, "from-keychain")
+    }
+
+    func testAKeychainValueIsDroppedWhenTheStateMovedOn() {
+        for stateNow in [TDLibClient.AuthState.ready, .waitingForCode, .waitingForPhoneNumber, .closed] {
+            let values = authRunKeychainValues(lookedUp: .password, value: "from-keychain", stateNow: stateNow,
+                                               phone: nil, password: nil, envPhone: nil, envPassword: nil)
+            XCTAssertNil(values.password, "\(stateNow)")
+            XCTAssertNil(values.phone, "\(stateNow)")
+        }
+    }
+
+    func testNothingLookedUpGivesNoKeychainValues() {
+        let values = authRunKeychainValues(lookedUp: nil, value: nil, stateNow: .waitingForPhoneNumber,
+                                           phone: nil, password: nil, envPhone: nil, envPassword: nil)
+        XCTAssertNil(values.phone)
+        XCTAssertNil(values.password)
+    }
+
+    // MARK: - Routing after the lookup (#49 verify r2)
+
+    private func afterLookup(_ lookedUp: KeychainCredential?, _ value: String?, now: TDLibClient.AuthState,
+                             code: String? = nil) -> AuthRunAction {
+        decideAuthRunActionAfterLookup(lookedUp: lookedUp, value: value, stateNow: now, phone: nil, code: code,
+                                       password: nil, envApiId: 1, envApiHash: "h", envPhone: nil, envPassword: nil)
+    }
+
+    func testAfterTheLookupTheActionFollowsTheStateAsItIsNow() {
+        XCTAssertEqual(afterLookup(.password, "from-keychain", now: .waitingForPassword), .callSendPassword("from-keychain"))
+        XCTAssertEqual(afterLookup(.password, "from-keychain", now: .ready), .noOpReady,
+                       "the background step already logged in: nothing is sent again")
+        XCTAssertEqual(afterLookup(.phone, "+886912345678", now: .waitingForCode, code: nil),
+                       decideAuthRunAction(state: .waitingForCode, phone: nil, code: nil, password: nil,
+                                           envApiId: 1, envApiHash: "h", envPhone: nil, envPassword: nil),
+                       "a phone number found for an earlier state is not sent at waitingForCode")
+    }
+
+    // MARK: - Descriptions never carry a value (#96)
+
+    func testAnActionNeverPrintsItsValue() {
+        let actions: [AuthRunAction] = [
+            .callSetParameters(apiId: 12345, apiHash: "hash-value"), .callSendPhone("+886900000417"),
+            .callSendCode("54321"), .callSendPassword("secret-2fa"),
+        ]
+        for action in actions {
+            for text in ["\(action)", String(reflecting: action)] {
+                for value in ["hash-value", "886900000417", "54321", "secret-2fa"] {
+                    XCTAssertFalse(text.contains(value), text)
+                }
+            }
+        }
+        XCTAssertEqual("\(AuthRunAction.callSendPassword("x"))", "callSendPassword(<redacted>)")
+        XCTAssertEqual("\(AuthRunAction.callSetParameters(apiId: 12345, apiHash: "h"))", "callSetParameters(apiId: 12345, apiHash: <redacted>)")
+        XCTAssertEqual("\(AuthRunAction.needsArgs(["phone"]))", "needsArgs([\"phone\"])")
+    }
 }
+

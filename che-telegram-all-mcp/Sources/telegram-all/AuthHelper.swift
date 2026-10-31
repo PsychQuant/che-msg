@@ -10,7 +10,8 @@ enum AuthHelper {
             throw AuthError.missingEnv
         }
 
-        let client = try await TDLibClient()
+        // The CLI never reads the Keychain (#96): see NoKeychainCredentialSource.
+        let client = try await TDLibClient(credentials: NoKeychainCredentialSource())
         try await Task.sleep(nanoseconds: 1_000_000_000)
 
         do {

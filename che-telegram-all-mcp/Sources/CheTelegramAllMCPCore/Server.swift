@@ -176,11 +176,11 @@ public final class CheTelegramAllMCPServer {
                  required: ["password"]),
 
             tool("auth_status",
-                 description: "Check current authentication status. Returns {state, next_step, last_error, connection_state, unsynced_seconds, sync_stalled} where next_step describes what to call next (null when ready and not stalled), last_error reports any auto-fire failure, connection_state is TDLib's last connection state, unsynced_seconds counts time open without syncing, and sync_stalled is true when TDLib is logged in and has been updating for 120 s without finishing (time offline does not count; the session was likely invalidated). When stalled, next_step points to logout: ask the user before calling it.",
+                 description: "Check current authentication status. Returns {state, next_step, last_error, keychain_lookup, connection_state, unsynced_seconds, sync_stalled} where next_step describes what to call next (null when ready and not stalled), last_error reports any auto-fire failure, keychain_lookup is null unless TDLib waits for the phone number or the 2FA password and the last Keychain lookup for it found nothing ({credential, outcome}: not_stored, timed_out or unavailable; never the value), connection_state is TDLib's last connection state, unsynced_seconds counts time open without syncing, and sync_stalled is true when TDLib is logged in and has been updating for 120 s without finishing (time offline does not count; the session was likely invalidated). When stalled, next_step points to logout: ask the user before calling it.",
                  properties: [:], required: []),
 
             tool("auth_run",
-                 description: "Drive the authentication state machine by one step. Call repeatedly with optional args until state == 'ready'. Auto-fires from env vars (TELEGRAM_API_ID/HASH, TELEGRAM_PHONE, TELEGRAM_2FA_PASSWORD) when present; otherwise returns next_step.required_args identifying what to provide. SMS verification code MUST be supplied via the 'code' arg (never auto-fired).",
+                 description: "Drive the authentication state machine by one step. Call repeatedly with optional args until state == 'ready'. Takes each value from the caller's argument, then the environment (TELEGRAM_API_ID/HASH, TELEGRAM_PHONE, TELEGRAM_2FA_PASSWORD), then, for the phone number and the 2FA password only, the Keychain item the plugin README sets up; otherwise returns next_step.required_args identifying what to provide. SMS verification code MUST be supplied via the 'code' arg (never auto-fired, never read from the environment or the Keychain).",
                  properties: [
                     "phone": prop("string", "Phone number (international format) — only honored when state == waitingForPhoneNumber"),
                     "code": prop("string", "SMS verification code — only honored when state == waitingForCode"),
@@ -477,7 +477,8 @@ public final class CheTelegramAllMCPServer {
                 }
                 try await tdlib.sendAuthCode(code)
                 if tdlib.getAuthState() == .waitingForPassword {
-                    result = "{\"status\": \"waitingForPassword\", \"next_step\": \"Use auth_send_password with your 2FA password\"}"
+                    // The Keychain first, as in auth_status (#95): an argument passes through the conversation.
+                    result = "{\"status\": \"waitingForPassword\", \"next_step\": \"Call auth_status: the 2FA password is read from the Keychain when it is stored there. Use auth_send_password only if the user chooses to type it here\"}"
                 } else {
                     result = "{\"status\": \"\(tdlib.getAuthState().rawValue)\"}"
                 }
@@ -490,19 +491,31 @@ public final class CheTelegramAllMCPServer {
                 result = "{\"status\": \"\(tdlib.getAuthState().rawValue)\"}"
 
             case "auth_status":
+                let auth = tdlib.authStateAndKeychainMiss()
                 return authStatusResult(
-                    state: tdlib.getAuthState(),
+                    state: auth.state,
                     lastError: tdlib.getLastAutoFireError(),
-                    sync: syncState.snapshot
+                    sync: syncState.snapshot,
+                    keychainMiss: auth.keychainMiss
                 )
 
             case "auth_run":
                 let env = ProcessInfo.processInfo.environment
-                let action = decideAuthRunAction(
-                    state: tdlib.getAuthState(),
-                    phone: args["phone"]?.stringValue,
+                let state: TDLibClient.AuthState = tdlib.getAuthState()
+                let phoneArg = args["phone"]?.stringValue
+                let passwordArg = args["password"]?.stringValue
+                // The Keychain is the last source and is read only when needed (#49).
+                let needed = authRunKeychainLookup(state: state, phone: phoneArg, password: passwordArg,
+                                                   envPhone: env["TELEGRAM_PHONE"],
+                                                   envPassword: env["TELEGRAM_2FA_PASSWORD"])
+                let stored = if let needed { await tdlib.lookUpKeychainCredential(needed) } else { String?.none }
+                // The lookup awaited with no lock: route on the state as it is now.
+                let stateNow: TDLibClient.AuthState = needed == nil ? state : tdlib.getAuthState()
+                let action = decideAuthRunActionAfterLookup(
+                    lookedUp: needed, value: stored, stateNow: stateNow,
+                    phone: phoneArg,
                     code: args["code"]?.stringValue,
-                    password: args["password"]?.stringValue,
+                    password: passwordArg,
                     envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init),
                     envApiHash: env["TELEGRAM_API_HASH"],
                     envPhone: env["TELEGRAM_PHONE"],
@@ -522,10 +535,18 @@ public final class CheTelegramAllMCPServer {
                 case .errorClosed:
                     return errorResult("Authentication session is closed. Restart the MCP server to retry.")
                 }
+                // A phone number or 2FA password from the Keychain may be on its
+                // way for the state this step led to: answer once it has been
+                // sent, rather than asking the caller for it (#49).
+                if tdlib.isSubmittingKeychainCredential {
+                    await tdlib.waitForAuthorizationToSettle(timeout: 15)
+                }
+                let auth = tdlib.authStateAndKeychainMiss()
                 return authStatusResult(
-                    state: tdlib.getAuthState(),
+                    state: auth.state,
                     lastError: tdlib.getLastAutoFireError(),
-                    sync: syncState.snapshot
+                    sync: syncState.snapshot,
+                    keychainMiss: auth.keychainMiss
                 )
 
             case "logout":
