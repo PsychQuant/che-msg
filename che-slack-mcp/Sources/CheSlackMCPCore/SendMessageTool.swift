@@ -71,25 +71,32 @@ extension SlackToolHandler {
 
     /// Whether Slack may have posted the message although the call failed,
     /// so the error must not read as "nothing was sent". A closed list, only
-    /// these three; no other error is to be added by analogy:
+    /// these four; no other error is to be added by analogy:
     /// 1. `network`: the transport failed, possibly after Slack received the
     ///    request.
     /// 2. `slackError` `invalid_json` or `http_<status>`: an answer came back
     ///    that does not say whether Slack posted (an HTML error page, a 502).
     /// 3. `slackError` `unexpected_response`: Slack answered `ok: true`, so
     ///    it posted, but without the new message's `channel` and `ts`.
-    /// Every other error is Slack saying it did not post: an `ok: false`
-    /// code (`channel_not_found`, `not_in_channel`, `is_archived`, ...),
-    /// `sessionInvalid`, `enterpriseRestricted`, or `rateLimited`, since
-    /// Slack does not process a request it rate limits.
+    /// 4. `slackError` `internal_error` or `fatal_error`: Slack's
+    ///    chat.postMessage reference says that after either, part of the
+    ///    operation may have succeeded.
+    /// Every other error is Slack saying it did not post: any other
+    /// `ok: false` code (`channel_not_found`, `not_in_channel`,
+    /// `is_archived`, ...), `sessionInvalid`, `enterpriseRestricted`, or
+    /// `rateLimited`, since Slack does not process a request it rate limits.
     static func mayHavePosted(_ error: SlackError) -> Bool {
         switch error {
         case .network:
             return true
         case let .slackError(code):
-            return code == "invalid_json" || code == "unexpected_response" || code.hasPrefix("http_")
+            return mayHavePostedCodes.contains(code) || code.hasPrefix("http_")
         case .sessionInvalid, .enterpriseRestricted, .rateLimited:
             return false
         }
     }
+
+    /// The `slackError` codes of items 2 to 4 above, except `http_<status>`.
+    private static let mayHavePostedCodes: Set<String> =
+        ["invalid_json", "unexpected_response", "internal_error", "fatal_error"]
 }
