@@ -128,7 +128,9 @@ extension SlackWebClient {
     /// (exclusive, Slack's default), so a thread longer than `maxPages`
     /// continues after the newest reply already read; the parent may still
     /// come first. `hasMore` is true when the page limit stopped the walk
-    /// while Slack still offered a cursor. A failure on any page fails the
+    /// while Slack still offered a cursor, and when the last page says
+    /// `has_more` without a cursor to follow, so that a caller does not
+    /// take the thread as read to its end. A failure on any page fails the
     /// whole call.
     public func conversationReplies(channel: String, ts: String, oldest: String? = nil,
                                     pageSize: Int = repliesPageSize, maxPages: Int = repliesMaxPages,
@@ -136,6 +138,7 @@ extension SlackWebClient {
         var messages: [SlackMessage] = []
         var seen: Set<String> = []
         var cursor: String?
+        var more = false
         for _ in 0..<max(1, maxPages) {
             var parameters = ["channel": channel, "ts": ts, "limit": String(pageSize)]
             parameters["oldest"] = oldest
@@ -147,8 +150,9 @@ extension SlackWebClient {
                 messages.append(message)
             }
             cursor = SlackResponseMetadata.cursor(answer.responseMetadata)
+            more = answer.more
             if cursor == nil { break }
         }
-        return SlackMessagePage(messages: messages, hasMore: cursor != nil)
+        return SlackMessagePage(messages: messages, hasMore: cursor != nil || more)
     }
 }

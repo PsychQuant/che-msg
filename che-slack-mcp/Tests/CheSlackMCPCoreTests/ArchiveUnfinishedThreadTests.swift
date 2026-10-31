@@ -375,4 +375,33 @@ struct ArchiveUnfinishedThreadTests {
             "newest_ts": "\(Self.oldParent)", "newest_reply_ts": {}
             """))
     }
+
+    /// spec: "Incremental archive and manifest": Slack's `has_more: true`
+    /// without a next cursor on a thread's replies is a thread cut short,
+    /// as by the reply page limit. The first archive writes the spec's
+    /// example parent and the reply Slack returned; the thread is listed as
+    /// unfinished with that reply as its bookmark, and the call is not
+    /// complete.
+    @Test("a thread whose replies answer has_more without a next cursor stays in unfinished_threads")
+    func repliesHasMoreWithoutCursor() async throws {
+        let parent = ArchiveManifestTests.parent(replies: 2, latest: "1793498880.000300")
+        let replies = #"{"ok":true,"messages":[\#(parent),\#(ArchiveToolTests.ownReply)],"has_more":true}"#
+        let slack = ArchiveToolTests.slack(history: ArchiveFake.history([parent]), replies: replies)
+        let (handler, _) = try await readHandler(slack)
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+
+        let result = await ArchiveToolTests.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun, handler),
+                                                    into: output)
+
+        expectJSON(result, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
+                   + #""lookback_complete":true,"new_messages":2,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":1,"top_level_messages":1,"utc_offset":"+08:00"}"#)
+        #expect(Self.replies(slack).count == 1)
+        #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
+            "newest_ts": "\(ArchiveManifestTests.parentTS)",
+            "newest_reply_ts": {"\(ArchiveManifestTests.parentTS)": "\(ArchiveManifestTests.replyTS)"},
+            "unfinished_threads": ["\(ArchiveManifestTests.parentTS)"]
+            """))
+    }
 }

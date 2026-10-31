@@ -119,10 +119,10 @@ struct SlackDayFileTests {
         #expect(SlackDayFile.seconds(ofTS: ts) == nil)
     }
 
-    /// Merge: existing blocks are kept byte for byte, a re-archived ts is
-    /// replaced, a new ts is added in order, and text before the first
-    /// anchor is kept.
-    @Test("merging keeps existing blocks and the preamble, replaces a re-archived ts and adds new ones in order")
+    /// Merge (spec: "Incremental archive and manifest"): existing blocks are
+    /// kept byte for byte, a re-archived ts keeps the block archived first,
+    /// a new ts is added in order, and text before the first anchor is kept.
+    @Test("merging keeps existing blocks and the preamble, leaves a re-archived ts as archived and adds new ones in order")
     func merge() {
         let existing = """
             ---
@@ -170,10 +170,25 @@ struct SlackDayFileTests {
 
             <!-- msg:1793498820.000200 -->
             **10:07 我**：
-            new text
-
+            old text
 
             """)
+    }
+
+    /// Nothing to add: the file comes back byte for byte, also one edited by
+    /// hand so that its frontmatter has another field and its last block no
+    /// final line break, which writing it anew would change.
+    @Test("merging only messages whose blocks are already in the file returns it byte for byte")
+    func mergeWithNothingNew() {
+        let existing = "---\nteam_id: \"T01\"\nconversation_id: \"C01\"\ndate: 2026-11-01\nutc_offset: \"+08:00\"\n"
+            + "tags: [kept]\n---\n\n<!-- msg:1793498700.000100 -->\n**10:05 Alex**：\nbefore"
+        let edited = ArchivedMessage(ts: "1793498700.000100", parentTS: nil, sender: "Alexander", body: "after")
+
+        let (content, added) = SlackDayFile.merged(existing: existing, teamID: "T01", conversationID: "C01",
+                                                   day: "2026-11-01", utcOffset: "+08:00", messages: [edited])
+
+        #expect(content == existing)
+        #expect(added.isEmpty)
     }
 
     @Test("merging the same messages into the file they produced changes nothing")

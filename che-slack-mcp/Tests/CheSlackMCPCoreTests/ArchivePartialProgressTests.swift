@@ -25,7 +25,7 @@ struct ArchivePartialProgressTests {
         "Slack kept rate limiting this workspace after the client's retries, so the run stopped early with "
             + "\(written) written. The manifest's newest ts did not move: calling the tool again, after "
             + "retry_after_seconds, continues where the manifest records this walk stopped, or reads the same range "
-            + "again when nothing was recorded, and merges the blocks already written in place."
+            + "again when nothing was recorded, and leaves the blocks already written as they are."
     }
 
     /// A first run that archives only `question`, leaving the manifest's
@@ -207,8 +207,8 @@ struct ArchivePartialProgressTests {
 
     /// Conservative: reply bookmarks stay as they were too, even for a
     /// thread whose replies were all written before the stop, so the next
-    /// run fetches them again and merges in place rather than trusting a
-    /// partly written run. No top-level message was written, so there is
+    /// run fetches them again, writing only those not in the day files,
+    /// rather than trusting a partly written run. No top-level message was written, so there is
     /// nothing to continue and the manifest is not written at all. The second run is 20 days after the first;
     /// Kim's reply `1795140300.000300` is 2026-11-20 10:05.
     @Test("a rate limit leaves the reply bookmarks as they were, even for a thread fully written before it")

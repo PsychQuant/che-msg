@@ -302,7 +302,8 @@ extension ArchiveDirectory {
         try Self.replace(manifestFile, with: manifest.encoded()) { code in
             ToolFailure("Could not write the manifest \(manifestFile.path): \(String(cString: strerror(code))). The "
                         + "day files written in this call are kept; the manifest still holds the previous "
-                        + "bookmark, so the next call reads those messages again and merges them in place.")
+                        + "bookmark, so the next call reads those messages again and leaves their blocks as "
+                        + "they are.")
         }
     }
 }

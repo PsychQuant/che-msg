@@ -11,13 +11,15 @@ extension SlackToolHandler {
     /// most Slack recommends (design: 參數上限與來源).
     static let archivePageSize = historyLimit.range.upperBound
     /// History pages read at most per call (10000 top-level messages at
-    /// `archivePageSize`), so one call has a bounded cost; about 18 s of
-    /// history requests at the default 350 ms pacing, plus one replies
-    /// request per thread parent. Our own choice, without a measurement
-    /// behind it; `complete` is false when it stopped the walk above its
-    /// lower bound, and the manifest records where the next call continues;
-    /// when it stopped only the listing of the lookback window,
-    /// `lookback_complete` is false instead.
+    /// `archivePageSize`): about 18 s of history requests at the default
+    /// 350 ms pacing. Only history pages count. The `conversations.replies`
+    /// requests (up to `SlackWebClient.repliesMaxPages` per thread parent
+    /// fetched) and the `users.info` name lookups come on top, with no limit
+    /// per call, so this alone does not bound the cost of a call (#104). Our
+    /// own choice, without a measurement behind it; `complete` is false when
+    /// it stopped the walk above its lower bound, and the manifest records
+    /// where the next call continues; when it stopped only the listing of
+    /// the lookback window, `lookback_complete` is false instead.
     static let archiveHistoryMaxPages = 50
 
     static let archiveTools: [Tool] = [
@@ -30,8 +32,11 @@ extension SlackToolHandler {
              turned into markdown. The sender is 我 for your own messages, else the user's display name, \
              Bot <bot_id> or User <user_id>. Replies of the thread parents written in this call are fetched and \
              written in the file of their own day. Attached files are written as [file: name](permalink) and never \
-             downloaded. A day file that already exists is merged by ts: its blocks are kept, and a message \
-             archived again replaces its own block. Directories are created owner-only (0700), day files 0600. \
+             downloaded. A day file that already exists is merged by ts: its blocks are kept as they are, a \
+             message archived again keeps the block archived first (an edited message its archived text, a \
+             renamed sender the archived name), and only a message not yet in the file is inserted, in ts \
+             order; a file with nothing new is left byte-identical. Directories are created owner-only (0700), \
+             day files 0600. \
              A manifest.json next to the day files records the newest top-level ts archived, the newest reply ts \
              of each thread parent inside the lookback window or not yet read to its end, the time of the last run \
              and its counts, never message text or names. Without after_ts or since_date only messages newer than \
@@ -42,8 +47,9 @@ extension SlackToolHandler {
              checked. A manifest that cannot be read or was not written for this conversation refuses the call; \
              move it aside to start over. At most \(archiveHistoryMaxPages) pages of \(archivePageSize) top-level \
              messages, and \(SlackWebClient.repliesMaxPages) pages of \(SlackWebClient.repliesPageSize) replies per \
-             thread, are read per call; complete is false when messages were left out, so call again until it is \
-             true. Listing the lookback window counts in the same page limit but does not by itself make complete \
+             thread, are read per call; complete is false when messages were left out, by these limits or because \
+             Slack said it had more without giving a cursor to read them, so call again until it is true. Listing \
+             the lookback window counts in the same page limit but does not by itself make complete \
              false: every result has lookback_complete, false when the call did not list down to the start of the \
              window, and when complete is true a note then says that the thread parents in the rest of the window \
              were not checked for new replies and that a smaller thread_lookback_days lists fewer messages. A \
@@ -67,8 +73,8 @@ extension SlackToolHandler {
              stopped above its lower bound, a thread cut short in this call is recorded with the newest reply \
              written (other reply records do not move), and the result has complete false, stopped_reason \
              rate_limited, retry_after_seconds and a note; calling again later continues from there, or reads the \
-             same range again when nothing was recorded, and merges the blocks already written in place. Any other \
-             Slack error is an error result; the pages merged before it stay written and the manifest is left as \
+             same range again when nothing was recorded, and keeps the blocks already written as they are. Any \
+             other Slack error is an error result; the pages merged before it stay written and the manifest is left as \
              it was. Returns the day files changed (relative to output_dir) and message counts, never message text.
              """,
              properties: workspaceProperty.merging([
@@ -123,8 +129,8 @@ extension SlackToolHandler {
 /// `after_ts` or `since_date`), so the next such call continues below the
 /// oldest message written instead of reading the same newest pages again
 /// (spec: "Incremental archive and manifest"). An error leaves the
-/// previous manifest, and the next call reads the same messages again and
-/// merges them in place.
+/// previous manifest, and the next call reads the same messages again,
+/// inserting only those not yet in the day files.
 struct ConversationArchiver {
     let client: SlackWebClient
     let selection: ResolvedWorkspace
@@ -140,28 +146,35 @@ struct ConversationArchiver {
         let team_id: String
         let conversation_id: String
         let utc_offset: String
-        /// Day files whose content changed, relative to `output_dir`.
+        /// Day files created or with a message inserted, relative to
+        /// `output_dir`; a file whose messages all had blocks is unchanged
+        /// and not listed.
         var files: [String] = []
+        /// Top-level messages and thread replies this call archived: merged
+        /// into their day files, one whose block was already there and was
+        /// left as it was included.
         var top_level_messages = 0
         var thread_replies = 0
-        /// Messages that had no block in their day file before.
+        /// Messages that had no block in their day file before: the ones
+        /// this call wrote.
         var new_messages = 0
         /// Messages not written because their ts is not a Slack timestamp.
         var skipped_messages = 0
-        /// False when the page limit stopped the history walk above its
-        /// lower bound, a rate limit stopped the call, a thread had more
-        /// replies than one walk reads (and so is still unfinished), or the
-        /// call finished an unfinished walk or range and so did not look for
-        /// messages newer than it. A walk that wrote
+        /// False when the page limit, or Slack's `has_more` without a next
+        /// cursor, stopped the history walk above its lower bound, a rate
+        /// limit stopped the call, a thread had more replies than one walk
+        /// reads or Slack said so without a cursor (and so is still
+        /// unfinished), or the call finished an unfinished walk or range and
+        /// so did not look for messages newer than it. A walk that wrote
         /// every message above its bound and was then stopped by the page
         /// limit while listing the lookback window leaves it true (spec:
         /// "Incremental archive and manifest"); `lookback_complete` tells.
         var complete = true
         /// True when the walk listed everything down to the start of the
         /// lookback window, or down to its lower bound when the window
-        /// starts later or is 0 days; false when the page limit stopped it
-        /// first, above its bound or inside the window, or a rate limit
-        /// stopped it.
+        /// starts later or is 0 days; false when the page limit or Slack's
+        /// `has_more` without a next cursor stopped it first, above its
+        /// bound or inside the window, or a rate limit stopped it.
         var lookback_complete = false
         /// Why the run stopped early; absent when it did not.
         enum StopReason: String, Encodable {
@@ -183,12 +196,12 @@ struct ConversationArchiver {
             complete = false
             stopped_reason = .rate_limited
             retry_after_seconds = seconds
-            let written = top_level_messages + thread_replies
+            let written = new_messages
             note = "Slack kept rate limiting this workspace after the client's retries, so the run stopped early "
                 + "with \(written == 1 ? "1 message" : "\(written) messages") written. The manifest's newest ts did "
                 + "not move: calling the tool again, after retry_after_seconds, continues where the manifest records "
-                + "this walk stopped, or reads the same range again when nothing was recorded, and merges the blocks "
-                + "already written in place."
+                + "this walk stopped, or reads the same range again when nothing was recorded, and leaves the blocks "
+                + "already written as they are."
         }
 
         /// The note of a complete run whose walk the page limit stopped
@@ -264,8 +277,8 @@ struct ConversationArchiver {
     ///   to continue from leaves it byte-identical;
     /// - reply bookmarks and the unfinished threads are not moved, even for
     ///   a thread written whole before the stop: the next run fetches it
-    ///   again and merges it in place, at the cost of a request, rather than
-    ///   trust a run that stopped part way. The exception is a thread cut
+    ///   again, writing only the replies not yet in the day files, at the
+    ///   cost of a request, rather than trust a run that stopped part way. The exception is a thread cut
     ///   short in this run whose replies were written before the stop: it
     ///   is listed as unfinished with the newest reply written (spec:
     ///   "Thread replies and lookback"), because the walk continues below
@@ -315,11 +328,17 @@ struct ConversationArchiver {
     /// lists only below the continuation's `below_ts`. The page limit makes
     /// the call incomplete only when it stops the walk above its bound;
     /// stopping it inside the lookback window leaves `lookback_complete`
-    /// false and nothing else.
+    /// false and nothing else. Slack's `has_more` without a next cursor
+    /// stops the walk the same way (spec: "Incremental archive and
+    /// manifest"): the walk cannot list what Slack left out, so it has not
+    /// reached its bound unless it already listed a message below it.
     private func walk(_ scope: ArchiveScope, into directory: ArchiveDirectory,
                       progress: inout Progress) async throws {
         var cursor: String?
         var pages = 0
+        /// Whether Slack has messages the walk did not list: a next cursor,
+        /// or `has_more` without one.
+        var more = false
         repeat {
             let page = try await client.conversationHistory(channel: request.conversationID,
                                                             limit: SlackToolHandler.archivePageSize,
@@ -355,8 +374,9 @@ struct ConversationArchiver {
             progress.wrote(topLevel)
             if let stop { throw stop }
             cursor = page.nextCursor
+            more = cursor != nil || page.hasMore
         } while cursor != nil && pages < maxPages
-        if cursor == nil {
+        if !more {
             progress.reachedBound = true
             progress.summary.lookback_complete = true
         } else if !progress.reachedBound {
@@ -369,10 +389,11 @@ struct ConversationArchiver {
     /// (spec: "Thread replies and lookback"), the parent Slack still
     /// returns first being left out. The bookmark becomes the newest reply
     /// Slack returned (all of them are written now or were before). A
-    /// thread longer than one walk leaves `complete` false and is listed as
-    /// unfinished; its bookmark is then the newest reply read, so the next
-    /// run continues after it, and it waits in `cutPending` until its
-    /// replies are written. A thread read to its end leaves the list.
+    /// thread longer than one walk, or one whose replies Slack says have
+    /// more without a cursor to follow, leaves `complete` false and is
+    /// listed as unfinished; its bookmark is then the newest reply read, so
+    /// the next run continues after it, and it waits in `cutPending` until
+    /// its replies are written. A thread read to its end leaves the list.
     private func replies(of parent: String, progress: inout Progress) async throws -> [SlackMessage] {
         let thread = try await client.conversationReplies(channel: request.conversationID, ts: parent,
                                                           oldest: progress.replyBookmarks[parent],
@@ -427,7 +448,8 @@ struct ConversationArchiver {
     /// kept for parents inside this run's window and for unfinished
     /// threads, whatever their age; any other parent is dropped, and a
     /// later run with a wider window has no record of it, so its replies
-    /// are fetched once more and merged in place.
+    /// are fetched once more and only those not yet in the day files are
+    /// written.
     private func manifest(scope: ArchiveScope, progress: Progress, previous: ArchiveManifest?) -> ArchiveManifest {
         let unfinished = progress.unfinished
         return ArchiveManifest(

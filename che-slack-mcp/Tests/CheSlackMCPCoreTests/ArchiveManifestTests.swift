@@ -362,8 +362,8 @@ struct ArchiveManifestTests {
             """))
     }
 
-    /// after_ts below the bookmark archives that range again (merged in
-    /// place) and never moves the bookmark back.
+    /// after_ts below the bookmark archives that range again (the blocks
+    /// already there are kept) and never moves the bookmark back.
     @Test("after_ts takes precedence over the manifest's bookmark, which is not moved back")
     func afterTSOverridesBookmark() async throws {
         let (handler, _) = try await readHandler(ArchiveToolTests.slack(

@@ -112,12 +112,17 @@ enum SlackDayFile {
     }
 
     /// `existing` (a day file's text, or nil) with `messages` merged in by
-    /// ts: a block whose ts is not among `messages` is kept byte for byte,
-    /// a message whose ts has a block replaces that block, any other is
-    /// added; blocks are ordered by ts. Text between the frontmatter and the
-    /// first anchor is kept; the frontmatter is written anew. When an
-    /// anchor appears twice in `existing`, the first block is kept (as in
-    /// che-telegram-all-mcp). `added` lists the ts that had no block.
+    /// ts (spec: "Incremental archive and manifest"; as in
+    /// che-telegram-all-mcp): a message whose ts already has a block is left
+    /// out, so the block keeps what was archived first, an edited message
+    /// its archived text and a renamed sender the archived name; any other
+    /// is added, the first of a ts given twice; blocks are ordered by ts.
+    /// With nothing added, `existing` is returned byte for byte. Otherwise
+    /// the existing blocks and the text between the frontmatter and the
+    /// first anchor are kept, a last block without a final line break gets
+    /// one, and the frontmatter is written anew. When an anchor appears
+    /// twice in `existing`, the first block is kept. `added` lists the ts
+    /// that had no block.
     static func merged(existing: String?, teamID: String, conversationID: String, day: String, utcOffset: String,
                        messages: [ArchivedMessage]) -> (content: String, added: [String]) {
         let offset = offsetSeconds(utcOffset) ?? 0
@@ -127,10 +132,11 @@ enum SlackDayFile {
             blocks[block.ts] = block.text.hasSuffix("\n") ? block.text : block.text + "\n"
         }
         var added: [String] = []
-        for message in messages {
-            if blocks[message.ts] == nil, !added.contains(message.ts) { added.append(message.ts) }
+        for message in messages where blocks[message.ts] == nil {
+            added.append(message.ts)
             blocks[message.ts] = block(message, offsetSeconds: offset)
         }
+        if let existing, added.isEmpty { return (existing, []) }
         let body = blocks.keys.sorted(by: precedes).map { blocks[$0]! }.joined()
         return (frontmatter(teamID: teamID, conversationID: conversationID, day: day, utcOffset: utcOffset)
                 + parts.preamble + body, added)

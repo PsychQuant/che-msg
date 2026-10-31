@@ -339,6 +339,79 @@ struct ArchiveToolTests {
         #expect(try output.mode("T01/C01/2026-11-01.md") == 0o600)
     }
 
+    static let before = #"{"type":"message","user":"U02","text":"before","ts":"1793498700.000100"}"#
+    static let after = #"{"type":"message","user":"U02","text":"after","ts":"1793498700.000100","edited":{"user":"U02","ts":"1793498760.000000"}}"#
+    static let sameDay: [String: Value] = ["utc_offset": .string("+08:00"), "since_date": .string("2026-11-01")]
+
+    /// spec: "Edited message keeps its archived text". The second call
+    /// reads 2026-11-01 again with since_date; Slack now returns the
+    /// message edited to `after` and its sender renamed. The block keeps
+    /// what was archived first, so the day file is byte-identical.
+    @Test("spec: a message edited after it was archived keeps its archived text and sender name; the day file is byte-identical")
+    func editedMessageKeepsArchivedText() async throws {
+        let (first, _) = try await readHandler(Self.slack(history: ArchiveFake.history([Self.before])))
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        _ = await Self.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun, first), into: output, Self.sameDay)
+        let dayFile = try output.read("T01/C01/2026-11-01.md")
+        let (second, _) = try await readHandler(Self.slack(history: ArchiveFake.history([Self.after]),
+                                                           names: ["U02": "Alexander"]))
+
+        let result = await Self.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun + 3600, second),
+                                        into: output, Self.sameDay)
+
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":[],"lookback_complete":true,"#
+                   + #""new_messages":0,"skipped_messages":0,"team_id":"T01","thread_replies":0,"#
+                   + #""top_level_messages":1,"utc_offset":"+08:00"}"#)
+        #expect(dayFile.hasSuffix("<!-- msg:1793498700.000100 -->\n**10:05 Alex**：\nbefore\n\n"))
+        #expect(try output.read("T01/C01/2026-11-01.md") == dayFile)
+    }
+
+    /// spec: "A message not yet in its day file SHALL be inserted in ts
+    /// order." Archived again with since_date, the new 10:06 message goes
+    /// between the two blocks already there, which stay as they were,
+    /// although Slack now returns the 10:05 one edited.
+    @Test("a new message is inserted among the blocks already in the day file in ts order; those blocks are unchanged")
+    func newMessageInsertedInOrder() async throws {
+        let mine = #"{"type":"message","user":"U01","text":"mine","ts":"1793498820.000200"}"#
+        let kim = #"{"type":"message","user":"U03","text":"new","ts":"1793498760.000300"}"#
+        let (first, _) = try await readHandler(Self.slack(history: ArchiveFake.history([mine, Self.before])))
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        _ = await Self.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun, first), into: output, Self.sameDay)
+        let (second, _) = try await readHandler(Self.slack(history: ArchiveFake.history([mine, kim, Self.after]),
+                                                           names: ["U02": "Alexander", "U03": "Kim"]))
+
+        let result = await Self.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun + 3600, second),
+                                        into: output, Self.sameDay)
+
+        expectJSON(result, #"{"complete":true,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
+                   + #""lookback_complete":true,"new_messages":1,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":0,"top_level_messages":3,"utc_offset":"+08:00"}"#)
+        #expect(try output.read("T01/C01/2026-11-01.md") == """
+            ---
+            team_id: "T01"
+            conversation_id: "C01"
+            date: 2026-11-01
+            utc_offset: "+08:00"
+            ---
+
+            <!-- msg:1793498700.000100 -->
+            **10:05 Alex**：
+            before
+
+            <!-- msg:1793498760.000300 -->
+            **10:06 Kim**：
+            new
+
+            <!-- msg:1793498820.000200 -->
+            **10:07 我**：
+            mine
+
+
+            """)
+    }
+
     @Test("archiving the same messages again leaves the day file byte-identical and lists no file")
     func rerun() async throws {
         let transport = Self.slack(history: ArchiveFake.history([Self.alexParent]),

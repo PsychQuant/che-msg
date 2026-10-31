@@ -135,6 +135,37 @@ struct ArchiveContinuationTests {
             """))
     }
 
+    /// spec: "has_more without a cursor does not move the bookmark". The
+    /// bookmark is `1793451600.000100` (2026-10-31 21:00). Slack answers the
+    /// first page with the two messages newer than it, 2026-11-01 10:07 and
+    /// 10:05, and `has_more: true` with no `next_cursor`, so the walk cannot
+    /// go on below 10:05 and has not reached the bookmark: the messages
+    /// between were not read.
+    @Test("spec: has_more without a next cursor stops the walk above its bound: not complete, continuation recorded, newest_ts kept")
+    func hasMoreWithoutCursor() async throws {
+        let output = TemporaryDirectory()
+        defer { output.remove() }
+        try Self.preset(output, manifest: ArchiveManifestSafetyTests.manifest([
+            "newest_ts": #""1793451600.000100""#,
+        ]))
+        let page = #"{"ok":true,"messages":[{"user":"U02","text":"two","ts":"1793498820.000200"},"#
+            + #"{"user":"U02","text":"one","ts":"1793498700.000100"}],"has_more":true}"#
+        let slack = ArchiveToolTests.slack(history: page)
+        let (handler, _) = try await readHandler(slack)
+
+        let result = await ArchiveToolTests.archive(ArchiveManifestTests.at(ArchiveManifestTests.firstRun, handler),
+                                                    into: output, Self.lookback0)
+
+        expectJSON(result, #"{"complete":false,"conversation_id":"C01","files":["T01/C01/2026-11-01.md"],"#
+                   + #""lookback_complete":false,"new_messages":2,"skipped_messages":0,"team_id":"T01","#
+                   + #""thread_replies":0,"top_level_messages":2,"utc_offset":"+08:00"}"#)
+        #expect(ArchiveRangeTests.history(slack).count == 1)
+        #expect(try ArchiveRangeTests.state(output) == ArchiveRangeTests.expected("""
+            "newest_ts": "1793451600.000100", "newest_reply_ts": {},
+            "continuation": {"top_ts": "1793498820.000200", "below_ts": "1793498700.000100"}
+            """))
+    }
+
     /// Silent failure: a continued walk stopped by a rate limit before it
     /// wrote anything leaves the manifest, its continuation included,
     /// byte-identical.

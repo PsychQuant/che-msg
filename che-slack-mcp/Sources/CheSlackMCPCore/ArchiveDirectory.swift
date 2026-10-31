@@ -112,8 +112,10 @@ struct ArchiveDirectory {
         return created
     }
 
-    /// Merges `messages` into `day`'s file and replaces it when its content
-    /// changes. Returns whether the file changed and the ts it did not hold.
+    /// Merges `messages` into `day`'s file (`SlackDayFile.merged`): only the
+    /// ones it holds no block for are inserted, and the file is replaced
+    /// only when one was, so a file with nothing new is not touched.
+    /// Returns whether the file changed and the ts it did not hold.
     func write(day: String, messages: [ArchivedMessage], utcOffset: String) throws(ToolFailure)
         -> (changed: Bool, added: [String]) {
         let file = conversationDir.appendingPathComponent("\(day).md")
