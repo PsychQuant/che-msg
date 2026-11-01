@@ -73,7 +73,7 @@ Telegram 的兩個 MCP 都拆為三層，共用一個底層 library：
 | `SlackWebLib` | Slack Web API client、五類錯誤、pacing、Keychain 讀寫（經 `/usr/bin/security`） | Foundation only |
 | `CheSlackMCPCore` | MCP 工具（9 個）、workspace 選擇、歸檔 | SlackWebLib + MCP SDK |
 | `SlackAllCore` | 剪貼簿與桌面 app 匯入、status、remove | SlackWebLib |
-| `CheSlackMCP` | MCP Server entry point | CheSlackMCPCore |
+| `CheSlackMCP` | MCP Server entry point；`--version` 在啟動 server 之前回答（#114） | CheSlackMCPCore |
 | `slack-all` | CLI 工具（`auth import [--from-desktop]`、`auth status`、`auth remove`） | SlackAllCore + ArgumentParser |
 
 憑證只在 Keychain（account `che-slack-mcp`，service `SLACK_WORKSPACES`、`SLACK_TOKEN_<TEAM_ID>`、`SLACK_COOKIE_<TEAM_ID>`）。用詞（workspace、conversation、session token）見 `openspec/LANGUAGE.md`。
@@ -83,10 +83,10 @@ Telegram 的兩個 MCP 都拆為三層，共用一個底層 library：
 che-telegram-mcp 與 che-archive-lines 原本在 PsychQuant/psychquant-claude-plugins，`06d073e` 時原樣搬進來（#42）。舊歷史留在那個 repo。che-slack-mcp 從一開始就在這裡（#99）。
 
 - 安裝：`claude plugin marketplace add PsychQuant/che-msg`，再 `claude plugin install <plugin>@che-msg`
-- 改版：`plugins/<name>/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json` 的 `version` 一起改，CHANGELOG 同步；che-telegram-mcp 還要改 README 的 "Plugin version"，CHANGELOG 的 `## [P]` 段要寫出它 pin 的 binary 版本（`check-versions.sh` 會查，見 `RELEASING.md` 第 1 步）
+- 改版：`plugins/<name>/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json` 的 `version` 一起改，CHANGELOG 同步；che-telegram-mcp 還要改 README 的 "Plugin version"，CHANGELOG 的 `## [P]` 段要寫出它 pin 的 binary 版本（`check-versions.sh` 會查，見 `RELEASING.md` 第 1 步）。che-slack-mcp 的 plugin 版號獨立，`check-versions.sh` 只查 plugin.json 與 marketplace 一致（#114）
 - binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（Telegram 目前 0.9.0）。`scripts/release/check-versions.sh` 從這一行讀 pin（找「目前」接一個半形空格再接數字的地方），所以這句的寫法要保留，這份檔案的其他地方也不要出現「目前」加空格再接數字
-- 發新 binary 的順序照 `RELEASING.md`：先在 branch 上把所有 pin（上一條的「目前」那句、兩支 wrapper、plugin 版號等）一起 bump，`make check-versions` 在 build 前要求它們一致；GitHub release 建好之後才用 merge commit（不是 squash 或 rebase）合進 `main`，讓打 tag 的 commit 留在 `main` 上。這樣 `main` 上的 pin 永遠指向已存在的 release
-- che-slack-mcp 的 wrapper pin 0.9.0，只下載這個 tag 的 asset `CheSlackMCP`（不退回 `releases/latest`）。pin 必須等於 `CheSlackMCPServer.version` 與 `slack-all` 的 `version`（結構測試 (b2) 把關），三處一起改。`slack-all` 不經 wrapper 下載，README 教使用者從原始碼 build
+- 發新 binary 的順序照 `RELEASING.md`：先在 branch 上把所有 pin（上一條的「目前」那句、三支 wrapper、plugin 版號等）一起 bump，`make check-versions` 在 build 前要求它們一致；GitHub release 建好之後才用 merge commit（不是 squash 或 rebase）合進 `main`，讓打 tag 的 commit 留在 `main` 上。這樣 `main` 上的 pin 永遠指向已存在的 release
+- che-slack-mcp 的 wrapper pin 0.9.0，只下載這個 tag 的 asset `CheSlackMCP`（不退回 `releases/latest`）。pin 必須等於 `CheSlackMCPServer.version` 與 `slack-all` 的 `version`（結構測試 (b2) 把關），三處一起改。`CheSlackMCP` 跟 Telegram 的兩支 binary 同一個 release、同一個版號，`check-versions.sh` 要求這些 pin 等於 Telegram 的 binary 版本（#114）。`slack-all` 不經 wrapper 下載，也不放進 release（#112），README 教使用者從原始碼 build
 - 結構測試的 check (j) 把關使用者會被導向哪個 marketplace，規則在 `tests/lib/install_refs.py`。它防的是不小心留下的舊引用，不防蓄意規避（能改 README 的人也能改這支測試）：
   - plugin 目錄內除最上層 CHANGELOG.md 以外的所有檔案、根 README.md、`.claude-plugin/marketplace.json` 裡，舊 marketplace 名稱只能出現在三種地方：uninstall 那一行的 install id、舊 repo 某個 issue／PR 的連結（`/issues/<n>`、`/pull/<n>`，不接受 `Owner/repo#N` 簡寫）、一般字詞。其他形式（`owner/舊名`，例如 `GITHUB_REPO`、`marketplace add` 的參數、plugin 的 `source`，以及任何指進舊 repo 的連結）都算錯
   - plugin README 的 `<plugin>@X` 都要是 `@che-msg`（uninstall 那行除外），而且至少要有一次 `install <plugin>@che-msg` 和一次 `marketplace add …/che-msg`。這兩項是「至少出現一次」，不擋另外再寫一行指向第三個 marketplace 的 `marketplace add`
@@ -148,7 +148,7 @@ make test-release            # 跑 tests/release/ 的三組，遇到第一組失
 
 ## 發布
 
-步驟在 `RELEASING.md`，摘要：在 branch 上 bump 所有版號（含 plugin）→ `make check-versions`（版號一致、tag 還沒用過）→ commit 並 push branch → 可選的 `make sign-check`（要 `DEVELOPER_ID`；簽章、不 notarize，仍要連網取時間戳）→ `make release-signed`（要 `DEVELOPER_ID` 與 `NOTARY_PROFILE`；簽章、notarize、打包，產物在 `.build/dist/vX/`）→ 建 GitHub release → 用 merge commit 合進 `main` → 關掉所有 Claude Code session 再更新本機。
+步驟在 `RELEASING.md`，摘要：在 branch 上 bump 所有版號（含 plugin）→ `make check-versions`（版號一致、tag 還沒用過）→ commit 並 push branch → 可選的 `make sign-check`（要 `DEVELOPER_ID`；簽章、不 notarize，仍要連網取時間戳）→ `make release-signed`（要 `DEVELOPER_ID` 與 `NOTARY_PROFILE`；簽章、notarize、打包，產物在 `.build/dist/vX/`：三支 binary、兩個 Telegram 的 `.mcpb`、各自的 `.sha256`）→ 0.9.0 這一版必做：用另一個 macOS 帳號從零以 Keychain 登入一次，做法見 `RELEASING.md` 第 7 步（#97）→ 建 GitHub release → 用 merge commit 合進 `main` → 關掉所有 Claude Code session 再更新本機。
 
 ## all-mcp 認證流程（一次性）
 
