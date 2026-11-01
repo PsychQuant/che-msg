@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/release/check-versions.sh refuses a release whose version is not the
-# same everywhere it is pinned (PsychQuant/che-msg#40).
+# same everywhere it is pinned (PsychQuant/che-msg#40, #114).
 #
 # Copies the files that pin a version from HEAD into a scratch git repo, breaks
 # one place at a time, and checks that the script names that place and only
@@ -27,6 +27,13 @@
 #      to a predictable name in TMPDIR, and the file is removed whether the
 #      listing succeeds or fails; when no such file can be made, the tag check
 #      fails instead of being skipped (#94).
+#  10. che-slack-mcp (#114): its binary pins are among the places of test 2
+#      and reported by --expect; a missing slack-all main.swift is "not
+#      found"; the versions in the Slack README's prose are not pins; the
+#      che-slack-mcp plugin version is checked only for plugin.json and the
+#      marketplace entry agreeing (a mismatch names both, and needs no change
+#      to the che-telegram-mcp plugin version), and one that is not x.y.z is
+#      reported.
 #
 # Usage:
 #   bash tests/release/test-check-versions.sh
@@ -53,6 +60,12 @@ FILES=(
     plugins/che-telegram-mcp/CHANGELOG.md
     plugins/che-telegram-mcp/.claude-plugin/plugin.json
     .claude-plugin/marketplace.json
+    che-slack-mcp/Sources/CheSlackMCPCore/Server.swift
+    che-slack-mcp/Sources/slack-all/main.swift
+    che-slack-mcp/CHANGELOG.md
+    plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh
+    plugins/che-slack-mcp/README.md
+    plugins/che-slack-mcp/.claude-plugin/plugin.json
 )
 
 FAIL=0
@@ -118,9 +131,11 @@ crosses() { printf '%s\n' "$OUT" | grep -c '^✗'; }
 BASE=$(fresh_copy base)
 X=$(sed -nE 's/^[[:space:]]*public static let version = "([^"]*)".*/\1/p' "$BASE/${FILES[0]}")
 P=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$BASE/plugins/che-telegram-mcp/.claude-plugin/plugin.json")
+SP=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$BASE/plugins/che-slack-mcp/.claude-plugin/plugin.json")
 B="$(( ${X%%.*} + 1 )).0.0"     # a version that differs from X
 PB="$(( ${P%%.*} + 1 )).0.0"
-echo "HEAD pins binary $X, plugin $P"
+SPB="$(( ${SP%%.*} + 1 )).0.0"
+echo "HEAD pins binary $X, che-telegram-mcp plugin $P, che-slack-mcp plugin $SP"
 
 # ------------------------------------------------------------------- baseline
 test_case "HEAD as it is"
@@ -150,6 +165,14 @@ CASES=(
 "plugin.json|plugins/che-telegram-mcp/.claude-plugin/plugin.json|one('\"version\": \"$P\"', '\"version\": \"$PB\"')|plugin.json: plugin version is $PB"
 "marketplace|.claude-plugin/marketplace.json|json.dumps({**json.loads(s), 'plugins': [dict(p, version='$PB') if p['name'] == 'che-telegram-mcp' else p for p in json.loads(s)['plugins']]}, indent=2) + '\n'|.claude-plugin/marketplace.json: che-telegram-mcp version is $PB"
 "README plugin version|plugins/che-telegram-mcp/README.md|one('Plugin version: $P ', 'Plugin version: $PB ')|README.md: Plugin version is $PB"
+"Slack server|che-slack-mcp/Sources/CheSlackMCPCore/Server.swift|one('version = \"$X\"', 'version = \"$B\"')|che-slack-mcp/Sources/CheSlackMCPCore/Server.swift: CheSlackMCPServer.version is $B"
+"slack-all|che-slack-mcp/Sources/slack-all/main.swift|one('version: \"$X\"', 'version: \"$B\"')|che-slack-mcp/Sources/slack-all/main.swift: slack-all version is $B"
+"Slack wrapper|plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh|one('DESIRED_VERSION=\"$X\"', 'DESIRED_VERSION=\"$B\"')|plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh: DESIRED_VERSION is $B"
+"Slack README URL|plugins/che-slack-mcp/README.md|one('download/v$X/CheSlackMCP ', 'download/v$B/CheSlackMCP ')|plugins/che-slack-mcp/README.md: download URL (CheSlackMCP) is $B"
+"Slack README record|plugins/che-slack-mcp/README.md|one('echo $X > ~/bin/.CheSlackMCP.version', 'echo $B > ~/bin/.CheSlackMCP.version')|plugins/che-slack-mcp/README.md: version record line (CheSlackMCP) is $B"
+"Slack CHANGELOG|che-slack-mcp/CHANGELOG.md|one('## [$X]', '## [$B]')|che-slack-mcp/CHANGELOG.md: no section ## [$X]"
+"Slack plugin.json|plugins/che-slack-mcp/.claude-plugin/plugin.json|one('\"version\": \"$SP\"', '\"version\": \"$SPB\"')|plugins/che-slack-mcp/.claude-plugin/plugin.json says $SPB, .claude-plugin/marketplace.json says $SP"
+"Slack marketplace|.claude-plugin/marketplace.json|json.dumps({**json.loads(s), 'plugins': [dict(p, version='$SPB') if p['name'] == 'che-slack-mcp' else p for p in json.loads(s)['plugins']]}, indent=2) + '\n'|plugins/che-slack-mcp/.claude-plugin/plugin.json says $SP, .claude-plugin/marketplace.json says $SPB"
 )
 i=0
 for c in "${CASES[@]}"; do
@@ -174,7 +197,19 @@ run "$D" --no-remote
 if [ "$RC" -eq 1 ]; then pass "exit 1"; else fail "exit $RC"; fi
 if printf '%s\n' "$OUT" | grep -qF 'che-telegram-bot-mcp/mcpb/manifest.json: version not found'; then pass "reports the file as not found"; else fail "no not-found report:"$'\n'"$OUT"; fi
 
+test_case "a missing slack-all main.swift (#114)"
+D=$(fresh_copy missing-slack-all); rm "$D/che-slack-mcp/Sources/slack-all/main.swift"
+run "$D" --no-remote
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF 'che-slack-mcp/Sources/slack-all/main.swift: slack-all version not found'; then pass "reported as not found"; else fail "exit $RC:"$'\n'"$OUT"; fi
+
 # -------------------------------------------------------- not a pin: ignored
+test_case "the versions in the Slack README's prose (#114)"
+D=$(fresh_copy slack-prose)
+edit "$D" plugins/che-slack-mcp/README.md "re.sub(r'(The server binary \`CheSlackMCP\` )[0-9.]+', r'\g<1>0.0.1', s, count=1)"
+edit "$D" plugins/che-slack-mcp/README.md "re.sub(r'(Pins \`CheSlackMCP\` )[0-9.]+', r'\g<1>0.0.1', s, count=1)"
+run "$D" --no-remote
+if [ "$RC" -eq 0 ]; then pass "not reported (exit 0)"; else fail "exit $RC:"$'\n'"$OUT"; fi
+
 test_case "a feature's minimum version in the plugin README"
 D=$(fresh_copy minimum)
 edit "$D" plugins/che-telegram-mcp/README.md "re.sub(r'Needs \`che-telegram-all-mcp\` [0-9.]+ or later', 'Needs \`che-telegram-all-mcp\` 0.0.1 or later', s, count=1)"
@@ -186,7 +221,11 @@ test_case "--expect another version"
 run "$BASE" --no-remote --expect "$B"
 if [ "$RC" -eq 1 ]; then pass "exit 1"; else fail "exit $RC"; fi
 n=$(crosses)
-if [ "$n" -ge 15 ]; then pass "reports every binary pin ($n problems)"; else fail "reports only $n problems:"$'\n'"$OUT"; fi
+# 15 Telegram binary pins, the plugin CHANGELOG's mention of X, 6 Slack pins.
+if [ "$n" -ge 22 ]; then pass "reports every binary pin ($n problems)"; else fail "reports only $n problems:"$'\n'"$OUT"; fi
+for want in "CheSlackMCPServer.version is $X, expected $B" "slack-all version is $X" "che-slack-mcp-wrapper.sh: DESIRED_VERSION is $X" "download URL (CheSlackMCP) is $X" "version record line (CheSlackMCP) is $X" "che-slack-mcp/CHANGELOG.md: no section ## [$B]"; do
+    if printf '%s\n' "$OUT" | grep -qF -- "$want"; then pass "reports: $want"; else fail "does not report '$want'"; fi
+done
 
 # ---------------------------------------------------------------------- edges
 for longer in "$X.1" "1$X"; do
@@ -227,6 +266,20 @@ D=$(fresh_copy plugin-xyz)
 edit "$D" plugins/che-telegram-mcp/.claude-plugin/plugin.json "one('\"version\": \"$P\"', '\"version\": \"${P%.*}\"')"
 run "$D" --no-remote
 if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF "plugin version \"${P%.*}\" is not x.y.z"; then pass "reported"; else fail "not reported (exit $RC)"; fi
+
+test_case "a che-slack-mcp plugin version that is not x.y.z (#114)"
+D=$(fresh_copy slack-plugin-xyz)
+edit "$D" plugins/che-slack-mcp/.claude-plugin/plugin.json "one('\"version\": \"$SP\"', '\"version\": \"${SP%.*}\"')"
+edit "$D" .claude-plugin/marketplace.json "json.dumps({**json.loads(s), 'plugins': [dict(p, version='${SP%.*}') if p['name'] == 'che-slack-mcp' else p for p in json.loads(s)['plugins']]}, indent=2) + '\n'"
+run "$D" --no-remote
+if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF "plugins/che-slack-mcp/.claude-plugin/plugin.json: plugin version \"${SP%.*}\" is not x.y.z"; then pass "reported"; else fail "not reported (exit $RC):"$'\n'"$OUT"; fi
+
+test_case "the che-slack-mcp plugin version moves on its own (#114)"
+D=$(fresh_copy slack-plugin-bump)
+edit "$D" plugins/che-slack-mcp/.claude-plugin/plugin.json "one('\"version\": \"$SP\"', '\"version\": \"$SPB\"')"
+edit "$D" .claude-plugin/marketplace.json "json.dumps({**json.loads(s), 'plugins': [dict(p, version='$SPB') if p['name'] == 'che-slack-mcp' else p for p in json.loads(s)['plugins']]}, indent=2) + '\n'"
+run "$D" --no-remote
+if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -qF "che-slack-mcp plugin $SPB"; then pass "plugin.json and the marketplace agree: exit 0"; else fail "exit $RC:"$'\n'"$OUT"; fi
 
 test_case "git ls-remote prints a warning on stderr"
 D=$(fresh_copy ls-remote-warning)

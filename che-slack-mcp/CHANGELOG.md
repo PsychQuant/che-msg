@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.0] - 2026-11-01
 
 The first version. The server (`serverInfo.version`) and `slack-all --version` report 0.9.0; it ships with the che-msg release v0.9.0 ([#99](https://github.com/PsychQuant/che-msg/issues/99)).
 

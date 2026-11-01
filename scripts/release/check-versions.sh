@@ -1,13 +1,18 @@
 #!/bin/bash
 # Refuse a release whose version is not the same in every place that pins it
-# (PsychQuant/che-msg#40). v0.6.0 shipped a bot that still reported 0.1.0
+# (PsychQuant/che-msg#40, #114). v0.6.0 shipped a bot that still reported 0.1.0
 # because nothing checked this.
 #
-# The binary version comes from CLIBootstrap.swift (or --expect); the plugin
-# version from plugins/che-telegram-mcp/.claude-plugin/plugin.json. The places
-# checked are exactly the ones below. A version written anywhere else is not a
-# pin and is not checked: a feature's minimum version ("Needs … 0.8.0 or
-# later" in the plugin README) and the history in a CHANGELOG stay as they are.
+# The binary version comes from CLIBootstrap.swift (or --expect) and is the
+# version of all three binaries (CheTelegramAllMCP, CheTelegramBotMCP,
+# CheSlackMCP); the che-telegram-mcp plugin version from
+# plugins/che-telegram-mcp/.claude-plugin/plugin.json (or --expect-plugin).
+# The che-slack-mcp plugin has a version of its own: only its plugin.json and
+# its marketplace entry have to agree. The places checked are exactly the ones
+# below. A version written anywhere else is not a pin and is not checked: a
+# feature's minimum version ("Needs … 0.8.0 or later" in the plugin README),
+# the versions in the Slack plugin README's prose, and the history in a
+# CHANGELOG stay as they are.
 #
 # Usage:
 #   scripts/release/check-versions.sh [--expect X.Y.Z] [--expect-plugin X.Y.Z]
@@ -139,6 +144,20 @@ for pkg in che-telegram-all-mcp che-telegram-bot-mcp; do
     if has_section "$f" "$X"; then ok "$f" "section ## [$X]"; else bad "$f: no section ## [$X]"; fi
 done
 
+# che-slack-mcp ships CheSlackMCP in the same release (#114); slack-all is not
+# released (#112) but reports the same version.
+SLACK_README=plugins/che-slack-mcp/README.md
+f=che-slack-mcp/Sources/CheSlackMCPCore/Server.swift
+expect "$f" "CheSlackMCPServer.version" "$X" "$(found "$f" 's/^[[:space:]]*public static let version = "([^"]*)".*/\1/p')"
+f=che-slack-mcp/Sources/slack-all/main.swift
+expect "$f" "slack-all version" "$X" "$(found "$f" 's/^[[:space:]]*version: "([^"]*)".*/\1/p')"
+f=plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh
+expect "$f" "DESIRED_VERSION" "$X" "$(found "$f" 's/^DESIRED_VERSION="([^"]*)"$/\1/p')"
+expect "$SLACK_README" "download URL (CheSlackMCP)" "$X" "$(found "$SLACK_README" "s#.*releases/download/v([^/]*)/CheSlackMCP( .*|\$)#\\1#p")"
+expect "$SLACK_README" "version record line (CheSlackMCP)" "$X" "$(found "$SLACK_README" "s#^echo ([^ ]*) > ~/bin/\\.CheSlackMCP\\.version\$#\\1#p")"
+f=che-slack-mcp/CHANGELOG.md
+if has_section "$f" "$X"; then ok "$f" "section ## [$X]"; else bad "$f: no section ## [$X]"; fi
+
 # ------------------------------------------------------------ plugin version
 P_JSON=$(json "$PLUGIN_JSON" 'd["version"]')
 P=${EXPECT_PLUGIN:-$P_JSON}
@@ -147,7 +166,7 @@ if [ -n "$EXPECT_PLUGIN" ] && ! [[ "$EXPECT_PLUGIN" =~ $XYZ ]]; then
     exit 2
 fi
 echo ""
-echo "Plugin version ${P:-?}"
+echo "che-telegram-mcp plugin version ${P:-?}"
 if [ -z "$P" ]; then
     bad "$PLUGIN_JSON: plugin version not found"
 else
@@ -166,6 +185,28 @@ else
     else
         bad "$PLUGIN_CHANGELOG: section ## [$P] does not mention $X"
     fi
+fi
+
+# ------------------------------------------------- che-slack-mcp plugin version
+# Independent of the che-telegram-mcp plugin version: plugin.json and the
+# marketplace entry agree, and that is all.
+SLACK_PLUGIN_JSON=plugins/che-slack-mcp/.claude-plugin/plugin.json
+MARKETPLACE=.claude-plugin/marketplace.json
+SP=$(json "$SLACK_PLUGIN_JSON" 'd["version"]')
+SP_MARKET=$(json "$MARKETPLACE" 'next(p["version"] for p in d["plugins"] if p["name"] == "che-slack-mcp")')
+echo ""
+echo "che-slack-mcp plugin version ${SP:-?}"
+if [ -z "$SP" ]; then
+    bad "$SLACK_PLUGIN_JSON: plugin version not found"
+elif ! [[ "$SP" =~ $XYZ ]]; then
+    bad "$SLACK_PLUGIN_JSON: plugin version \"$SP\" is not x.y.z"
+fi
+if [ -z "$SP_MARKET" ]; then
+    bad "$MARKETPLACE: che-slack-mcp version not found"
+elif [ -n "$SP" ] && [ "$SP" != "$SP_MARKET" ]; then
+    bad "che-slack-mcp plugin version: $SLACK_PLUGIN_JSON says $SP, $MARKETPLACE says $SP_MARKET"
+elif [ -n "$SP" ]; then
+    ok "$SLACK_PLUGIN_JSON" "che-slack-mcp plugin version $SP, as in $MARKETPLACE"
 fi
 
 # ---------------------------------------------------------------------- tags
@@ -200,7 +241,7 @@ fi
 
 echo ""
 if [ "$PROBLEMS" -eq 0 ]; then
-    echo "All versions agree: binary $X, plugin $P."
+    echo "All versions agree: binary $X, che-telegram-mcp plugin $P, che-slack-mcp plugin $SP."
     exit 0
 fi
 echo "$PROBLEMS problem(s) above; fix them before releasing v$X."

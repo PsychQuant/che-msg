@@ -70,7 +70,8 @@
 #      version, or never answers --version, is refused before signing, and
 #      one that reports another version once signed is refused after signing;
 #      its Package.resolved, its Sources and a symlink in it are checked like
-#      the Telegram packages'.
+#      the Telegram packages'; a Slack pin that disagrees with X stops the
+#      build before anything is built.
 #
 # Usage:
 #   bash tests/release/test-build-release.sh
@@ -159,6 +160,9 @@ PINNED=(
     che-slack-mcp/Sources/slack-all/main.swift
     che-slack-mcp/CHANGELOG.md
     che-slack-mcp/Package.resolved
+    plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh
+    plugins/che-slack-mcp/README.md
+    plugins/che-slack-mcp/.claude-plugin/plugin.json
 )
 
 # make_repo <name> [variant]: a scratch repository with the release scripts
@@ -247,6 +251,12 @@ EOF
     echo "$repo"
 }
 
+# The --version timeout for the fake binaries, which answer at once. 3 s was
+# too short on a loaded machine: a freshly written binary can take seconds to
+# start (seen with the third binary added in #114), and the alarm then fails
+# a build that is fine. The binaries that never answer still fail within it.
+TEST_VERSION_TIMEOUT=10
+
 # build <repo> [env assignments...] -- [args...]: runs build-release.sh; sets OUT and RC.
 build() {
     local repo=$1; shift
@@ -255,7 +265,7 @@ build() {
     shift
     OUT=$(cd "$repo" && env -u DEVELOPER_ID -u NOTARY_PROFILE -u REQUIRE_CODESIGN \
         PATH="$repo/../fakebin:/usr/bin:/bin:/usr/sbin:/sbin" ${envs[@]+"${envs[@]}"} \
-        VERSION_CHECK_TIMEOUT=3 bash scripts/release/build-release.sh "$@" 2>&1); RC=$?
+        VERSION_CHECK_TIMEOUT=$TEST_VERSION_TIMEOUT bash scripts/release/build-release.sh "$@" 2>&1); RC=$?
 }
 # run_make <repo> [env assignments...] -- <target...>: sets OUT and RC.
 run_make() {
@@ -642,6 +652,14 @@ for mode in full sign-only; do
     if [ -e "$DIST" ]; then fail "$mode: left ${DIST#"$R/"}"; else pass "$mode: nothing in dist"; fi
 done
 
+test_case "a Slack pin that disagrees stops the build (#114)"
+R=$(make_repo slack-mismatch)
+sed -i '' "s/^DESIRED_VERSION=\"$X\"$/DESIRED_VERSION=\"0.0.9\"/" "$R/plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh"
+commit_in "$R" -am "bump the Slack wrapper only"
+build "$R" "${SIGN_ENV[@]}" --
+expect_no_build "$R"
+if printf '%s' "$OUT" | grep -qF 'plugins/che-slack-mcp/bin/che-slack-mcp-wrapper.sh: DESIRED_VERSION is 0.0.9'; then pass "names the Slack wrapper"; else fail "no message: $(printf '%s' "$OUT" | grep '✗')"; fi
+
 test_case "che-slack-mcp's Package.resolved, Sources and symlinks are checked (#114)"
 R=$(make_repo slack-untracked-resolved)
 git -C "$R" rm -q --cached che-slack-mcp/Package.resolved && commit_in "$R" -m "stop tracking the lock file"
@@ -687,14 +705,14 @@ if calls "$R" "swift build" >/dev/null; then fail "swift build ran"; else pass "
 
 test_case "make sign-check with DEVELOPER_ID set"
 R=$(make_repo make-sign-check)
-run_make "$R" "DEVELOPER_ID=$FAKE_IDENTITY" NOTARY_PROFILE=test-profile VERSION_CHECK_TIMEOUT=3 -- sign-check
+run_make "$R" "DEVELOPER_ID=$FAKE_IDENTITY" NOTARY_PROFILE=test-profile VERSION_CHECK_TIMEOUT=$TEST_VERSION_TIMEOUT -- sign-check
 if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
 if calls "$R" "xcrun notarytool submit" >/dev/null; then fail "sign-check notarized"; else pass "nothing was notarized"; fi
 if [ -d "$R/.build/dist/v$X-sign-only" ] && [ ! -e "$R/.build/dist/v$X" ]; then pass "a sign-only build"; else fail "dist: $(ls "$R/.build/dist" 2>&1)"; fi
 
 test_case "make release-signed with both variables set"
 R=$(make_repo make-release)
-run_make "$R" "DEVELOPER_ID=$FAKE_IDENTITY" NOTARY_PROFILE=test-profile VERSION_CHECK_TIMEOUT=3 -- release-signed
+run_make "$R" "DEVELOPER_ID=$FAKE_IDENTITY" NOTARY_PROFILE=test-profile VERSION_CHECK_TIMEOUT=$TEST_VERSION_TIMEOUT -- release-signed
 if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
 n=$(calls "$R" "xcrun notarytool submit" | wc -l | tr -d ' ')
 if [ "$n" -eq 3 ] && [ -d "$R/.build/dist/v$X" ]; then pass "notarized all three and wrote .build/dist/v$X"; else fail "$n submissions; dist: $(ls "$R/.build/dist" 2>&1)"; fi
