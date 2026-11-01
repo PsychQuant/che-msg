@@ -1,5 +1,6 @@
 #!/bin/bash
-# scripts/release/build-release.sh and the root Makefile (PsychQuant/che-msg#40).
+# scripts/release/build-release.sh and the root Makefile (PsychQuant/che-msg#40,
+# #114).
 #
 # Runs the release scripts in a scratch copy of the repository with a fake
 # `swift` and `mcpb` and the fake signing tools from lib/. The fake swift
@@ -16,13 +17,14 @@
 #   3. Versions disagree: refused before any build, naming the place, in the
 #      full mode, with --sign-only and unsigned.
 #   4. Tag vX already on origin, full mode: refused before any build.
-#   5. Full mode: each package is built for arm64 and x86_64, combined, and
-#      built once more for the host; both binaries are signed with hardened
-#      runtime and notarized; .build/dist/vX holds exactly the 8 release files,
-#      the binaries in it are the signed ones and equal the ones inside the
-#      .mcpb bundles, which hold the manifest, PRIVACY.md and the binary only;
-#      each .sha256 is its file's hash; the commit is printed; the staging
-#      directory is removed.
+#   5. Full mode: each of the three packages is built for arm64 and x86_64,
+#      combined, and built once more for the host; the three binaries are
+#      signed with hardened runtime and notarized; .build/dist/vX holds exactly
+#      the 10 release files (three binaries, the two Telegram .mcpb bundles,
+#      and a .sha256 for each), the binaries in it are the signed ones and equal
+#      the ones inside the .mcpb bundles, which hold the manifest, PRIVACY.md
+#      and the binary only; each .sha256 is its file's hash; the commit is
+#      printed; the staging directory is removed.
 #   6. A telegram-all binary that reports another version, or never answers
 #      --version: refused before anything is signed, nothing in dist; another
 #      version also in --sign-only and unsigned mode. One that reports another
@@ -58,10 +60,17 @@
 #      they hold the committed manifest; a commit made during a --sign-only
 #      build does not reach its bundles.
 #  17. The checkout changes during a full build (a commit, an edit to a tracked
-#      file, an untracked file in Sources): refused after both notarizations,
+#      file, an untracked file in Sources): refused after all three notarizations,
 #      naming the change, with no .build/dist/vX and no staging left (#94).
 #  18. A git ls-tree that starts listing and then fails, for the symlink scan
 #      or for packing: refused, nothing in dist, no temporary file left (#94).
+#  19. che-slack-mcp (#114): a package with no mcpb directory at the commit
+#      gets no .mcpb bundle and no error, in every mode, and an untracked
+#      che-slack-mcp/mcpb is not packed; a CheSlackMCP that reports another
+#      version, or never answers --version, is refused before signing, and
+#      one that reports another version once signed is refused after signing;
+#      its Package.resolved, its Sources and a symlink in it are checked like
+#      the Telegram packages'.
 #
 # Usage:
 #   bash tests/release/test-build-release.sh
@@ -91,8 +100,9 @@ X=$(git -C "$ROOT" show HEAD:che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/
     sed -nE 's/^[[:space:]]*public static let version = "([^"]*)".*/\1/p')
 [ -n "$X" ] || { echo "ERROR: cannot read the version at HEAD" >&2; exit 1; }
 
-# Thin Mach-O programs standing in for the built products. The telegram-all one
-# answers --version like the real binary; Hang never answers.
+# Thin Mach-O programs standing in for the built products. The telegram-all and
+# Slack ones answer --version like the real binaries; Hang and SlackHang never
+# answer.
 PROGS="$SCRATCH/progs"; mkdir -p "$PROGS"
 cat > "$PROGS/all.c" <<'EOF'
 #include <stdio.h>
@@ -104,7 +114,7 @@ cat > "$PROGS/all.c" <<'EOF'
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
         if (HANG) { sleep(300); }
-        printf("che-telegram-all-mcp %s\n", VERSION);
+        printf("%s %s\n", NAME, VERSION);
         fflush(stdout);
     }
     return EXIT;
@@ -112,10 +122,14 @@ int main(int argc, char **argv) {
 EOF
 printf 'int main(void) { return 0; }\n' > "$PROGS/bot.c"
 for arch in arm64 x86_64; do
-    if ! { cc -arch "$arch" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/CheTelegramAllMCP-$arch" "$PROGS/all.c" &&
-           cc -arch "$arch" -DHANG=0 -DVERSION="\"0.0.1\"" -o "$PROGS/WrongVersion-$arch" "$PROGS/all.c" &&
-           cc -arch "$arch" -DHANG=1 -DVERSION="\"$X\"" -o "$PROGS/Hang-$arch" "$PROGS/all.c" &&
-           cc -arch "$arch" -DHANG=0 -DEXIT=3 -DVERSION="\"$X\"" -o "$PROGS/FailsAfterVersion-$arch" "$PROGS/all.c" &&
+    ALL=-DNAME='"che-telegram-all-mcp"' SLACK=-DNAME='"che-slack-mcp"'
+    if ! { cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/CheTelegramAllMCP-$arch" "$PROGS/all.c" &&
+           cc -arch "$arch" "$ALL" -DHANG=0 -DVERSION="\"0.0.1\"" -o "$PROGS/WrongVersion-$arch" "$PROGS/all.c" &&
+           cc -arch "$arch" "$ALL" -DHANG=1 -DVERSION="\"$X\"" -o "$PROGS/Hang-$arch" "$PROGS/all.c" &&
+           cc -arch "$arch" "$ALL" -DHANG=0 -DEXIT=3 -DVERSION="\"$X\"" -o "$PROGS/FailsAfterVersion-$arch" "$PROGS/all.c" &&
+           cc -arch "$arch" "$SLACK" -DHANG=0 -DVERSION="\"$X\"" -o "$PROGS/CheSlackMCP-$arch" "$PROGS/all.c" &&
+           cc -arch "$arch" "$SLACK" -DHANG=0 -DVERSION="\"0.0.1\"" -o "$PROGS/SlackWrongVersion-$arch" "$PROGS/all.c" &&
+           cc -arch "$arch" "$SLACK" -DHANG=1 -DVERSION="\"$X\"" -o "$PROGS/SlackHang-$arch" "$PROGS/all.c" &&
            cc -arch "$arch" -o "$PROGS/CheTelegramBotMCP-$arch" "$PROGS/bot.c"; }; then
         echo "ERROR: cc cannot build for $arch" >&2; exit 1
     fi
@@ -141,6 +155,10 @@ PINNED=(
     che-telegram-bot-mcp/mcpb/server/.gitkeep
     che-telegram-all-mcp/Package.resolved
     che-telegram-bot-mcp/Package.resolved
+    che-slack-mcp/Sources/CheSlackMCPCore/Server.swift
+    che-slack-mcp/Sources/slack-all/main.swift
+    che-slack-mcp/CHANGELOG.md
+    che-slack-mcp/Package.resolved
 )
 
 # make_repo <name> [variant]: a scratch repository with the release scripts
@@ -154,15 +172,21 @@ PINNED=(
 #                           one that reports 0.0.1, as a binary that runs
 #                           unsigned but not under the hardened runtime would
 #                           answer wrongly once signed
+#            slack-wrong-version, slack-hang-version, slack-signed-wrong-version
+#                           the same for the CheSlackMCP build
 # FAKE_MODE, when set, is passed to the fake signing tools.
 make_repo() {
-    local base="$SCRATCH/$1" repo="$SCRATCH/$1/repo" f all_prog=CheTelegramAllMCP same_arch=0
+    local base="$SCRATCH/$1" repo="$SCRATCH/$1/repo" f all_prog=CheTelegramAllMCP slack_prog=CheSlackMCP same_arch=0
+    local signed_bin="" signed_prog=""
     case "${2:-}" in
         wrong-version) all_prog=WrongVersion ;;
         hang-version) all_prog=Hang ;;
         fails-after-version) all_prog=FailsAfterVersion ;;
         same-arch) same_arch=1 ;;
-        signed-wrong-version) ;;
+        signed-wrong-version) signed_bin=CheTelegramAllMCP; signed_prog=WrongVersion ;;
+        slack-wrong-version) slack_prog=SlackWrongVersion ;;
+        slack-hang-version) slack_prog=SlackHang ;;
+        slack-signed-wrong-version) signed_bin=CheSlackMCP; signed_prog=SlackWrongVersion ;;
     esac
     mkdir -p "$repo/scripts/release" "$base/swiftbin"
     for f in "${PINNED[@]}"; do
@@ -181,14 +205,14 @@ make_repo() {
     git clone -q --bare "$repo" "$base/origin.git" && git -C "$repo" remote add origin "$base/origin.git" || exit 1
     : > "$base/calls"
     make_fake_signing_tools "$base/fakebin" "$base/calls" "${FAKE_MODE:-}"
-    if [ "${2:-}" = signed-wrong-version ]; then
+    if [ -n "$signed_bin" ]; then
         mv "$base/fakebin/codesign" "$base/fakebin/codesign-fake"
         cat > "$base/fakebin/codesign" <<EOF
 #!/bin/bash
 for last; do :; done
 case " \$* " in
-    *" --force "*) if [ "\${last##*/}" = CheTelegramAllMCP ]; then
-        lipo -create "$PROGS/WrongVersion-arm64" "$PROGS/WrongVersion-x86_64" -output "\$last"; fi ;;
+    *" --force "*) if [ "\${last##*/}" = $signed_bin ]; then
+        lipo -create "$PROGS/$signed_prog-arm64" "$PROGS/$signed_prog-x86_64" -output "\$last"; fi ;;
 esac
 exec "$base/fakebin/codesign-fake" "\$@"
 EOF
@@ -210,7 +234,7 @@ if [ "\$product" = CheTelegramBotMCP ] && [ -x "$base/hook" ]; then "$base/hook"
 if [ \$show = 1 ]; then echo "$base/swiftbin"; exit 0; fi
 [ -z "\$arch" ] && arch=arm64             # a build without --arch is for the host
 [ $same_arch = 1 ] && arch=arm64
-src=\$product; [ "\$product" = CheTelegramAllMCP ] && src=$all_prog
+src=\$product; [ "\$product" = CheTelegramAllMCP ] && src=$all_prog; [ "\$product" = CheSlackMCP ] && src=$slack_prog
 cp "$PROGS/\$src-\$arch" "$base/swiftbin/\$product"
 EOF
     cat > "$base/fakebin/mcpb" <<EOF
@@ -302,7 +326,7 @@ R=$(make_repo full)
 build "$R" "${SIGN_ENV[@]}" --
 if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -5)"; fi
 DIST="$R/.build/dist/v$X"
-for p in CheTelegramAllMCP CheTelegramBotMCP; do
+for p in CheTelegramAllMCP CheTelegramBotMCP CheSlackMCP; do
     builds=$(calls "$R" "swift build" | grep -v -- --show-bin-path | grep -- "--product $p")
     for a in arm64 x86_64; do
         if printf '%s\n' "$builds" | grep -q -- "--arch $a"; then pass "$p built for $a"; else fail "$p not built for $a"; fi
@@ -313,11 +337,11 @@ for p in CheTelegramAllMCP CheTelegramBotMCP; do
     if signed "$DIST/$p"; then pass "dist/$p is the signed file"; else fail "dist/$p is not the signed file"; fi
 done
 n=$(calls "$R" "xcrun notarytool submit" | wc -l | tr -d ' ')
-if [ "$n" -eq 2 ]; then pass "two notarization submissions"; else fail "$n notarization submissions"; fi
+if [ "$n" -eq 3 ]; then pass "three notarization submissions"; else fail "$n notarization submissions"; fi
 FILES=$(cd "$DIST" 2>/dev/null && for f in *; do echo "$f"; done | sort | tr '\n' ' ')
-WANT="CheTelegramAllMCP CheTelegramAllMCP.sha256 CheTelegramBotMCP CheTelegramBotMCP.sha256 che-telegram-all-mcp.mcpb che-telegram-all-mcp.mcpb.sha256 che-telegram-bot-mcp.mcpb che-telegram-bot-mcp.mcpb.sha256 "
-if [ "$FILES" = "$WANT" ]; then pass "dist holds exactly the 8 release files"; else fail "dist holds: $FILES"; fi
-for f in CheTelegramAllMCP CheTelegramBotMCP che-telegram-all-mcp.mcpb che-telegram-bot-mcp.mcpb; do
+WANT="CheSlackMCP CheSlackMCP.sha256 CheTelegramAllMCP CheTelegramAllMCP.sha256 CheTelegramBotMCP CheTelegramBotMCP.sha256 che-telegram-all-mcp.mcpb che-telegram-all-mcp.mcpb.sha256 che-telegram-bot-mcp.mcpb che-telegram-bot-mcp.mcpb.sha256 "
+if [ "$FILES" = "$WANT" ]; then pass "dist holds exactly the 10 release files"; else fail "dist holds: $FILES"; fi
+for f in CheTelegramAllMCP CheTelegramBotMCP CheSlackMCP che-telegram-all-mcp.mcpb che-telegram-bot-mcp.mcpb; do
     if [ "$(cat "$DIST/$f.sha256" 2>/dev/null)" = "$(shasum -a 256 "$DIST/$f" 2>/dev/null | awk '{print $1}')" ]; then pass "$f.sha256 is its hash"; else fail "$f.sha256 does not match"; fi
 done
 for pkg in che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTelegramBotMCP; do
@@ -326,7 +350,8 @@ for pkg in che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTelegr
     if [ "$listed" = "PRIVACY.md manifest.json server/ server/$bin " ] || [ "$listed" = "PRIVACY.md manifest.json server/$bin " ]; then pass "$name.mcpb holds the manifest, PRIVACY.md and the binary only"; else fail "$name.mcpb holds: $listed"; fi
     if unzip -p "$DIST/$name.mcpb" "server/$bin" 2>/dev/null | cmp -s - "$DIST/$bin"; then pass "$name.mcpb holds the same signed binary as dist"; else fail "$name.mcpb holds a different binary"; fi
 done
-if calls "$R" "mcpb validate" >/dev/null; then pass "manifests validated before packing"; else fail "no mcpb validate"; fi
+n=$(calls "$R" "mcpb validate" | wc -l | tr -d ' ')
+if [ "$n" -eq 2 ]; then pass "both Telegram manifests validated before packing"; else fail "$n mcpb validate calls"; fi
 builds=$(calls "$R" "swift build" | grep -c .); unpinned=$(calls "$R" "swift build" | grep -v -- --force-resolved-versions)
 if [ "$builds" -ge 4 ] && [ -z "$unpinned" ]; then pass "every swift build ($builds) uses the versions in Package.resolved (#92)"; else fail "$builds swift builds; without --force-resolved-versions: ${unpinned:-none}"; fi
 if ! git -C "$R" status --porcelain -- che-telegram-all-mcp/mcpb che-telegram-bot-mcp/mcpb | grep -qv stale.mcpb; then pass "tracked mcpb directories untouched"; else fail "mcpb directories changed: $(git -C "$R" status --porcelain)"; fi
@@ -402,7 +427,7 @@ if [ "$RC" -eq 0 ]; then pass "exit 0 even though tag v$X exists"; else fail "ex
 if calls "$R" "xcrun notarytool" >/dev/null; then fail "notarytool ran"; else pass "notarytool never ran"; fi
 if [ -f "$R/.build/dist/v$X-sign-only/CheTelegramBotMCP" ] && [ ! -e "$R/.build/dist/v$X" ]; then pass "written to .build/dist/v$X-sign-only"; else fail "dist: $(ls "$R/.build/dist" 2>&1)"; fi
 n=$(calls "$R" "codesign --force" | wc -l | tr -d ' ')
-if [ "$n" -eq 2 ]; then pass "both binaries signed"; else fail "$n codesign calls"; fi
+if [ "$n" -eq 3 ]; then pass "all three binaries signed"; else fail "$n codesign calls"; fi
 if signed "$R/.build/dist/v$X-sign-only/CheTelegramAllMCP"; then pass "dist holds the signed file"; else fail "dist holds an unsigned file"; fi
 
 test_case "--sign-only without DEVELOPER_ID"
@@ -562,12 +587,76 @@ for change in commit edit untracked; do
     esac
     build "$R" "${SIGN_ENV[@]}" --
     if [ "$RC" -ne 0 ]; then pass "$change: refused (exit $RC)"; else fail "$change: exit 0"; fi
-    # Both packages were notarized, so the refusal is the check at the end.
+    # All three packages were notarized, so the refusal is the check at the end.
     n=$(calls "$R" "xcrun notarytool submit" | wc -l | tr -d ' ')
-    if [ "$n" -eq 2 ]; then pass "$change: refused after both notarizations"; else fail "$change: $n notarization submissions: $(printf '%s' "$OUT" | tail -3)"; fi
+    if [ "$n" -eq 3 ]; then pass "$change: refused after all three notarizations"; else fail "$change: $n notarization submissions: $(printf '%s' "$OUT" | tail -3)"; fi
     if printf '%s' "$OUT" | grep -q 'changed while' && printf '%s' "$OUT" | grep -qF "$want"; then pass "$change: says what changed ($want)"; else fail "$change: no message: $(printf '%s' "$OUT" | tail -4)"; fi
     if [ -e "$R/.build/dist/v$X" ]; then fail "$change: left .build/dist/v$X: $(ls "$R/.build/dist/v$X" | tr '\n' ' ')"; else pass "$change: no .build/dist/v$X"; fi
     if ! ls -d "$R"/.build/release-stage* >/dev/null 2>&1; then pass "$change: staging directory removed"; else fail "$change: staging left"; fi
+done
+
+# ------------------------------------------------------- che-slack-mcp (#114)
+test_case "a package without an mcpb directory gets no bundle, in every mode (#114)"
+for mode in full sign-only unsigned; do
+    R=$(make_repo "no-bundle-$mode")
+    if [ "$mode" = full ]; then
+        if git -C "$R" ls-tree -r --name-only HEAD -- che-slack-mcp | grep -q '^che-slack-mcp/mcpb/'; then fail "full: fixture tracks che-slack-mcp/mcpb"; fi
+        build "$R" "${SIGN_ENV[@]}" --; DIST="$R/.build/dist/v$X"
+    else
+        # Left in the working tree, not committed: the bundles hold the commit's files.
+        mkdir -p "$R/che-slack-mcp/mcpb"; echo '{}' > "$R/che-slack-mcp/mcpb/manifest.json"
+        if [ "$mode" = sign-only ]; then build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; else build "$R" --; fi
+        DIST="$R/.build/dist/v$X-$mode"
+    fi
+    if [ "$RC" -eq 0 ]; then pass "$mode: exit 0"; else fail "$mode: exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
+    if [ -f "$DIST/CheSlackMCP" ] && [ -f "$DIST/CheSlackMCP.sha256" ]; then pass "$mode: CheSlackMCP and its .sha256 in dist"; else fail "$mode: dist: $(ls "$DIST" 2>&1 | tr '\n' ' ')"; fi
+    if ls "$DIST" 2>/dev/null | grep -q '^che-slack-mcp\.mcpb'; then fail "$mode: a che-slack-mcp bundle was written"; else pass "$mode: no che-slack-mcp bundle"; fi
+    if printf '%s' "$OUT" | grep -q 'no che-slack-mcp/mcpb'; then pass "$mode: says che-slack-mcp gets no bundle"; else fail "$mode: no message: $(printf '%s' "$OUT" | grep -i slack | tail -3)"; fi
+done
+
+test_case "a CheSlackMCP that reports another version, in every mode (#114)"
+for mode in full sign-only unsigned; do
+    R=$(make_repo "slack-wrong-$mode" slack-wrong-version)
+    case "$mode" in
+        full)      build "$R" "${SIGN_ENV[@]}" --; DIST="$R/.build/dist/v$X" ;;
+        sign-only) build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; DIST="$R/.build/dist/v$X-sign-only" ;;
+        unsigned)  build "$R" --; DIST="$R/.build/dist/v$X-unsigned" ;;
+    esac
+    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF "CheSlackMCP reports \"che-slack-mcp 0.0.1\"" && printf '%s' "$OUT" | grep -qF "expected \"che-slack-mcp $X\""; then pass "$mode: refused, naming both versions"; else fail "$mode: exit $RC: $(printf '%s' "$OUT" | tail -2)"; fi
+    if calls "$R" "codesign --force" | grep -q '/CheSlackMCP$'; then fail "$mode: CheSlackMCP was signed first"; else pass "$mode: refused before CheSlackMCP was signed"; fi
+    if [ -e "$DIST" ]; then fail "$mode: left ${DIST#"$R/"}"; else pass "$mode: nothing in dist"; fi
+done
+
+test_case "a CheSlackMCP that never answers --version (#114)"
+R=$(make_repo slack-hang slack-hang-version)
+start=$(date +%s); build "$R" "${SIGN_ENV[@]}" --; took=$(( $(date +%s) - start ))
+if [ "$RC" -ne 0 ] && [ "$took" -lt 60 ] && printf '%s' "$OUT" | grep -q 'CheSlackMCP reports'; then pass "refused after ${took}s"; else fail "exit $RC after ${took}s: $(printf '%s' "$OUT" | tail -2)"; fi
+if calls "$R" "codesign --force" | grep -q '/CheSlackMCP$'; then fail "CheSlackMCP was signed first"; else pass "refused before CheSlackMCP was signed"; fi
+
+test_case "a CheSlackMCP that reports another version once signed (#114)"
+for mode in full sign-only; do
+    R=$(make_repo "slack-signed-wrong-$mode" slack-signed-wrong-version)
+    if [ "$mode" = full ]; then build "$R" "${SIGN_ENV[@]}" --; DIST="$R/.build/dist/v$X"; else build "$R" "DEVELOPER_ID=$FAKE_IDENTITY" REQUIRE_CODESIGN=1 -- --sign-only; DIST="$R/.build/dist/v$X-sign-only"; fi
+    if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF 'signed CheSlackMCP reports "che-slack-mcp 0.0.1"'; then pass "$mode: refused, naming the signed binary"; else fail "$mode: exit $RC: $(printf '%s' "$OUT" | tail -2)"; fi
+    if calls "$R" "codesign --force" | grep -q '/CheSlackMCP$'; then pass "$mode: the check ran after signing"; else fail "$mode: CheSlackMCP was not signed"; fi
+    if [ -e "$DIST" ]; then fail "$mode: left ${DIST#"$R/"}"; else pass "$mode: nothing in dist"; fi
+done
+
+test_case "che-slack-mcp's Package.resolved, Sources and symlinks are checked (#114)"
+R=$(make_repo slack-untracked-resolved)
+git -C "$R" rm -q --cached che-slack-mcp/Package.resolved && commit_in "$R" -m "stop tracking the lock file"
+build "$R" "${SIGN_ENV[@]}" --
+expect_no_build "$R"
+if printf '%s' "$OUT" | grep -q 'che-slack-mcp/Package.resolved is not tracked'; then pass "an untracked Package.resolved is named"; else fail "no message: $(printf '%s' "$OUT" | tail -3)"; fi
+R=$(make_repo slack-untracked-source); echo "// local" > "$R/che-slack-mcp/Sources/Extra.swift"
+build "$R" "${SIGN_ENV[@]}" --
+expect_no_build "$R"
+if printf '%s' "$OUT" | grep -qF 'che-slack-mcp/Sources/Extra.swift'; then pass "an untracked source is named"; else fail "no message: $(printf '%s' "$OUT" | tail -3)"; fi
+for mode in full unsigned; do
+    R=$(make_repo "slack-symlink-$mode"); link=che-slack-mcp/Sources/CheSlackMCPCore/Linked.swift
+    ln -s "$SCRATCH/outside.swift" "$R/$link" && git -C "$R" add "$link" && commit_in "$R" -m "add a symlink" || { fail "$mode: fixture not committed"; continue; }
+    if [ "$mode" = full ]; then build "$R" "${SIGN_ENV[@]}" --; else build "$R" --; fi
+    if [ "$RC" -ne 0 ] && ! calls "$R" "swift build" >/dev/null && printf '%s' "$OUT" | grep -qF "$link"; then pass "$mode: a symlink is refused before any build, naming it"; else fail "$mode: exit $RC: $(printf '%s' "$OUT" | tail -2)"; fi
 done
 
 # ----------------------------------------------------------- dist handling
@@ -608,7 +697,7 @@ R=$(make_repo make-release)
 run_make "$R" "DEVELOPER_ID=$FAKE_IDENTITY" NOTARY_PROFILE=test-profile VERSION_CHECK_TIMEOUT=3 -- release-signed
 if [ "$RC" -eq 0 ]; then pass "exit 0"; else fail "exit $RC: $(printf '%s' "$OUT" | tail -3)"; fi
 n=$(calls "$R" "xcrun notarytool submit" | wc -l | tr -d ' ')
-if [ "$n" -eq 2 ] && [ -d "$R/.build/dist/v$X" ]; then pass "notarized both and wrote .build/dist/v$X"; else fail "$n submissions; dist: $(ls "$R/.build/dist" 2>&1)"; fi
+if [ "$n" -eq 3 ] && [ -d "$R/.build/dist/v$X" ]; then pass "notarized all three and wrote .build/dist/v$X"; else fail "$n submissions; dist: $(ls "$R/.build/dist" 2>&1)"; fi
 
 test_case "plain make and make check-pins"
 R=$(make_repo make-default); git -C "$R" tag "v$X"

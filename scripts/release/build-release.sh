@@ -1,8 +1,10 @@
 #!/bin/bash
-# Build the release assets for both binaries (PsychQuant/che-msg#40):
-# universal CheTelegramAllMCP and CheTelegramBotMCP, signed and notarized,
-# their .mcpb bundles, and a .sha256 next to each file. Adapted from che-mcps'
-# che-ical-mcp scripts/build-mcpb.sh, for two packages sharing one version.
+# Build the release assets (PsychQuant/che-msg#40, #114): universal
+# CheTelegramAllMCP, CheTelegramBotMCP and CheSlackMCP, signed and notarized,
+# a .mcpb bundle for each package that has an mcpb directory at the release
+# commit (the two Telegram packages; che-slack-mcp has none), and a .sha256
+# next to each file. Adapted from che-mcps' che-ical-mcp
+# scripts/build-mcpb.sh, for three packages sharing one version.
 #
 # Usage:
 #   scripts/release/build-release.sh [--sign-only]
@@ -17,8 +19,8 @@
 #   DEVELOPER_ID, NOTARY_PROFILE  see sign-and-notarize.sh
 #   REQUIRE_CODESIGN=1            refuse to build unless signing is set up
 #                                 (make release-signed and make sign-check set it)
-#   VERSION_CHECK_TIMEOUT         seconds each telegram-all --version check may
-#                                 take (default 20)
+#   VERSION_CHECK_TIMEOUT         seconds each --version check (telegram-all,
+#                                 CheSlackMCP) may take (default 20)
 #
 # Before anything is built: the full mode runs check-versions.sh, including the
 # check that tag vX is unused, and requires every tracked file to be committed
@@ -33,9 +35,11 @@
 # (--force-resolved-versions).
 #
 # The .mcpb bundles hold the mcpb files of the commit printed at the start,
-# whatever the working tree holds or HEAD becomes. telegram-all's --version is
-# checked before signing and, in the signing modes, once more on the signed
-# binary, so every signed build launches the hardened-runtime binary once.
+# whatever the working tree holds or HEAD becomes; a package with no mcpb
+# directory at that commit gets no bundle. The --version of telegram-all and
+# of CheSlackMCP is checked before signing and, in the signing modes, once
+# more on the signed binary, so every signed build launches each of those
+# hardened-runtime binaries once (the bot has no --version).
 # Before the full mode writes .build/dist/vX it checks again that HEAD is that
 # commit and the tree passes the same gate; an edit made and undone while the
 # build runs is not noticed (PsychQuant/che-msg#94). The output directory
@@ -52,7 +56,10 @@ esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PACKAGES=(che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTelegramBotMCP)
+PACKAGES=(che-telegram-all-mcp:CheTelegramAllMCP che-telegram-bot-mcp:CheTelegramBotMCP che-slack-mcp:CheSlackMCP)
+# The binaries that answer --version with "<package> X" without starting a
+# server; the check below runs on these.
+VERSION_CHECKED=" CheTelegramAllMCP CheSlackMCP "
 
 if [[ -n "${DEVELOPER_ID:-}" || "${REQUIRE_CODESIGN:-}" == 1 ]]; then
     if [[ "$SIGN_ONLY" == 1 ]]; then MODE=sign-only; else MODE=full; fi
@@ -202,18 +209,18 @@ build_arch() {
 # write_sha256 <file>: <file>.sha256 holds the hash only, as che-mcps' releases do.
 write_sha256() { shasum -a 256 "$1" | awk '{print $1}' > "$1.sha256"; }
 
-# check_version <binary> <name>: the binary reports version X. telegram-all
-# answers --version without starting a server or opening TDLib; stdin is
-# closed and perl's alarm bounds the run in case it does not. The bot binary
-# has no such flag.
+# check_version <binary> <name> <package>: the binary reports "<package> X".
+# telegram-all and CheSlackMCP answer --version without starting a server
+# (no TDLib, no Keychain, no network); stdin is closed and perl's alarm bounds
+# the run in case one does not. The bot binary has no such flag.
 check_version() {
     # The binary has to exit 0 as well: one that prints the version and then
     # crashes, or is killed by the alarm, fails the check.
-    local reported status=0
+    local reported status=0 expected="$3 $X"
     reported=$(perl -e 'my $t = shift; alarm $t; exec @ARGV or die "exec failed: $!"' \
         -- "$VERSION_CHECK_TIMEOUT" "$1" --version </dev/null 2>&1) || status=$?
-    [[ $status -eq 0 && "$reported" == "che-telegram-all-mcp $X" ]] || {
-        echo "Error: $2 reports \"$reported\" and exits with $status within ${VERSION_CHECK_TIMEOUT}s, expected \"che-telegram-all-mcp $X\" and 0" >&2; exit 1; }
+    [[ $status -eq 0 && "$reported" == "$expected" ]] || {
+        echo "Error: $2 reports \"$reported\" and exits with $status within ${VERSION_CHECK_TIMEOUT}s, expected \"$expected\" and 0" >&2; exit 1; }
 }
 
 echo ""
@@ -236,8 +243,8 @@ for entry in "${PACKAGES[@]}"; do
     [[ "$archs" == "arm64 x86_64 " ]] || { echo "Error: $bin has architectures '$archs'" >&2; exit 1; }
 
     # Checked before signing, so a wrong build is not sent to Apple first.
-    if [[ "$bin" == CheTelegramAllMCP ]]; then
-        check_version "$UNIVERSAL" "$bin"
+    if [[ "$VERSION_CHECKED" == *" $bin "* ]]; then
+        check_version "$UNIVERSAL" "$bin" "$pkg"
     fi
 
     case "$MODE" in
@@ -247,47 +254,53 @@ for entry in "${PACKAGES[@]}"; do
     # And once more signed: the hardened runtime can stop a binary that ran
     # unsigned (a library it may not load, an entitlement it lacks), so every
     # signed build launches the file that ships at least once.
-    if [[ "$bin" == CheTelegramAllMCP && "$MODE" != unsigned ]]; then
-        check_version "$UNIVERSAL" "the signed $bin"
+    if [[ "$VERSION_CHECKED" == *" $bin "* && "$MODE" != unsigned ]]; then
+        check_version "$UNIVERSAL" "the signed $bin" "$pkg"
     fi
 
     # Pack the mcpb files of commit $COMMIT plus the binary, so nothing left
     # over in <pkg>/mcpb, no uncommitted edit and nothing committed since the
     # build started ends up in the bundle, and the tracked directory is never
     # written to. -z keeps a name git would quote (non-ASCII) as it is.
-    BUNDLE="$STAGE/mcpb-$pkg"
-    mkdir -p "$BUNDLE/server"
     # Listed into a file first, so a failed or cut-short ls-tree stops the
-    # build instead of packing a partial bundle.
+    # build instead of packing a partial bundle; an empty listing means the
+    # commit has no <pkg>/mcpb, and the package ships without a bundle
+    # (che-slack-mcp, #114). The Telegram packages' bundles cannot go missing
+    # this way: check-versions.sh requires their mcpb/manifest.json.
     git -C "$ROOT" ls-tree -r -z "$COMMIT" -- "$pkg/mcpb" > "$STAGE/tree-$pkg" ||
         { echo "Error: cannot list $pkg/mcpb at commit ${COMMIT:0:12}" >&2; exit 1; }
-    while IFS= read -r -d '' record; do
-        path=${record#*$'\t'}
-        sha=${record%%$'\t'*}; sha=${sha##* }
-        rel=${path#"$pkg/mcpb/"}
-        [[ "$rel" == server/.gitkeep ]] && continue
-        mkdir -p "$BUNDLE/$(dirname "$rel")"
-        git -C "$ROOT" cat-file blob "$sha" > "$BUNDLE/$rel"
-    done < "$STAGE/tree-$pkg"
-    cp "$UNIVERSAL" "$BUNDLE/server/$bin"
-    mcpb validate "$BUNDLE/manifest.json"
-    mcpb pack "$BUNDLE" "$STAGE/$pkg.mcpb"
-
     cp "$UNIVERSAL" "$OUT/$bin"
-    cp "$STAGE/$pkg.mcpb" "$OUT/$pkg.mcpb"
-    # The files that ship are the ones just signed: the binary in the bundle
-    # is byte-identical to the one beside it, and that one verifies.
-    unzip -p "$OUT/$pkg.mcpb" "server/$bin" | cmp -s - "$OUT/$bin" || {
-        echo "Error: the binary inside $pkg.mcpb differs from $bin" >&2; exit 1; }
+    if [[ -s "$STAGE/tree-$pkg" ]]; then
+        BUNDLE="$STAGE/mcpb-$pkg"
+        mkdir -p "$BUNDLE/server"
+        while IFS= read -r -d '' record; do
+            path=${record#*$'\t'}
+            sha=${record%%$'\t'*}; sha=${sha##* }
+            rel=${path#"$pkg/mcpb/"}
+            [[ "$rel" == server/.gitkeep ]] && continue
+            mkdir -p "$BUNDLE/$(dirname "$rel")"
+            git -C "$ROOT" cat-file blob "$sha" > "$BUNDLE/$rel"
+        done < "$STAGE/tree-$pkg"
+        cp "$UNIVERSAL" "$BUNDLE/server/$bin"
+        mcpb validate "$BUNDLE/manifest.json"
+        mcpb pack "$BUNDLE" "$STAGE/$pkg.mcpb"
+        cp "$STAGE/$pkg.mcpb" "$OUT/$pkg.mcpb"
+        # The files that ship are the ones just signed: the binary in the
+        # bundle is byte-identical to the one beside it, and that one verifies.
+        unzip -p "$OUT/$pkg.mcpb" "server/$bin" | cmp -s - "$OUT/$bin" || {
+            echo "Error: the binary inside $pkg.mcpb differs from $bin" >&2; exit 1; }
+    else
+        echo "  no $pkg/mcpb at commit ${COMMIT:0:12}: $bin ships without a .mcpb bundle"
+    fi
     if [[ "$MODE" != unsigned ]]; then
         codesign --verify --strict "$OUT/$bin" || { echo "Error: $bin in the release files does not verify" >&2; exit 1; }
     fi
     write_sha256 "$OUT/$bin"
-    write_sha256 "$OUT/$pkg.mcpb"
+    if [[ -f "$OUT/$pkg.mcpb" ]]; then write_sha256 "$OUT/$pkg.mcpb"; fi
 done
 
 # The checkout stays open through the notarization waits: a commit, a branch
-# switch or an edit there reaches the second package's build while the output
+# switch or an edit there reaches a later package's build while the output
 # still names commit $COMMIT. So before anything appears in .build/dist/vX,
 # the full mode checks again that HEAD is that commit and the tree clean.
 if [[ "$MODE" == full ]]; then
