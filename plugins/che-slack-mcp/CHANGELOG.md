@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-11-01
 
 The first version, 0.1.0 (`plugin.json` and the `che-msg` marketplace entry already say 0.1.0). The wrapper pins `CheSlackMCP` 0.9.0 (`DESIRED_VERSION`), which ships with the che-msg release v0.9.0 ([#99](https://github.com/PsychQuant/che-msg/issues/99)).
 
