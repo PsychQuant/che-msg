@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.0] - 2026-11-01
 
 ### Changed
 - The README's installation section recommends the plugin, and for a server run on its own reads `TELEGRAM_BOT_TOKEN` from the Keychain at launch (a `claude mcp add … /bin/sh -c` example); it says that a token in the environment is readable by other processes of the same user and that a token in `~/.claude.json` or the Claude Desktop config sits there in plain text ([#97](https://github.com/PsychQuant/che-msg/issues/97)).

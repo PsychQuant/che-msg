@@ -84,7 +84,7 @@ che-telegram-mcp 與 che-archive-lines 原本在 PsychQuant/psychquant-claude-pl
 
 - 安裝：`claude plugin marketplace add PsychQuant/che-msg`，再 `claude plugin install <plugin>@che-msg`
 - 改版：`plugins/<name>/.claude-plugin/plugin.json` 與 `.claude-plugin/marketplace.json` 的 `version` 一起改，CHANGELOG 同步；che-telegram-mcp 還要改 README 的 "Plugin version"，CHANGELOG 的 `## [P]` 段要寫出它 pin 的 binary 版本（`check-versions.sh` 會查，見 `RELEASING.md` 第 1 步）
-- binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（Telegram 目前 0.8.0）。`scripts/release/check-versions.sh` 從這一行讀 pin（找「目前」接一個半形空格再接數字的地方），所以這句的寫法要保留，這份檔案的其他地方也不要出現「目前」加空格再接數字
+- binary 版本：wrapper 用 `DESIRED_VERSION` pin 本 repo 的 release（Telegram 目前 0.9.0）。`scripts/release/check-versions.sh` 從這一行讀 pin（找「目前」接一個半形空格再接數字的地方），所以這句的寫法要保留，這份檔案的其他地方也不要出現「目前」加空格再接數字
 - 發新 binary 的順序照 `RELEASING.md`：先在 branch 上把所有 pin（上一條的「目前」那句、兩支 wrapper、plugin 版號等）一起 bump，`make check-versions` 在 build 前要求它們一致；GitHub release 建好之後才用 merge commit（不是 squash 或 rebase）合進 `main`，讓打 tag 的 commit 留在 `main` 上。這樣 `main` 上的 pin 永遠指向已存在的 release
 - che-slack-mcp 的 wrapper pin 0.9.0，只下載這個 tag 的 asset `CheSlackMCP`（不退回 `releases/latest`）。pin 必須等於 `CheSlackMCPServer.version` 與 `slack-all` 的 `version`（結構測試 (b2) 把關），三處一起改。`slack-all` 不經 wrapper 下載，README 教使用者從原始碼 build
 - 結構測試的 check (j) 把關使用者會被導向哪個 marketplace，規則在 `tests/lib/install_refs.py`。它防的是不小心留下的舊引用，不防蓄意規避（能改 README 的人也能改這支測試）：

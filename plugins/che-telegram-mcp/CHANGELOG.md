@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `plugin.json` description field. Section categorization is best-effort —
 > review and refine `Added` / `Changed` / `Fixed` etc. as needed.
 
-## [Unreleased]
+## [1.8.0] - 2026-11-01
+
+Pins binaries v0.9.0 (`DESIRED_VERSION`); the telegram-all minimum stays 0.7.0.
 
 ### Fixed
 - The README says that a phone number or 2FA password passed to `auth_run` while the stored or environment value for that step is already being sent is not sent, and that the call returns the answer to that request (che-telegram-all-mcp 0.9.0, [#98](https://github.com/PsychQuant/che-msg/issues/98)).

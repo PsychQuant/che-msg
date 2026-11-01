@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.0] - 2026-11-01
 
 ### Added
 - `auth_status` and `auth_run` report why a Keychain lookup found nothing ([#95](https://github.com/PsychQuant/che-msg/issues/95)). While TDLib waits for the phone number or the 2FA password, `keychain_lookup` is `{"credential": "phone" | "password", "outcome": "not_stored" | "timed_out" | "unavailable"}` when the last lookup for that step produced no value, and null otherwise; it never holds the value or what `security` printed. A state change clears it, and a later lookup for the same step (the background one or `auth_run`'s) replaces it. The 2FA hint now asks for the Keychain item first (how to store it, or to unlock the Keychain) and mentions the `password` argument last, since an argument passes through the conversation; with an outcome, the hint starts with it. Before this, a locked Keychain and a missing item gave the same answer as no lookup at all.
