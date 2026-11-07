@@ -77,12 +77,15 @@ public enum ArchiveMedia {
     }
 
     public enum DownloadError: Error, LocalizedError, Equatable {
-        case noFile(messageId: Int64)
+        /// `contentType` is the message's `content_type`, else its `type` (#117).
+        case noFile(messageId: Int64, contentType: String? = nil)
         case failed(messageId: Int64)
 
         public var errorDescription: String? {
             switch self {
-            case .noFile(let id): return "message \(id) has no media file to download"
+            case .noFile(let id, let contentType?):
+                return "message \(id) is \(contentType), which has no media file to download"
+            case .noFile(let id, nil): return "message \(id) has no media file to download"
             case .failed(let id): return "downloading the media of message \(id) failed"
             }
         }
@@ -94,7 +97,8 @@ public enum ArchiveMedia {
                                    downloader: ArchiveMediaDownloading) async throws -> String {
         let message = try await downloader.message(chatId: chatId, messageId: messageId)
         guard let type = message["type"] as? String, file(of: message) != nil else {
-            throw DownloadError.noFile(messageId: messageId)
+            let contentType = message["content_type"] as? String ?? message["type"] as? String
+            throw DownloadError.noFile(messageId: messageId, contentType: contentType)
         }
         let chatDir = outputDir.appendingPathComponent(String(chatId))
         let saved: URL

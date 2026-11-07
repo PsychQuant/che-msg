@@ -213,10 +213,34 @@ final class ArchiveMediaTests: XCTestCase {
             _ = try await ArchiveMedia.downloadOne(chatId: 777, messageId: 1, outputDir: view, downloader: downloader)
             XCTFail("expected an error")
         } catch let error as ArchiveMedia.DownloadError {
-            XCTAssertEqual(error, .noFile(messageId: 1))
+            XCTAssertEqual(error, .noFile(messageId: 1, contentType: "text"))
             XCTAssertFalse(error.localizedDescription.contains("hello"))
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: view.path))
+    }
+
+    // #117: an "other" message's error says which TDLib content it is, so the caller stops asking.
+    func testDownloadOneOtherMessageNamesItsContentType() async throws {
+        let root = scratch(), view = root.appendingPathComponent("view")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        var contact = ChatArchiverTests.msg(2, 0, type: "other")
+        contact["content_type"] = "messageContact"
+        downloader.messages = [2: contact]
+        do {
+            _ = try await ArchiveMedia.downloadOne(chatId: 777, messageId: 2, outputDir: view, downloader: downloader)
+            XCTFail("expected an error")
+        } catch let error as ArchiveMedia.DownloadError {
+            XCTAssertEqual(error, .noFile(messageId: 2, contentType: "messageContact"))
+            XCTAssertEqual(error.localizedDescription,
+                           "message 2 is messageContact, which has no media file to download")
+        }
+        XCTAssertEqual(downloader.downloads, [])
+    }
+
+    // #117: without a content type the error keeps its earlier wording.
+    func testNoFileWithoutContentTypeKeepsItsWording() {
+        XCTAssertEqual(ArchiveMedia.DownloadError.noFile(messageId: 3).localizedDescription,
+                       "message 3 has no media file to download")
     }
 
     func testDownloadOneFailureIsAnError() async throws {
