@@ -96,8 +96,8 @@ public enum ArchiveMedia {
     public static func downloadOne(chatId: Int64, messageId: Int64, outputDir: URL,
                                    downloader: ArchiveMediaDownloading) async throws -> String {
         let message = try await downloader.message(chatId: chatId, messageId: messageId)
+        let contentType = message["content_type"] as? String ?? message["type"] as? String
         guard let type = message["type"] as? String, file(of: message) != nil else {
-            let contentType = message["content_type"] as? String ?? message["type"] as? String
             throw DownloadError.noFile(messageId: messageId, contentType: contentType)
         }
         let chatDir = outputDir.appendingPathComponent(String(chatId))
@@ -113,7 +113,7 @@ public enum ArchiveMedia {
         case .failed, .skipped:
             throw DownloadError.failed(messageId: messageId)
         case .noFile:
-            throw DownloadError.noFile(messageId: messageId)
+            throw DownloadError.noFile(messageId: messageId, contentType: contentType)
         }
         let size = (try? FileManager.default.attributesOfItem(atPath: saved.path)[.size] as? NSNumber)?.int64Value ?? 0
         let object: [String: Any] = ["message_id": NSNumber(value: messageId), "type": type,

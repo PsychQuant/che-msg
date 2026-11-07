@@ -41,9 +41,26 @@ final class UnmappedMessageContentTests: XCTestCase {
             let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             XCTAssertEqual(tdlibConstructorName(content), object["@type"] as? String)
         }
-        let reason = try JSONSerialization.jsonObject(with: JSONEncoder().encode(CallDiscardReason.callDiscardReasonHungUp))
-        XCTAssertEqual(tdlibConstructorName(CallDiscardReason.callDiscardReasonHungUp),
-                       (reason as? [String: Any])?["@type"] as? String)
+        let reasons: [CallDiscardReason] = [
+            .callDiscardReasonHungUp,
+            // The one case with a payload: its name must come from the case label, never the payload (#117 verify).
+            .callDiscardReasonUpgradeToGroupCall(CallDiscardReasonUpgradeToGroupCall(inviteLink: "https://t.me/call/secret")),
+        ]
+        for reason in reasons {
+            let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reason))
+            XCTAssertEqual(tdlibConstructorName(reason), (object as? [String: Any])?["@type"] as? String)
+        }
+    }
+
+    /// A name is an identifier, never a printed payload.
+    func testConstructorNamesAreBareIdentifiers() {
+        let upgrade = CallDiscardReason.callDiscardReasonUpgradeToGroupCall(
+            CallDiscardReasonUpgradeToGroupCall(inviteLink: "https://t.me/call/secret"))
+        let names = [contact, dice, call, story, venue, animatedEmoji, pin, .messageUnsupported].map(tdlibConstructorName)
+            + [tdlibConstructorName(upgrade)]
+        for name in names {
+            XCTAssertNotNil(name.range(of: "^[a-z][A-Za-z0-9]*$", options: .regularExpression), name)
+        }
     }
 
     /// Never `type`: the caller has already decided that it is "other".
@@ -103,6 +120,11 @@ final class UnmappedMessageContentTests: XCTestCase {
 
     func testPinGivesPinnedMessageId() {
         XCTAssertEqual(unmappedContentFields(pin)["pinned_message_id"] as? Int64, 5_242_880)
+    }
+
+    /// TDLib gives 0 when the pinned message is not known; like `contact_user_id`, 0 is left out.
+    func testPinOfAnUnknownMessageOmitsTheId() {
+        XCTAssertNil(unmappedContentFields(.messagePinMessage(MessagePinMessage(messageId: 0)))["pinned_message_id"])
     }
 
     /// A kind outside the seven says what it is and nothing more.

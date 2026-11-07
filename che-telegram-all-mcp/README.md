@@ -234,7 +234,7 @@ Whether TDLib can create a chat with a user or group it has never seen, on a dat
 
 #### Message objects
 
-Every message has `id`, `chat_id`, `date`, `sender`, `is_outgoing` and a `type`:
+In TDLib mode every message has `id`, `chat_id`, `date`, `sender`, `is_outgoing` and a `type`. `file` (`id`, `size`, and `name` when there is one) is there when the message has a downloadable file.
 
 | `type` | Also carries |
 |--------|--------------|
@@ -251,15 +251,15 @@ Every message has `id`, `chat_id`, `date`, `sender`, `is_outgoing` and a `type`:
 
 | `content_type` | Fields |
 |----------------|--------|
-| `messageContact` | `contact_name`, `contact_user_id` when the contact has an account (no phone number or vCard) |
+| `messageContact` | `contact_name`, `contact_user_id` when TDLib knows it (no phone number or vCard in the message; `get_user` on that id may return a number, depending on the contact's privacy settings) |
 | `messageDice` | `emoji`, `value` |
 | `messageCall` | `duration` (seconds), `is_video`, `discard_reason` (e.g. `callDiscardReasonMissed`); the direction is `is_outgoing` |
 | `messageStory` | `story_poster_chat_id`, `story_id`, `via_mention` |
 | `messageVenue` | `title`, `address`, `latitude`, `longitude` |
 | `messageAnimatedEmoji` | `emoji` |
-| `messagePinMessage` | `pinned_message_id` |
+| `messagePinMessage` | `pinned_message_id` when TDLib knows it |
 
-`download_message_media` on a message without a file says which type it is (`message 5 is messageContact, which has no media file to download`). Answers from the local cache, while another process holds TDLib, carry only `id`, `chat_id`, `date`, `sender`, `is_outgoing`, `type` and `text`; they do not have `content_type` yet ([#118](https://github.com/PsychQuant/che-msg/issues/118)).
+`download_message_media` on a message without a file says which type it is (`message 5 is messageContact, which has no media file to download`). Answers from the local cache, while another process holds TDLib, carry `id`, `chat_id` and `type`, plus `date`, `sender`, `is_outgoing` and `text` when the cached record can be decoded (`type: "unknown"` when it cannot); they do not have `content_type` yet ([#118](https://github.com/PsychQuant/che-msg/issues/118)).
 
 ### Group Management (7)
 

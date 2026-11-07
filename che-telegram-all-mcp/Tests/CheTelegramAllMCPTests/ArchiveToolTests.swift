@@ -192,8 +192,8 @@ final class ArchiveToolTests: XCTestCase {
 
     // Scenario "Text message": the download core's error becomes an isError result.
     func testTextMessageDownloadErrorIsAToolError() {
-        let result = errorResultFromParse(ArchiveMedia.DownloadError.noFile(messageId: 1))
+        let result = errorResultFromParse(ArchiveMedia.DownloadError.noFile(messageId: 1, contentType: "text"))
         XCTAssertEqual(result.isError, true)
-        XCTAssertTrue(texts(result).joined().contains("message 1 has no media file"), "\(texts(result))")
+        XCTAssertTrue(texts(result).joined().contains("message 1 is text, which has no media file"), "\(texts(result))")
     }
 }

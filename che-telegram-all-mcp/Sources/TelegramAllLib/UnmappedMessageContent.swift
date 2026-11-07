@@ -42,7 +42,7 @@ func unmappedContentFields(_ content: MessageContent) -> [String: Any] {
     case .messageAnimatedEmoji(let emoji):
         fields["emoji"] = emoji.emoji
     case .messagePinMessage(let pin):
-        fields["pinned_message_id"] = pin.messageId
+        if pin.messageId != 0 { fields["pinned_message_id"] = pin.messageId }   // 0: not known
     default:
         break
     }

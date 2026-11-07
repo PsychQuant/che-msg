@@ -237,6 +237,21 @@ final class ArchiveMediaTests: XCTestCase {
         XCTAssertEqual(downloader.downloads, [])
     }
 
+    // #117 verify: the second no-file path (a message the media step cannot place) names the type too.
+    func testDownloadOneMessageWithoutIdNamesItsType() async throws {
+        let root = scratch(), view = root.appendingPathComponent("view")
+        let downloader = FakeDownloader(cache: root.appendingPathComponent("cache"))
+        var photo = ArchiveMediaTests.media(5, 0, fileId: 12)
+        photo.removeValue(forKey: "id")
+        downloader.messages = [5: photo]
+        do {
+            _ = try await ArchiveMedia.downloadOne(chatId: 777, messageId: 5, outputDir: view, downloader: downloader)
+            XCTFail("expected an error")
+        } catch let error as ArchiveMedia.DownloadError {
+            XCTAssertEqual(error, .noFile(messageId: 5, contentType: "photo"))
+        }
+    }
+
     // #117: without a content type the error keeps its earlier wording.
     func testNoFileWithoutContentTypeKeepsItsWording() {
         XCTAssertEqual(ArchiveMedia.DownloadError.noFile(messageId: 3).localizedDescription,
