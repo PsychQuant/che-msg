@@ -947,7 +947,9 @@ public final class TDLibClient {
 extension TDLibClient: TDLibClosable {}
 
 /// The `type` of a message's content and the fields that come with it: text, caption, file name,
-/// a sticker's emoji, a location's coordinates, a poll's question and options (#82).
+/// a sticker's emoji, a location's coordinates, a poll's question and options (#82). Content it does
+/// not map has `type` "other" plus `unmappedContentFields`: its TDLib `content_type` and, for seven
+/// kinds, what the content says (#117).
 internal func messageContentFields(_ content: MessageContent) -> [String: Any] {
     var fields: [String: Any] = [:]
     switch content {
@@ -988,6 +990,7 @@ internal func messageContentFields(_ content: MessageContent) -> [String: Any] {
         fields["options"] = poll.poll.options.map { $0.text.text }
     default:
         fields["type"] = "other"
+        fields.merge(unmappedContentFields(content)) { current, _ in current }   // #117
     }
     return fields
 }
