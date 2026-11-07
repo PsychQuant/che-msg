@@ -232,6 +232,35 @@ Whether TDLib can create a chat with a user or group it has never seen, on a dat
 | `forward_messages` | Forward messages |
 | `search_messages` | Search within a chat |
 
+#### Message objects
+
+Every message has `id`, `chat_id`, `date`, `sender`, `is_outgoing` and a `type`:
+
+| `type` | Also carries |
+|--------|--------------|
+| `text` | `text` |
+| `photo`, `video`, `voice_note`, `animation`, `audio` | `caption`, `file` |
+| `document` | `file_name`, `caption`, `file` |
+| `sticker` | `emoji`, `file` |
+| `video_note` | `file` |
+| `location` | `latitude`, `longitude` |
+| `poll` | `question`, `options` |
+| `other` | `content_type`, and the fields below for seven kinds |
+
+`other` is every TDLib message content not listed above. `content_type` is its TDLib constructor name, such as `messageContact`, `messageStory` or `messageScreenshotTaken` ([#117](https://github.com/PsychQuant/che-msg/issues/117)). Seven kinds also say what is in them:
+
+| `content_type` | Fields |
+|----------------|--------|
+| `messageContact` | `contact_name`, `contact_user_id` when the contact has an account (no phone number or vCard) |
+| `messageDice` | `emoji`, `value` |
+| `messageCall` | `duration` (seconds), `is_video`, `discard_reason` (e.g. `callDiscardReasonMissed`); the direction is `is_outgoing` |
+| `messageStory` | `story_poster_chat_id`, `story_id`, `via_mention` |
+| `messageVenue` | `title`, `address`, `latitude`, `longitude` |
+| `messageAnimatedEmoji` | `emoji` |
+| `messagePinMessage` | `pinned_message_id` |
+
+`download_message_media` on a message without a file says which type it is (`message 5 is messageContact, which has no media file to download`). Answers from the local cache, while another process holds TDLib, carry only `id`, `chat_id`, `date`, `sender`, `is_outgoing`, `type` and `text`; they do not have `content_type` yet ([#118](https://github.com/PsychQuant/che-msg/issues/118)).
+
 ### Group Management (7)
 
 | Tool | Description |
