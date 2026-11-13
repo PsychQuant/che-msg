@@ -41,6 +41,17 @@ Binary location: `.build/release/CheTelegramAllMCP`
 
 ## Installation
 
+> **Prefer the plugin.** The [`che-telegram-mcp` plugin](../plugins/che-telegram-mcp/README.md)'s wrapper reads `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from the Keychain at launch, and from 0.9.0 the server reads `TELEGRAM_PHONE` and `TELEGRAM_2FA_PASSWORD` from the Keychain itself, only while Telegram waits for them. The options below run the server on its own. Keep the phone number and the 2FA password in the Keychain (the plugin README has the commands) rather than in the environment: a process's environment can be read by other processes of the same user (`ps -E`), and a value in `~/.claude.json` or the Claude Desktop config sits there in plain text. To keep the API credentials out of the configuration file, read them from the Keychain at launch ([#97](https://github.com/PsychQuant/che-msg/issues/97)):
+>
+> ```bash
+> claude mcp add che-telegram-all-mcp -s user -- /bin/sh -c \
+>   'id=$(security find-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_ID -w) &&
+>    hash=$(security find-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_HASH -w) || exit 1
+>    TELEGRAM_API_ID=$id TELEGRAM_API_HASH=$hash exec /path/to/che-telegram-all-mcp/.build/release/CheTelegramAllMCP'
+> ```
+>
+> `find-generic-password … -w` prints the stored value for the launcher to read; it never takes a value. If an item is missing or the Keychain is locked, the launcher stops and `security`'s message is in the server's stderr. The launcher keeps the API credentials out of the configuration file; they are still in the server's environment while it runs.
+
 ### Option A: Claude Code CLI
 
 ```bash
@@ -96,11 +107,13 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 |----------|----------|-------------|
 | `TELEGRAM_API_ID` | Yes | Telegram API ID (numeric). Auto-fired when state is `waitingForParameters`. |
 | `TELEGRAM_API_HASH` | Yes | Telegram API hash (string). Auto-fired alongside `TELEGRAM_API_ID`. |
-| `TELEGRAM_PHONE` | No | Phone number in international format (e.g., `+886912345678`). Auto-fired when state is `waitingForPhoneNumber`. Useful for SSH / remote setup. |
-| `TELEGRAM_2FA_PASSWORD` | No | 2FA password. Auto-fired when state is `waitingForPassword`. |
+| `TELEGRAM_PHONE` | No | Phone number in international format (e.g., `+886912345678`). Auto-fired when state is `waitingForPhoneNumber`. Useful for SSH / remote setup. When unset, the server reads the Keychain item of the same name (account `che-telegram-all-mcp`) at that moment (0.9.0 and later); the `telegram-all` CLI never reads the Keychain. |
+| `TELEGRAM_2FA_PASSWORD` | No | 2FA password. Auto-fired when state is `waitingForPassword`. When unset, the server reads the Keychain item of the same name (account `che-telegram-all-mcp`) at that moment (0.9.0 and later). |
 | `CHE_TELEGRAM_ALL_IDLE_TIMEOUT` | No | Seconds TDLib may stay idle before the server closes it and releases the lock (default `600`; `0` keeps it open). A non-numeric or negative value falls back to 600 with a warning on stderr. |
 
-> SMS verification code is **never** auto-fired from environment — it must be supplied via `auth_run(code: "...")` or `auth_send_code(code: "...")` in a one-shot delivery.
+> SMS verification code is **never** auto-fired, from the environment or the Keychain — it must be supplied via `auth_run(code: "...")` or `auth_send_code(code: "...")` in a one-shot delivery.
+>
+> The Keychain lookup runs `/usr/bin/security` with a 10-second limit, only when the environment has no value. When the lookup finds nothing, `auth_status` and `auth_run` say why in `keychain_lookup` (`not_stored`, `timed_out` (usually a locked Keychain) or `unavailable`), and the 2FA hint asks for the Keychain item before the `password` argument. The value is used for that one submission and never logged.
 >
 > If env vars are not set, you can still drive the flow manually via `auth_run` (or the per-step `auth_set_parameters` / `auth_send_phone` / `auth_send_password` tools).
 
@@ -110,17 +123,17 @@ Authentication is a **one-time process**. After the first login, TDLib stores th
 
 ### Recommended: `auth_run` (single tool, repeat until ready)
 
-Set env vars for the steps you want auto-fired (`TELEGRAM_API_ID` / `TELEGRAM_API_HASH` / `TELEGRAM_PHONE` / `TELEGRAM_2FA_PASSWORD`), then call `auth_run` repeatedly:
+Store the phone number and the 2FA password as Keychain items (`TELEGRAM_PHONE`, `TELEGRAM_2FA_PASSWORD`, account `che-telegram-all-mcp`; 0.9.0 and later) and give the API credentials as above, then call `auth_run` repeatedly. Each value comes from the call's argument, then the environment, then the Keychain; environment values work too, but other processes of the same user can read them:
 
 ```
 auth_run                 →  fires auto-set params (if env present)
-auth_run                 →  fires auto-send phone (if env present)
+auth_run                 →  fires auto-send phone (if env or Keychain has it)
 auth_run(code: "12345")  →  caller MUST supply SMS code
-auth_run                 →  fires auto-send 2FA password (if env present)
+auth_run                 →  fires auto-send 2FA password (if env or Keychain has it)
 auth_run                 →  state == "ready"
 ```
 
-Each call returns `{state, next_step, last_error, connection_state, unsynced_seconds, sync_stalled}` (the last three: see [When telegram-all stops syncing](#when-telegram-all-stops-syncing)). `next_step.required_args` tells you exactly which arg the next call needs. `last_error` surfaces auto-fire failures (e.g., `FLOOD_WAIT_30`).
+Each call returns `{state, next_step, last_error, keychain_lookup, connection_state, unsynced_seconds, sync_stalled}` (the last three: see [When telegram-all stops syncing](#when-telegram-all-stops-syncing)). `next_step.required_args` tells you exactly which arg the next call needs. `last_error` surfaces auto-fire failures (e.g., `FLOOD_WAIT_30`). `keychain_lookup` is null unless TDLib waits for the phone number or the 2FA password and the last Keychain lookup for that step found nothing; it then says which item and why: `{"credential": "password", "outcome": "not_stored" | "timed_out" | "unavailable"}` (`timed_out` usually means a locked Keychain). It never contains the value. While TDLib waits for the 2FA password, `next_step.hint` asks for the Keychain item first and mentions the `password` argument last, because an argument passes through the conversation.
 
 ### Legacy: per-step manual flow
 
@@ -144,7 +157,7 @@ Several Claude Code sessions can run this server at the same time ([#58](https:/
 - The reader accepts only the TDLib version it was verified against (1.8.60); otherwise it returns `local_reader_unavailable` with reason `unsupported_tdlib_version` rather than guess.
 - A wrapper from plugin che-telegram-mcp 1.4.x or older still holds its own lock directory (`~/.cache/che-telegram-all-mcp.lock`); 0.6.0 servers treat it as a holder while that wrapper runs.
 
-The `telegram-all` CLI does not take this lock yet ([#61](https://github.com/PsychQuant/che-msg/issues/61)); do not run it while a session holds TDLib.
+The `telegram-all` CLI does not take this lock yet ([#61](https://github.com/PsychQuant/che-msg/issues/61)); do not run it while a session holds TDLib. The CLI never reads the Keychain ([#96](https://github.com/PsychQuant/che-msg/issues/96)): give the phone number and the 2FA password with `auth-phone` and `auth-password`, or in the environment, which it still sends automatically.
 
 ## When telegram-all stops syncing
 

@@ -1,0 +1,7 @@
+{
+  "slack": {
+    "type": "stdio",
+    "command": "${CLAUDE_PLUGIN_ROOT}/bin/che-slack-mcp-wrapper.sh",
+    "description": "Slack as you (browser session) — read, search, send and archive conversations in every imported workspace"
+  }
+}

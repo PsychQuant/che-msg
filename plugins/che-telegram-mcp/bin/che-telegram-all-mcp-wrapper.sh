@@ -13,7 +13,7 @@ GITHUB_REPO="PsychQuant/che-msg"
 INSTALL_DIR="$HOME/bin"
 INSTALLED_BINARY="$INSTALL_DIR/$BINARY_NAME"
 VERSION_FILE="$INSTALL_DIR/.${BINARY_NAME}.version"
-DESIRED_VERSION="0.8.0"
+DESIRED_VERSION="0.9.0"
 DOWNLOAD_TIMEOUT=600  # universal binary ~220MB; allow slow links
 
 # --- Startup errors Claude Code can show (#31, PsychQuant/che-msg#58) ---
@@ -221,9 +221,9 @@ export TELEGRAM_API_HASH="$(security find-generic-password -a "che-telegram-all-
 
 if [[ -z "$TELEGRAM_API_ID" || -z "$TELEGRAM_API_HASH" ]]; then
     echo "Telegram API credentials not found in Keychain." >&2
-    echo "Set them up:" >&2
-    echo "  security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_ID -w 'YOUR_ID' -U" >&2
-    echo "  security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_HASH -w 'YOUR_HASH' -U" >&2
+    echo "Set them up in your own terminal (security prompts for each value):" >&2
+    echo "  security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_ID -U -w" >&2
+    echo "  security add-generic-password -a che-telegram-all-mcp -s TELEGRAM_API_HASH -U -w" >&2
     echo "Get credentials at: https://my.telegram.org" >&2
     fail_startup "Telegram API credentials are not in the Keychain. Store TELEGRAM_API_ID and TELEGRAM_API_HASH as the che-telegram-mcp README describes, then reconnect with /mcp."
 fi

@@ -175,4 +175,38 @@ final class AutoFireChainTests: XCTestCase {
         )
         XCTAssertEqual(action, .noOp)
     }
+
+    // MARK: - credentialPlan: the environment, then the Keychain (PsychQuant/che-msg#49)
+
+    func testPlan_phoneFromTheEnvironmentIsSentWithoutALookup() {
+        XCTAssertEqual(credentialPlan(state: .waitingForPhoneNumber, envPhone: "+886912345678", envPassword: nil),
+                       .fire("+886912345678"))
+    }
+
+    func testPlan_phoneWithoutAnEnvironmentValueIsLookedUp() {
+        XCTAssertEqual(credentialPlan(state: .waitingForPhoneNumber, envPhone: nil, envPassword: "pw"), .lookUp(.phone))
+    }
+
+    func testPlan_passwordFromTheEnvironmentWins() {
+        XCTAssertEqual(credentialPlan(state: .waitingForPassword, envPhone: nil, envPassword: "from-env"),
+                       .fire("from-env"))
+    }
+
+    func testPlan_passwordWithoutAnEnvironmentValueIsLookedUp() {
+        XCTAssertEqual(credentialPlan(state: .waitingForPassword, envPhone: "+886912345678", envPassword: nil),
+                       .lookUp(.password))
+    }
+
+    /// Spec: the Keychain is never consulted for the SMS code.
+    func testPlan_codeNeverLooksUpTheKeychain() {
+        XCTAssertEqual(credentialPlan(state: .waitingForCode, envPhone: nil, envPassword: nil), .nothing)
+        XCTAssertEqual(credentialPlan(state: .waitingForCode, envPhone: "+886912345678", envPassword: "pw"), .nothing)
+    }
+
+    func testPlan_otherStatesNeverLookUpTheKeychain() {
+        for state in [TDLibClient.AuthState.waitingForParameters, .ready, .closed] {
+            XCTAssertEqual(credentialPlan(state: state, envPhone: nil, envPassword: nil), .nothing, "\(state)")
+        }
+    }
 }
+

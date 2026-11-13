@@ -27,7 +27,7 @@ public enum CLIBootstrap {
     /// reads it for the MCP `serverInfo` field. Outside this package, bumping
     /// it also means bumping `DESIRED_VERSION` in
     /// `plugins/che-telegram-mcp/bin/che-telegram-all-mcp-wrapper.sh`.
-    public static let version = "0.8.0"
+    public static let version = "0.9.0"
 
     /// The line `--version` prints. The plugin wrapper parses it with
     /// `^che-telegram-all-mcp X.Y.Z$` and refuses to start a binary whose line
@@ -54,12 +54,16 @@ public enum CLIBootstrap {
 
         Environment variables:
           TELEGRAM_API_ID, TELEGRAM_API_HASH    Telegram API credentials (required)
-          TELEGRAM_PHONE                         Phone for auto-fire authentication
-          TELEGRAM_AUTH_CODE                     SMS code for auto-fire (rare; usually \
-        prompted via tool call)
-          TELEGRAM_2FA_PASSWORD                  2FA password for auto-fire authentication
+          TELEGRAM_PHONE                         Phone for auto-fire authentication; when \
+        unset, the Keychain item of the same name (account che-telegram-all-mcp)
+          TELEGRAM_2FA_PASSWORD                  2FA password for auto-fire authentication; \
+        when unset, the Keychain item of the same name (account che-telegram-all-mcp)
           CHE_TELEGRAM_LOG_STARTUP=1             Emit `[startup]` timing lines to stderr \
         during init (diagnostic; default: off)
+
+        The SMS verification code is never read from the environment or the
+        Keychain (TELEGRAM_AUTH_CODE is ignored): give it once, through the
+        auth_run tool (code: "...") or auth_send_code.
 
         For tool documentation, connect via stdio JSON-RPC and call `tools/list`.
         """

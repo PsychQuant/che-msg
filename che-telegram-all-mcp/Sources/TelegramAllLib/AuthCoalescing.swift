@@ -70,7 +70,60 @@ internal func coalesceTask(
     let task = holder.acquireOrCreate {
         Task { try await body() }
     }
+    try await awaitCoalesced(task, holder: holder)
+}
 
+/// Awaits a coalesced task and then frees its slot, so the next caller starts
+/// a new run.
+internal func awaitCoalesced(_ task: Task<Void, Error>, holder: TaskFieldHolder) async throws {
     defer { holder.clearIfMatches(task) }
     try await task.value
+}
+
+/// The coalesced form of a request that is handed to TDLib at the moment its
+/// task is created (PsychQuant/che-msg#98): if a task is in flight, returns it;
+/// otherwise calls `send` right away, synchronously, and returns a task that
+/// waits for the answer `send` delivers. Never suspends, so a caller can hold
+/// a lock that orders the request against other events; `send` and the answer
+/// it delivers must not take that lock or `holder`'s. Await the task with
+/// `awaitCoalesced`.
+internal func coalescedRequest(
+    holder: TaskFieldHolder,
+    send: (_ deliver: @escaping @Sendable (Result<Void, Error>) -> Void) -> Void
+) -> Task<Void, Error> {
+    holder.acquireOrCreate {
+        let answer = RequestAnswer()
+        send { answer.deliver($0) }
+        return Task { try await answer.value() }
+    }
+}
+
+/// The one answer to a request handed over before anything waits for it: it
+/// may arrive before the waiting task starts, or even while the request is
+/// being handed over. Only the first delivery counts.
+internal final class RequestAnswer: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock()
+    private var result: Result<Void, Error>?
+    private var waiter: CheckedContinuation<Void, Error>?
+
+    func deliver(_ answer: Result<Void, Error>) {
+        let waiting: CheckedContinuation<Void, Error>? = lock.withLock {
+            guard result == nil else { return nil }
+            result = answer
+            defer { waiter = nil }
+            return waiter
+        }
+        waiting?.resume(with: answer)
+    }
+
+    /// Waits for the answer; call it once.
+    func value() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let ready: Result<Void, Error>? = lock.withLock {
+                if result == nil { waiter = continuation }
+                return result
+            }
+            if let ready { continuation.resume(with: ready) }
+        }
+    }
 }

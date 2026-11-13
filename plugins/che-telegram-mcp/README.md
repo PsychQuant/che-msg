@@ -26,19 +26,31 @@ You want to read/send messages as **yourself**.
 /plugin marketplace add PsychQuant/che-msg
 /plugin install che-telegram-mcp@che-msg
 
-# 2. Store API credentials (from https://my.telegram.org/apps)
-security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_ID" -w 'YOUR_API_ID' -U
-security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_HASH" -w 'YOUR_API_HASH' -U
+# 2. Store API credentials (from https://my.telegram.org/apps).
+#    Each command ends with -w, so security asks for the value (twice) instead of
+#    taking it as an argument, which would stay in your shell history. Run these
+#    in your own terminal, not through Claude's Bash tool.
+security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_ID" -U -w
+security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_API_HASH" -U -w
 
-# Optional: 2FA password (auto-entered if your account has 2FA)
-security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_2FA_PASSWORD" -w 'YOUR_2FA_PASSWORD' -U
+# Optional (0.9.0+): 2FA password (read by the server when Telegram asks for it, so you never type it into the conversation)
+security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_2FA_PASSWORD" -U -w
 
-# Optional: phone number (auto-entered to skip the prompt)
-security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_PHONE" -w '+886912345678' -U
+# Optional (0.9.0+): phone number (read the same way, to skip the prompt)
+security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_PHONE" -U -w
 
-# 3. Authenticate (one-time; SMS code is the only thing you must enter live)
+# 3. Authenticate (one-time; see below for which values you still type)
 /che-telegram-mcp:auth
 ```
+
+From che-telegram-all-mcp 0.9.0, the server reads the phone number and the 2FA password from these Keychain items itself, only while Telegram is waiting for them, and keeps no copy. The wrapper never passes them on. An environment variable of the same name takes precedence; `auth_run`'s own arguments take precedence over both, except that a value passed while the stored or environment value for that step is already being sent is not sent: the call returns the answer to that request. If the stored 2FA password is wrong, every `auth_run` sends it again, so update the Keychain item instead of retrying. Before 0.9.0 these two items were not read at all, and the phone number and the password had to be typed into the conversation; items you stored back then are used from 0.9.0 on, so check that they are still current.
+
+What to expect once the items are stored:
+
+- The `/che-telegram-mcp:auth` skill still walks through the older step-by-step login and asks for the phone number and the 2FA password ([#48](https://github.com/PsychQuant/che-msg/issues/48)). With 0.9.0 and both items stored, ask Claude to run `auth_run` without arguments instead; the login code is then the only value you type.
+- After the login code is sent, `auth_run` can take up to 15 seconds to answer while the stored 2FA password is being sent, so that its answer is the state after the password, not a request for it.
+- With the phone number stored, while the account is logged out, the first tool call that opens TDLib sends the stored phone number, and Telegram sends you a login code. That is the same as having `TELEGRAM_PHONE` in the environment. The `telegram-all` CLI never reads the Keychain ([#96](https://github.com/PsychQuant/che-msg/issues/96)).
+- If the Keychain is locked, macOS may ask you to unlock it. The server waits up to 10 seconds for the value, so that first call can be slow; after that it carries on without the value.
 
 Don't want the bot server spawning at startup? Add this to `.claude/settings.json` in your project (or `~/.claude/settings.json` for user-wide):
 
@@ -58,7 +70,7 @@ You want a **bot** to post messages or receive commands. No personal account.
 /plugin install che-telegram-mcp@che-msg
 
 # 2. Store bot token (get one from @BotFather in Telegram)
-security add-generic-password -a "che-telegram-bot-mcp" -s "TELEGRAM_BOT_TOKEN" -w 'YOUR_BOT_TOKEN' -U
+security add-generic-password -a "che-telegram-bot-mcp" -s "TELEGRAM_BOT_TOKEN" -U -w
 
 # 3. Disable the personal-account server (skip TDLib download entirely)
 ```
@@ -120,12 +132,12 @@ It prints `⚠️` warnings with copy-pasteable fix commands when something is m
 
 ```bash
 mkdir -p ~/bin
-curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.8.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
-curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.8.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.9.0/CheTelegramAllMCP -o ~/bin/CheTelegramAllMCP
+curl -L https://github.com/PsychQuant/che-msg/releases/download/v0.9.0/CheTelegramBotMCP -o ~/bin/CheTelegramBotMCP
 chmod +x ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
 xattr -dr com.apple.quarantine ~/bin/CheTelegramAllMCP ~/bin/CheTelegramBotMCP
-echo 0.8.0 > ~/bin/.CheTelegramAllMCP.version
-echo 0.8.0 > ~/bin/.CheTelegramBotMCP.version
+echo 0.9.0 > ~/bin/.CheTelegramAllMCP.version
+echo 0.9.0 > ~/bin/.CheTelegramBotMCP.version
 ```
 
 The last two lines record the installed version. Without them the wrapper still sees the old version and downloads the binary again on the next start.
@@ -309,7 +321,7 @@ This plugin requires:
 
 ## Version
 
-Plugin version: 1.7.0 (currently pins `che-telegram-all-mcp` v0.8.0 + `che-telegram-bot-mcp` v0.8.0 binaries; wrapper auto-upgrades on version mismatch)
+Plugin version: 1.8.0 (currently pins `che-telegram-all-mcp` v0.9.0 + `che-telegram-bot-mcp` v0.9.0 binaries; wrapper auto-upgrades on version mismatch)
 
 ### Changelog
 

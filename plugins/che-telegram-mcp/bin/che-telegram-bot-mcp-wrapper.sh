@@ -13,7 +13,7 @@ GITHUB_REPO="PsychQuant/che-msg"
 INSTALL_DIR="$HOME/bin"
 INSTALLED_BINARY="$INSTALL_DIR/$BINARY_NAME"
 VERSION_FILE="$INSTALL_DIR/.${BINARY_NAME}.version"
-DESIRED_VERSION="0.8.0"
+DESIRED_VERSION="0.9.0"
 DOWNLOAD_TIMEOUT=180  # bot binary is small (~30MB)
 
 # Find binary
@@ -89,8 +89,8 @@ export TELEGRAM_BOT_TOKEN="$(security find-generic-password -a "che-telegram-bot
 
 if [[ -z "$TELEGRAM_BOT_TOKEN" ]]; then
     echo "Bot token not found in Keychain." >&2
-    echo "Set it up:" >&2
-    echo "  security add-generic-password -a che-telegram-bot-mcp -s TELEGRAM_BOT_TOKEN -w 'YOUR_TOKEN' -U" >&2
+    echo "Set it up in your own terminal (security prompts for the value):" >&2
+    echo "  security add-generic-password -a che-telegram-bot-mcp -s TELEGRAM_BOT_TOKEN -U -w" >&2
     echo "Get a token from @BotFather on Telegram." >&2
     exit 1
 fi

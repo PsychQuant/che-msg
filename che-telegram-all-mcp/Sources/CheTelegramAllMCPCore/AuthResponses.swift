@@ -14,6 +14,9 @@ import TelegramAllLib
 ///   - `connection_state`, `unsynced_seconds`, `sync_stalled`: whether TDLib is
 ///     synced with Telegram (#63). A session Telegram has invalidated stays
 ///     `ready` and never syncs; once stalled, `next_step` points to `logout`.
+///   - `keychain_lookup`: while TDLib waits for the phone number or the 2FA
+///     password, why the last Keychain lookup for that state produced no
+///     value (#95), `{credential, outcome}`; otherwise null. Never the value.
 ///
 /// All three fields are deterministic given (state, lastError) — no env var
 /// inspection. The caller is told what arguments to provide; auto-fire (if env
@@ -21,12 +24,17 @@ import TelegramAllLib
 internal func authStatusResult(
     state: TDLibClient.AuthState,
     lastError: TDLibClient.TDError?,
-    sync: TDLibSyncState.Snapshot = .init(connectionState: nil, isSynced: false, unsyncedSeconds: 0)
+    sync: TDLibSyncState.Snapshot = .init(connectionState: nil, isSynced: false, unsyncedSeconds: 0),
+    keychainMiss: KeychainMiss? = nil
 ) -> CallTool.Result {
     // Only time spent updating makes a session stalled; offline never does.
     let stalled = state == .ready && sync.isStalled()
-    let nextStep = stalled ? stalledNextStep(updatingSeconds: sync.updatingSeconds) : authStatusNextStep(state: state)
+    let lookup = keychainLookupPayload(state: state, miss: keychainMiss)
+    let nextStep = stalled
+        ? stalledNextStep(updatingSeconds: sync.updatingSeconds)
+        : authStatusNextStep(state: state, miss: lookup == nil ? nil : keychainMiss)
     let payload: [String: Any] = [
+        "keychain_lookup": lookup ?? NSNull(),
         "state": state.rawValue,
         "next_step": nextStep ?? NSNull(),
         "last_error": authStatusLastError(lastError) ?? NSNull(),
@@ -35,7 +43,7 @@ internal func authStatusResult(
         "sync_stalled": stalled,
     ]
     let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
-        ?? Data(#"{"state":"unknown","next_step":null,"last_error":null,"connection_state":null,"unsynced_seconds":0,"sync_stalled":false}"#.utf8)
+        ?? Data(#"{"state":"unknown","next_step":null,"last_error":null,"connection_state":null,"unsynced_seconds":0,"sync_stalled":false,"keychain_lookup":null}"#.utf8)
     let json = String(data: data, encoding: .utf8) ?? ""
     return CallTool.Result(
         content: [.text(text: json, annotations: nil, _meta: nil)],
@@ -57,7 +65,28 @@ private func stalledNextStep(updatingSeconds: Int) -> [String: Any] {
     ]
 }
 
-private func authStatusNextStep(state: TDLibClient.AuthState) -> [String: Any]? {
+/// `keychain_lookup`: which credential TDLib waits for and why its last
+/// Keychain lookup produced no value; nil outside those two states (#95).
+private func keychainLookupPayload(state: TDLibClient.AuthState, miss: KeychainMiss?) -> [String: String]? {
+    guard let miss else { return nil }
+    switch state {
+    case .waitingForPhoneNumber: return ["credential": "phone", "outcome": miss.rawValue]
+    case .waitingForPassword: return ["credential": "password", "outcome": miss.rawValue]
+    case .waitingForParameters, .waitingForCode, .ready, .closed: return nil
+    }
+}
+
+/// The opening sentence of a hint after a Keychain lookup produced no value.
+private func keychainMissSentence(_ miss: KeychainMiss, credential: String) -> String {
+    switch miss {
+    case .notStored: return "No \(credential) is stored in the Keychain. "
+    case .timedOut: return "The Keychain did not answer within \(Int(SecurityCLICredentialSource().timeout)) seconds; it is probably locked. "
+    case .unavailable: return "Reading the Keychain failed (the server log has the details). "
+    }
+}
+
+private func authStatusNextStep(state: TDLibClient.AuthState, miss: KeychainMiss? = nil) -> [String: Any]? {
+    let account = SecurityCLICredentialSource.account, item = KeychainCredential.password.rawValue
     switch state {
     case .ready, .closed:
         return nil
@@ -71,7 +100,8 @@ private func authStatusNextStep(state: TDLibClient.AuthState) -> [String: Any]? 
         return [
             "tool": "auth_run",
             "required_args": ["phone"],
-            "hint": "Provide your Telegram phone number in international format (e.g., +886912345678).",
+            "hint": (miss.map { keychainMissSentence($0, credential: "phone number") } ?? "")
+                + "Provide your Telegram phone number in international format (e.g., +886912345678).",
         ]
     case .waitingForCode:
         return [
@@ -83,7 +113,14 @@ private func authStatusNextStep(state: TDLibClient.AuthState) -> [String: Any]? 
         return [
             "tool": "auth_run",
             "required_args": ["password"],
-            "hint": "Enter your two-factor authentication password.",
+            // The Keychain comes first: an argument passes through the
+            // conversation, which is what #49 keeps the password out of (#95).
+            "hint": (miss.map { keychainMissSentence($0, credential: "2FA password") } ?? "")
+                + "The 2FA password is read from the Keychain item \(item) (account \(account)) when it is stored there "
+                + "and the server's environment has no \(item). Ask the user to store it in their own terminal "
+                + "(security add-generic-password -a \(account) -s \(item) -U -w, which prompts for it) "
+                + "or to unlock the Keychain, then call auth_run with no arguments. "
+                + "Pass password only if the user chooses to type it here: it then passes through this conversation.",
         ]
     }
 }
@@ -112,7 +149,7 @@ private func authStatusLastError(_ error: TDLibClient.TDError?) -> [String: Any]
 
 /// Decision returned by `decideAuthRunAction`, used by Server's `auth_run`
 /// handler to dispatch to the correct TDLibClient method.
-internal enum AuthRunAction: Equatable {
+internal enum AuthRunAction: Equatable, CustomStringConvertible {
     case callSetParameters(apiId: Int, apiHash: String)
     case callSendPhone(String)
     case callSendCode(String)
@@ -120,12 +157,26 @@ internal enum AuthRunAction: Equatable {
     case noOpReady
     case errorClosed
     case needsArgs([String])
+
+    /// Never shows a credential (#96); the API ID and argument names are not secret.
+    var description: String {
+        switch self {
+        case .callSetParameters(let apiId, _): return "callSetParameters(apiId: \(apiId), apiHash: <redacted>)"
+        case .callSendPhone: return "callSendPhone(<redacted>)"
+        case .callSendCode: return "callSendCode(<redacted>)"
+        case .callSendPassword: return "callSendPassword(<redacted>)"
+        case .noOpReady: return "noOpReady"
+        case .errorClosed: return "errorClosed"
+        case .needsArgs(let args): return "needsArgs(\(args))"
+        }
+    }
 }
 
 /// Pure routing function for the `auth_run` MCP tool.
 ///
 /// - Caller-supplied args take precedence over env vars (caller knows
-///   what they want; env vars are convenience defaults).
+///   what they want; env vars are convenience defaults), and env vars over
+///   the Keychain values the server looked up (PsychQuant/che-msg#49).
 /// - For `waitingForCode`, env vars MUST NOT be honored — the SMS code
 ///   is one-shot delivery. Caller arg is required.
 internal func decideAuthRunAction(
@@ -136,7 +187,9 @@ internal func decideAuthRunAction(
     envApiId: Int?,
     envApiHash: String?,
     envPhone: String?,
-    envPassword: String?
+    envPassword: String?,
+    keychainPhone: String? = nil,
+    keychainPassword: String? = nil
 ) -> AuthRunAction {
     switch state {
     case .waitingForParameters:
@@ -148,6 +201,7 @@ internal func decideAuthRunAction(
     case .waitingForPhoneNumber:
         if let arg = phone { return .callSendPhone(arg) }
         if let env = envPhone { return .callSendPhone(env) }
+        if let stored = keychainPhone { return .callSendPhone(stored) }
         return .needsArgs(["phone"])
 
     case .waitingForCode:
@@ -157,6 +211,7 @@ internal func decideAuthRunAction(
     case .waitingForPassword:
         if let arg = password { return .callSendPassword(arg) }
         if let env = envPassword { return .callSendPassword(env) }
+        if let stored = keychainPassword { return .callSendPassword(stored) }
         return .needsArgs(["password"])
 
     case .ready:
@@ -166,3 +221,51 @@ internal func decideAuthRunAction(
         return .errorClosed
     }
 }
+
+/// Which credential `auth_run` must read from the Keychain before deciding,
+/// if any (PsychQuant/che-msg#49): only for the phone number or the 2FA
+/// password, and only when neither the caller's argument nor the environment
+/// provides it. Never for the SMS code.
+internal func authRunKeychainLookup(state: TDLibClient.AuthState, phone: String?, password: String?,
+                                    envPhone: String?, envPassword: String?) -> KeychainCredential? {
+    switch state {
+    case .waitingForPhoneNumber where phone == nil && envPhone == nil:
+        return .phone
+    case .waitingForPassword where password == nil && envPassword == nil:
+        return .password
+    default:
+        return nil
+    }
+}
+
+/// The Keychain values `auth_run` may route with, after its lookup returned
+/// (verify round 1 of #49): the lookup ran with no lock held, so the state can
+/// have moved on (for example the background auto-fire sent the value). A
+/// value is used only while the state still asks for the credential it was
+/// read for; otherwise both are nil and `auth_run` routes on the new state.
+internal func authRunKeychainValues(lookedUp: KeychainCredential?, value: String?, stateNow: TDLibClient.AuthState,
+                                    phone: String?, password: String?,
+                                    envPhone: String?, envPassword: String?) -> (phone: String?, password: String?) {
+    guard let lookedUp, let value,
+          authRunKeychainLookup(state: stateNow, phone: phone, password: password,
+                                envPhone: envPhone, envPassword: envPassword) == lookedUp else { return (nil, nil) }
+    return lookedUp == .phone ? (value, nil) : (nil, value)
+}
+
+/// The action `auth_run` takes once its Keychain lookup (if any) has returned,
+/// routed on `stateNow`, the state read after the lookup (#49). A value found
+/// for a state that has moved on is dropped by `authRunKeychainValues`.
+internal func decideAuthRunActionAfterLookup(lookedUp: KeychainCredential?, value: String?,
+                                             stateNow: TDLibClient.AuthState,
+                                             phone: String?, code: String?, password: String?,
+                                             envApiId: Int?, envApiHash: String?,
+                                             envPhone: String?, envPassword: String?) -> AuthRunAction {
+    let keychain = authRunKeychainValues(lookedUp: lookedUp, value: value, stateNow: stateNow,
+                                         phone: phone, password: password,
+                                         envPhone: envPhone, envPassword: envPassword)
+    return decideAuthRunAction(state: stateNow, phone: phone, code: code, password: password,
+                               envApiId: envApiId, envApiHash: envApiHash,
+                               envPhone: envPhone, envPassword: envPassword,
+                               keychainPhone: keychain.phone, keychainPassword: keychain.password)
+}
+

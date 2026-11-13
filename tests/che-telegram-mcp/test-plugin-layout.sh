@@ -48,6 +48,15 @@
 #        must have one) and its #anchor point at this README. The five rules
 #        are in tests/lib/install_refs.py (PsychQuant/che-msg#42: five such
 #        places still named the old marketplace after the move).
+#   (k)  every `security add-generic-password` / `add-internet-password`
+#        command in any plugin file (the top-level CHANGELOG.md excepted, as
+#        for (j)) ends with a bare `-w`, so security prompts for the secret
+#        instead of taking it as an argument, which would stay in the shell
+#        history and show in the process list (PsychQuant/che-msg#51). `-p` and
+#        `-X` (other ways to pass the value) and a value piped straight into
+#        security fail too; a command that cannot be parsed is reported as
+#        such. It guards against mistakes, not evasion: a pipe through `env`
+#        or `xargs`, or a quoted command name, is not recognised.
 #   (fm) every skill's frontmatter stays inside the subset Claude Code and this
 #        test read the same way (see below)
 #
@@ -98,7 +107,7 @@ if [ -z "$LIB_DIR" ] || [ ! -f "$LIB_DIR/frontmatter_subset.py" ]; then
 fi
 
 OUT=$(python3 - "$PLUGIN_DIR" "$LIB_DIR" <<'EOF'
-import json, os, re, sys
+import json, os, re, shlex, sys
 
 try:
     import yaml
@@ -317,6 +326,51 @@ for name in ("auth", "chats", "search", "send", "archive-telegram"):
 
 # ---------- (j) install references name this marketplace ----------
 import install_refs
+# (k) Keychain commands take the secret from a prompt, never from an argument.
+def keychain_command_files():
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            rel = os.path.relpath(os.path.join(dirpath, name), root)
+            if rel != "CHANGELOG.md":
+                yield rel
+for rel in keychain_command_files():
+    try:
+        with open(os.path.join(root, rel), "rb") as fh:
+            data = fh.read()
+    except OSError as e:
+        bad("k", f"{rel}: cannot be read ({e}) — not checked")
+        continue
+    # A file that never names the command (a .DS_Store, an image) has nothing to check;
+    # one that does is read even if it is not valid UTF-8.
+    if b"add-generic-password" not in data and b"add-internet-password" not in data:
+        continue
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    for n, line in enumerate(lines, 1):
+        m = re.search(r"add-(generic|internet)-password", line)
+        if not m:
+            continue
+        if re.search(r"\|\s*(sudo\s+)?(/usr/bin/)?security\s+add-(generic|internet)-password", line):
+            bad("k", f"{rel}:{n}: a value is piped into security (let it prompt instead): {line.strip()}")
+            continue
+        # The command runs to the end of the line, or to the closing quote of
+        # the echo that prints it (optionally followed by a redirection): try
+        # the line as it is first, then without that closing quote.
+        toks = None
+        for cmd in (line[m.start():], re.sub(r'"\s*(>&\s*\d+)?\s*$', "", line[m.start():])):
+            try:
+                toks = shlex.split(cmd)
+                break
+            except ValueError:
+                continue
+        if toks is None:
+            bad("k", f"{rel}:{n}: cannot be parsed, check it by hand: {line.strip()}")
+            continue
+        if any(t.startswith(("-p", "-X")) for t in toks):
+            bad("k", f"{rel}:{n}: `-p` / `-X` pass the secret as an argument: {line.strip()}")
+        elif not toks or toks[-1] != "-w" or toks.count("-w") != 1:
+            bad("k", f"{rel}:{n}: `-w` is not the last argument (a secret after it stays in shell history): {line.strip()}")
+
 for msg in install_refs.problems("che-telegram-mcp", root, os.path.join(root, "..", ".."), docs_url_required=True):
     bad("j", msg)
 
@@ -357,6 +411,7 @@ report g  "telegram-messaging exists and stays model-invocable"
 report h  "auth/chats/search/send/archive-telegram set disable-model-invocation: true"
 report i  "no skill sets hooks or runs !\`command\` blocks"
 report j  "the plugin and the repository README name the marketplace this repository publishes"
+report k  "Keychain commands end with a bare -w (the secret is prompted for, not passed)"
 
 echo
 if [ "$FAILURES" -gt 0 ]; then

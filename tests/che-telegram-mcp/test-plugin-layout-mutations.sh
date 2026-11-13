@@ -449,6 +449,31 @@ expect_pass "a skill that mentions docsUrl in prose"
 P=$(fresh); python3 -c 'import sys; open(sys.argv[1], "a").write("\n# a" + " " * 990 + "b" * 1 + ("\n# a" + " " * 990 + "b") * 1499 + ("\n# " + "[" * 990) * 300 + ("\n# " + "_" * 990 + "a") * 100 + "\n")' "$P/README.md"
 expect_fast_pass "1900 README headings just under the length cap are read in time (round 5 lib: about 20 s)" 5
 
+P=$(fresh); printf '%s\n' '' 'security add-generic-password -a "che-telegram-all-mcp" -s "TELEGRAM_PHONE" -U -w '"'"'+886912345678'"'"'' >> "$P/README.md"
+expect_fail "a README Keychain command with the secret after -w (#51)" "FAIL \(k\)"
+P=$(fresh); printf '%s\n' '    echo "  security add-generic-password -a x -s Y -w VALUE -U" >&2' >> "$P/bin/che-telegram-bot-mcp-wrapper.sh"
+expect_fail "a wrapper hint with a value after -w (#51)" "che-telegram-bot-mcp-wrapper.sh:[0-9]+: .-w. is not the last"
+
+P=$(fresh); printf '%s\n' '' 'security add-generic-password -a x -s TELEGRAM_BOT_TOKEN -w "hunter2"' >> "$P/skills/send/SKILL.md"
+expect_fail "a skill with a Keychain command that has a value (#51 verify)" "skills/send/SKILL\.md:[0-9]+: .-w. is not the last"
+P=$(fresh); printf '%s\n' 'security add-generic-password -a x -s Y -p secret -U -w' > "$P/hooks/.notes"
+expect_fail "-p with a value in a dotfile under hooks/ (#51 verify)" "hooks/\.notes:[0-9]+: .-p. / .-X."
+P=$(fresh); printf '%s\n' '' "printf '%s' \"\$TOKEN\" | security add-generic-password -a x -s Y -U -w" >> "$P/README.md"
+expect_fail "a value piped into security (#51 verify)" "a value is piped into security"
+
+P=$(fresh); printf '\377\376\000binary\n' > "$P/hooks/icon.png"
+out=$(run_layout)
+if printf '%s\n' "$out" | grep -q 'FAIL (k)'; then
+    echo "  ✗ a binary file that never names the command does not fail (k) (#51 verify r2)"; printf '%s\n' "$out" | sed 's/^/      /'; FAILED=$((FAILED + 1))
+else
+    echo "  ✓ a binary file that never names the command does not fail (k) (#51 verify r2)"; PASSED=$((PASSED + 1))
+fi
+P=$(fresh); printf '\377\nsecurity add-generic-password -a x -s Y -w hunter2\n' > "$P/hooks/notes.bin"
+expect_fail "a non-UTF-8 file with a Keychain command is still checked (#51 verify r2)" "hooks/notes\.bin:2: .-w. is not the last"
+
+P=$(fresh); printf '%s\n' '' 'security add-generic-password -a x -s Y -pSECRET -U -w' >> "$P/README.md"
+expect_fail "-p attached to its value (#51 verify r2)" "README\.md:[0-9]+: .-p. / .-X."
+
 echo
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

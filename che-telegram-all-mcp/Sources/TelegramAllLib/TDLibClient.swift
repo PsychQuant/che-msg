@@ -1,7 +1,6 @@
 import Foundation
 import TDLibKit
 import TDLibFramework
-import os
 
 // MARK: - File-scope helpers (testable seams)
 
@@ -46,6 +45,31 @@ internal func mapTDLibError(_ error: Swift.Error) throws {
     throw TDLibClient.TDError.tdlibError(code: td.code, message: td.message)
 }
 
+/// `CredentialRequestSending` through TDLibKit's callback forms, which put the
+/// request on TDLibKit's send queue and return without waiting
+/// (PsychQuant/che-msg#98).
+struct TDLibKitCredentialRequests: CredentialRequestSending, @unchecked Sendable {
+    let client: TDLibKit.TDLibClient
+
+    func setAuthenticationPhoneNumber(_ phoneNumber: String,
+                                      completion: @escaping @Sendable (Result<Void, Swift.Error>) -> Void) {
+        do {
+            try client.setAuthenticationPhoneNumber(phoneNumber: phoneNumber, settings: nil) { completion($0.map { _ in }) }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
+    func checkAuthenticationPassword(_ password: String,
+                                     completion: @escaping @Sendable (Result<Void, Swift.Error>) -> Void) {
+        do {
+            try client.checkAuthenticationPassword(password: password) { completion($0.map { _ in }) }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+}
+
 /// Manages a TDLib client session with authentication state tracking.
 public final class TDLibClient {
     /// One manager, and so one `td_receive` loop, for the whole process. TDLib
@@ -58,28 +82,16 @@ public final class TDLibClient {
     let client: TDLibKit.TDLibClient
     private let dbPath: String
 
-    /// Non-reentrant lock protecting all mutable auth state.
-    /// Critical section MUST NOT contain `await` (OSAllocatedUnfairLock
-    /// is non-reentrant; awaiting under the lock can deadlock).
-    private let lock = OSAllocatedUnfairLock()
+    /// The authorization state, the auto-fire error, the Keychain lookup
+    /// status and the phone-number and 2FA-password requests, behind one lock
+    /// (PsychQuant/che-msg#98).
+    private let auth: AuthCoordinator
 
-    /// Authentication state. Read via `getAuthState()`, written under `lock`.
-    private var authState: AuthState = .waitingForParameters
-
-    /// Cached API credentials (from env or tool call). Lock-protected as a pair.
-    private var cachedApiId: Int?
-    private var cachedApiHash: String?
-
-    /// Most recent error from an auto-fire path. Read via `getLastAutoFireError()`,
-    /// written/cleared by auto-fire paths and the .ready state transition.
-    private var lastAutoFireError: TDError?
-
-    /// In-flight task holders for the four authentication methods. Concurrent
+    /// In-flight task holders for `setParameters` and `sendAuthCode`. Concurrent
     /// callers of the same method coalesce on these holders — see `coalesceTask`.
+    /// The phone number's and the 2FA password's are in `auth`.
     private let setParametersTask = TaskFieldHolder()
-    private let sendPhoneTask = TaskFieldHolder()
     private let sendCodeTask = TaskFieldHolder()
-    private let sendPasswordTask = TaskFieldHolder()
 
     /// Weak reference holder to break the init capture cycle.
     private class Weak {
@@ -113,7 +125,10 @@ public final class TDLibClient {
     /// the unsynced time survives this client being closed and replaced.
     private let syncState: TDLibSyncState?
 
-    public init(logVerbosity: Int = 0, syncState: TDLibSyncState? = nil) async throws {
+    /// `credentials` is where the phone number and the 2FA password are read
+    /// when the environment does not set them; tests inject a fake.
+    public init(logVerbosity: Int = 0, syncState: TDLibSyncState? = nil,
+                credentials: KeychainCredentialSource = SecurityCLICredentialSource()) async throws {
         self.syncState = syncState
         // Silence TDLib's stdout spam BEFORE creating any client.
         // td_execute is synchronous, thread-safe, and doesn't need a client.
@@ -136,6 +151,7 @@ public final class TDLibClient {
                 // Ignore decode errors for unknown updates
             }
         }
+        auth = AuthCoordinator(credentials: credentials, requests: TDLibKitCredentialRequests(client: client))
         weakRef.value = self
     }
 
@@ -165,10 +181,12 @@ public final class TDLibClient {
         let env = ProcessInfo.processInfo.environment
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline, !Task.isCancelled {
+            let (state, keychainLookup, hasError) = auth.settleInputs()
             let settled = authorizationIsSettled(
-                state: getAuthState(), hasAutoFireError: getLastAutoFireError() != nil,
+                state: state, hasAutoFireError: hasError,
                 envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init), envApiHash: env["TELEGRAM_API_HASH"],
-                envPhone: env["TELEGRAM_PHONE"], envPassword: env["TELEGRAM_2FA_PASSWORD"])
+                envPhone: env["TELEGRAM_PHONE"], envPassword: env["TELEGRAM_2FA_PASSWORD"],
+                keychainLookup: keychainLookup)
             if settled { return }
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
@@ -256,30 +274,29 @@ public final class TDLibClient {
     private func handleAuthStateUpdate(_ state: AuthorizationState) {
         switch state {
         case .authorizationStateWaitTdlibParameters:
-            lock.withLock { authState = .waitingForParameters }
+            enterStateWithoutLookup(.waitingForParameters)
             autoSetParametersIfAvailable()
         case .authorizationStateWaitPhoneNumber:
-            lock.withLock { authState = .waitingForPhoneNumber }
-            autoSendPhoneIfAvailable()
+            enterCredentialState(.waitingForPhoneNumber)
         case .authorizationStateWaitCode:
-            lock.withLock { authState = .waitingForCode }
             // Spec requirement: SMS verification code is never auto-fired from
-            // environment. The code MUST be supplied by an explicit caller
-            // invocation (auth_run(code:) or auth_send_code(code:)).
-            // DO NOT add an auto-fire here.
+            // environment or the Keychain. The code MUST be supplied by an
+            // explicit caller invocation (auth_run(code:) or auth_send_code(code:)).
+            // DO NOT add an auto-fire or a lookup here.
+            enterStateWithoutLookup(.waitingForCode)
         case .authorizationStateWaitPassword:
-            lock.withLock { authState = .waitingForPassword }
-            autoSendPasswordIfAvailable()
+            enterCredentialState(.waitingForPassword)
         case .authorizationStateReady:
-            lock.withLock {
-                authState = .ready
-                lastAutoFireError = nil
-            }
+            enterStateWithoutLookup(.ready)
         case .authorizationStateClosed:
-            lock.withLock { authState = .closed }
+            enterStateWithoutLookup(.closed)
         default:
             break
         }
+    }
+
+    private func enterStateWithoutLookup(_ state: AuthState) {
+        auth.enter(state)
     }
 
     /// Auto-set TDLib parameters from environment variables if available.
@@ -292,14 +309,12 @@ public final class TDLibClient {
             envApiHash: env["TELEGRAM_API_HASH"],
             envPhone: env["TELEGRAM_PHONE"],
             envPassword: env["TELEGRAM_2FA_PASSWORD"],
-            envAuthCode: env["TELEGRAM_AUTH_CODE"]
+            // Spec: "SMS verification code is never auto-fired from environment" —
+            // the client does not read TELEGRAM_AUTH_CODE at all (#87).
+            envAuthCode: nil
         )
         guard case .fireSetParameters(let apiId, let apiHash) = action else { return }
-        lock.withLock {
-            cachedApiId = apiId
-            cachedApiHash = apiHash
-            lastAutoFireError = nil
-        }
+        auth.autoSettingParameters(apiId: apiId, apiHash: apiHash)
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -310,60 +325,43 @@ public final class TDLibClient {
         }
     }
 
-    /// Auto-send phone number from environment variable if available.
-    private func autoSendPhoneIfAvailable() {
+    /// Enters the phone-number or 2FA-password state and auto-fires its
+    /// credential: the environment's value if set, otherwise the Keychain's
+    /// (PsychQuant/che-msg#49). Runs on TDLib's callback thread, so the
+    /// Keychain is read inside the coordinator's Task, never here.
+    private func enterCredentialState(_ state: AuthState) {
         let env = ProcessInfo.processInfo.environment
-        let action = decideAutoFire(
-            state: getAuthState(),
-            envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init),
-            envApiHash: env["TELEGRAM_API_HASH"],
-            envPhone: env["TELEGRAM_PHONE"],
-            envPassword: env["TELEGRAM_2FA_PASSWORD"],
-            envAuthCode: env["TELEGRAM_AUTH_CODE"]
-        )
-        guard case .fireSendPhone(let phone) = action else { return }
-        lock.withLock { lastAutoFireError = nil }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.sendPhoneNumber(phone)
-            } catch {
-                self.recordAutoFireError(error)
-            }
-        }
+        let plan = credentialPlan(state: state, envPhone: env["TELEGRAM_PHONE"],
+                                  envPassword: env["TELEGRAM_2FA_PASSWORD"])
+        auth.enterCredentialState(state, plan: plan)
     }
 
-    /// Auto-send 2FA password from environment variable if available.
-    private func autoSendPasswordIfAvailable() {
-        let env = ProcessInfo.processInfo.environment
-        let action = decideAutoFire(
-            state: getAuthState(),
-            envApiId: env["TELEGRAM_API_ID"].flatMap(Int.init),
-            envApiHash: env["TELEGRAM_API_HASH"],
-            envPhone: env["TELEGRAM_PHONE"],
-            envPassword: env["TELEGRAM_2FA_PASSWORD"],
-            envAuthCode: env["TELEGRAM_AUTH_CODE"]
-        )
-        guard case .fireSendPassword(let password) = action else { return }
-        lock.withLock { lastAutoFireError = nil }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.sendPassword(password)
-            } catch {
-                self.recordAutoFireError(error)
-            }
-        }
+    /// Whether a phone number or 2FA password from the Keychain is being looked
+    /// up or submitted for the current state (`auth_run` waits for it rather
+    /// than asking the caller for the value).
+    public var isSubmittingKeychainCredential: Bool {
+        auth.isSubmittingKeychainCredential
+    }
+
+    /// Reads the phone number or the 2FA password from the Keychain source, for
+    /// `auth_run` when neither the caller nor the environment supplies it.
+    /// Returns nil when there is no value, and records why for the state the
+    /// lookup started in (#95).
+    public func lookUpKeychainCredential(_ credential: KeychainCredential) async -> String? {
+        await auth.lookUpKeychainCredential(credential)
+    }
+
+    /// The authorization state and why its last Keychain lookup produced no
+    /// value (nil when none did or none ran), read together so that the
+    /// outcome belongs to that state (#95). The generation a lookup records
+    /// against changes only under the same lock.
+    public func authStateAndKeychainMiss() -> (state: AuthState, keychainMiss: KeychainMiss?) {
+        auth.stateAndKeychainMiss()
     }
 
     /// Persist auto-fire failure for surfacing via `auth_status`.
-    /// Only `TDError.tdlibError` is retained; other thrown types are ignored
-    /// (they don't represent user-actionable TDLib protocol errors).
     private func recordAutoFireError(_ error: Swift.Error) {
-        guard let tdError = error as? TDError else { return }
-        if case .tdlibError = tdError {
-            lock.withLock { lastAutoFireError = tdError }
-        }
+        auth.recordAutoFireError(error)
     }
 
     // MARK: - Authentication
@@ -393,14 +391,10 @@ public final class TDLibClient {
         }
     }
 
+    /// An explicit phone number (`auth_run`, `auth_send_phone`, the CLI): the
+    /// current state gets no automatic one after it (#96).
     public func sendPhoneNumber(_ phoneNumber: String) async throws {
-        try await coalesceTask(holder: sendPhoneTask) { [self] in
-            do {
-                _ = try await client.setAuthenticationPhoneNumber(phoneNumber: phoneNumber, settings: nil)
-            } catch {
-                try mapTDLibError(error)
-            }
-        }
+        try await auth.sendPhoneNumber(phoneNumber)
     }
 
     public func sendAuthCode(_ code: String) async throws {
@@ -413,20 +407,16 @@ public final class TDLibClient {
         }
     }
 
+    /// An explicit 2FA password: the current state gets no automatic one after
+    /// it (#96).
     public func sendPassword(_ password: String) async throws {
-        try await coalesceTask(holder: sendPasswordTask) { [self] in
-            do {
-                _ = try await client.checkAuthenticationPassword(password: password)
-            } catch {
-                try mapTDLibError(error)
-            }
-        }
+        try await auth.sendPassword(password)
     }
 
     /// Returns the current authentication state. Lock-protected — never
     /// observes a torn enum value.
     public func getAuthState() -> AuthState {
-        lock.withLock { authState }
+        auth.state
     }
 
     /// Legacy accessor returning the raw-value string. Prefer the
@@ -440,7 +430,7 @@ public final class TDLibClient {
     /// Cleared automatically when a new auto-fire begins or `authState`
     /// advances to `.ready`.
     public func getLastAutoFireError() -> TDError? {
-        lock.withLock { lastAutoFireError }
+        auth.lastAutoFireError
     }
 
     // MARK: - Chat Operations
@@ -857,10 +847,7 @@ public final class TDLibClient {
     }
 
     private func toJSON(_ value: Any) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]) else {
-            return "{}"
-        }
-        return String(data: data, encoding: .utf8) ?? "{}"
+        JSONOutput.string(value)
     }
 }
 
