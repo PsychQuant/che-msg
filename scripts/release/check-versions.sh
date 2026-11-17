@@ -14,7 +14,8 @@
 # the versions in the Slack plugin README's prose, and the history in a
 # CHANGELOG stay as they are.
 #
-# Each wrapper also pins the sha256 of its binary (PsychQuant/che-msg#50):
+# Each che-telegram-mcp wrapper also pins the sha256 of its binary
+# (PsychQuant/che-msg#50; the che-slack-mcp wrapper has no such pin):
 # SHA256_PIN_VERSION, which must be X, and SHA256_PIN, 64 lowercase hex digits,
 # equal to .build/dist/vX/<Binary>.sha256 when that file exists. A wrapper
 # without a pin for its version downloads nothing. --require-sha256 also

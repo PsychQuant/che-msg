@@ -42,11 +42,12 @@
 #      its version or a version without its pin, and a second assignment are
 #      each reported, and nothing else is. --require-sha256 also refuses a pin
 #      with no .build/dist/vX file to compare, and passes matching pins.
-#  12. --before-build checks the binary's places and the tag only: the plugin,
-#      which is bumped and pinned after the build, may still pin the previous
-#      version (and the default mode reports it); a binary place that differs
-#      and an existing tag are still refused; --require-sha256 with it is a
-#      usage error.
+#  12. --before-build checks the binary's places, the che-slack-mcp places
+#      and the tag, not the che-telegram-mcp plugin: that plugin, which is
+#      bumped and pinned after the build, may still pin the previous version
+#      (and the default mode reports it); a binary place that differs and an
+#      existing tag are still refused; --require-sha256 with it is a usage
+#      error.
 #
 # Usage:
 #   bash tests/release/test-check-versions.sh
