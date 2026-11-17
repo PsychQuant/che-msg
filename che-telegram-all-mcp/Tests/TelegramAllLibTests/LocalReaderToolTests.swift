@@ -130,14 +130,15 @@ final class LocalReaderToolTests: XCTestCase {
     // spec-example: telegram-local-reader / paging with the lowest id returned
     func testPagingWithTheLowestIdReturnsEachMessageOnce() throws {
         let reader = try reader()
-        var seen: [Int64] = [], cursor: Int64 = 0
+        var pages: [[Int64]] = [], cursor: Int64 = 0
         for _ in 0..<5 {
             let page = try ids(reader.getChatHistory(chatId: 777, limit: 1, fromMessageId: cursor).json)
+            pages.append(page)
             guard let lowest = page.min() else { break }
-            seen += page
             cursor = lowest
         }
-        XCTAssertEqual(seen, [forwarded, helloThere, hello])
+        // Each page on its own, then the empty page: the Example's sequence, not just the union.
+        XCTAssertEqual(pages, [[forwarded], [helloThere], [hello], []])
     }
 
     /// The archive's local-cache source over the real reader, one message per page: with an

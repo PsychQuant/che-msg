@@ -7,12 +7,13 @@
 /// internal types that function turns into one constructor whatever the payload and
 /// that the reader does not map to a named `type`.
 ///
-/// Nil for the reader's named types, for the 12 internal types whose constructor depends on
-/// the payload — `ChatChangePhoto` 13, `ChatJoinedByLink` 17, `PaymentSuccessful` 30, `Dice` 41,
-/// `GroupCall` 43, `TopicEdit` 50, `SuggestProfilePhoto` 51, `RequestedDialog` 53,
-/// `DialogShared` 66, `StarGiftUnique` 72, `PaidMessagesPrice` 74, `SuggestedPostApproval` 82 —
-/// and for a value TDLib 1.8.60 does not define. The reader does not decode payloads, so for
-/// those it omits `content_type`.
+/// Nil for the reader's named types, for the 12 internal types with more than one constructor —
+/// picked by the payload for `ChatChangePhoto` 13, `ChatJoinedByLink` 17, `PaymentSuccessful` 30,
+/// `Dice` 41, `GroupCall` 43, `TopicEdit` 50, `SuggestProfilePhoto` 51, `RequestedDialog` 53,
+/// `DialogShared` 66, `StarGiftUnique` 72 and `SuggestedPostApproval` 82, and by whether the chat
+/// is a broadcast channel for `PaidMessagesPrice` 74 — and for a value TDLib 1.8.60 does not
+/// define. The reader does not decode those payloads or look up the chat while decoding a
+/// message, so for those it omits `content_type`.
 enum TDLibContentTypeNames {
     static func apiName(forContentType type: Int32) -> String? {
         switch type {

@@ -37,7 +37,8 @@ final class LocalReaderContentTypeTests: XCTestCase {
         84: "messageUpgradedGiftPurchaseOffer", 85: "messageUpgradedGiftPurchaseOfferRejected",
     ]
 
-    /// The internal content types whose API constructor depends on the payload.
+    /// The internal content types with more than one API constructor: chosen by the payload, or for
+    /// `PaidMessagesPrice` (74) by whether the chat is a broadcast channel.
     static let payloadDependent: Set<Int32> = [13, 17, 30, 41, 43, 50, 51, 53, 66, 72, 74, 82]
 
     /// The reader's named types.
@@ -86,21 +87,24 @@ final class LocalReaderContentTypeTests: XCTestCase {
         XCTAssertEqual(Self.expectedNames.count, 62)
         XCTAssertEqual(Self.payloadDependent.count, 12)
         for contentType: Int32 in 0...85 {
-            if contentType == 0 {
-                // A text record carries its text after the type; the record built here has none.
-                XCTAssertEqual(TDLibMessageDecoder.kind(forContentType: 0), .text)
-                XCTAssertNil(TDLibContentTypeNames.apiName(forContentType: 0))
-                continue
-            }
-            let object = decoded(contentType)
+            // A text record carries its text after the type, so type 0 is decoded from a full text record.
+            let object = contentType == 0
+                ? TDLibMessageDecoder.message(chatId: 777, messageId: 5_242_880, senderColumn: 1001,
+                                              data: LocalReaderRecords.message(id: 5_242_880, sender: 1001,
+                                                                               date: 1_760_000_000, text: "hi")).dictionary
+                : decoded(contentType)
             let type = object["type"] as? String
             let name = object["content_type"] as? String
-            if let named = Self.namedTypes[contentType] {
+            if contentType == 0 {
+                XCTAssertEqual(type, "text", "content type 0")
+                XCTAssertEqual(object["text"] as? String, "hi")
+                XCTAssertNil(object["content_type"], "content type 0 has a named type and no content_type")
+            } else if let named = Self.namedTypes[contentType] {
                 XCTAssertEqual(type, named, "content type \(contentType)")
                 XCTAssertNil(name, "content type \(contentType) has a named type and no content_type")
             } else if Self.payloadDependent.contains(contentType) {
                 XCTAssertEqual(type, "other", "content type \(contentType)")
-                XCTAssertNil(object["content_type"], "content type \(contentType) depends on the payload")
+                XCTAssertNil(object["content_type"], "content type \(contentType) has more than one constructor")
             } else {
                 XCTAssertEqual(type, "other", "content type \(contentType)")
                 XCTAssertEqual(name, Self.expectedNames[contentType], "content type \(contentType)")
