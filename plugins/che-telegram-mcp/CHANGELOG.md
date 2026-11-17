@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-11-17
+
+Pins binaries v0.9.0 (`DESIRED_VERSION`), as 1.9.0 does.
+
+### Changed
+- README "Archiving chats" lists what the 0.9.0 binaries do not do yet (#72, #75, #76, #82); the section described it as if they did.
+- `/archive-telegram`, after an archive from the local cache whose manifest has no `upgraded_messages` field (binary 0.9.0 or earlier), reports that the blocks it wrote will not be replaced later, instead of saying a later run through TDLib completes them.
+
 ## [1.9.0] - 2026-11-17
 
 Pins binaries v0.9.0 (`DESIRED_VERSION`), as 1.8.0 did, and now their sha256 too.

@@ -270,6 +270,8 @@ When a group is upgraded to a supergroup its `chat_id` changes (to a `-100…` i
 
 Needs `che-telegram-all-mcp` 0.8.0 or later (the release that adds `archive_chat_to_markdown` and `download_message_media`).
 
+The 0.9.0 binaries this plugin pins do not yet do the following; they come with the first release after 0.9.0. Blocks written from the local cache carry no provisional marker and are not replaced later ([#72](https://github.com/PsychQuant/che-msg/issues/72)). Media whose message no longer exists stay on the retry list, saved media carry no quarantine attribute, and messages without a date are not counted ([#75](https://github.com/PsychQuant/che-msg/issues/75)). A day file that is a symbolic link, FIFO or directory, or that has CR line endings below its frontmatter, is not refused ([#76](https://github.com/PsychQuant/che-msg/issues/76)). Poll, sticker and location messages are archived as `[poll]`, `[sticker]` and `[location]` without their details ([#82](https://github.com/PsychQuant/che-msg/issues/82)).
+
 ## Searching the archive (`/archive-telegram-search`)
 
 `/che-telegram-mcp:archive-telegram-search` finds messages in the archive `/archive-telegram` wrote, so you can quote and cite a conversation without opening whole day files ([#80](https://github.com/PsychQuant/che-msg/issues/80)). It reads `output_dir` and the chat labels from the same `.claude/.telegram/config.yaml` and searches that one archive directory, including chat directories the config no longer lists. A workspace-wide search does not find archived messages: the archive is git-ignored, and ripgrep-based searches skip ignored paths.
@@ -385,7 +387,7 @@ This plugin requires:
 
 ## Version
 
-Plugin version: 1.9.0 (currently pins `che-telegram-all-mcp` v0.9.0 + `che-telegram-bot-mcp` v0.9.0 binaries; the wrapper upgrades a binary whose version record is older than the pin)
+Plugin version: 1.9.1 (currently pins `che-telegram-all-mcp` v0.9.0 + `che-telegram-bot-mcp` v0.9.0 binaries; the wrapper upgrades a binary whose version record is older than the pin)
 
 ### Changelog
 
