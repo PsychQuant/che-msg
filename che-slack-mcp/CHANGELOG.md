@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Distribution
+- The release build checks `CheSlackMCP` with the two Telegram binaries before it signs any of them: besides its `--version`, `otool` must show that every library it needs at launch has a system library path ([#91](https://github.com/PsychQuant/che-msg/issues/91)). The 0.9.0 binary already meets this; the check keeps a later build from shipping one that does not.
+
 ## [0.9.0] - 2026-11-01
 
 The first version. The server (`serverInfo.version`) and `slack-all --version` report 0.9.0; it ships with the che-msg release v0.9.0 ([#99](https://github.com/PsychQuant/che-msg/issues/99)).
