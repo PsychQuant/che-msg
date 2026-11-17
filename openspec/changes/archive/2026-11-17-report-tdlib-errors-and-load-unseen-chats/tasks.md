@@ -14,7 +14,7 @@
 
 ## 4. 實測（需要維護者的帳號）
 
-- [ ] 4.1 在沒有載入目標聊天的全新 TDLib 資料庫上（例如剛登入後、尚未呼叫 `get_chats`），分別用一個群組（basic group 或 supergroup）與一個非 Saved Messages 的一對一聊天呼叫 `get_chat_history`：記錄 `createPrivateChat`／`createBasicGroupChat`／`createSupergroupChat` 是否成功；失敗時回應是否為帶 `hint` 的 `tdlib_error`，以及照提示先呼叫 `get_chats` 後是否讀得到。驗證：結果貼在 #71；若建立失敗而 `get_chats` 能救回，另開 issue 決定是否在 `loadChat` 加 `loadChats` [after: 2.2]
+- [~] 4.1 在沒有載入目標聊天的全新 TDLib 資料庫上（例如剛登入後、尚未呼叫 `get_chats`），分別用一個群組（basic group 或 supergroup）與一個非 Saved Messages 的一對一聊天呼叫 `get_chat_history`：記錄 `createPrivateChat`／`createBasicGroupChat`／`createSupergroupChat` 是否成功；失敗時回應是否為帶 `hint` 的 `tdlib_error`，以及照提示先呼叫 `get_chats` 後是否讀得到。驗證：結果貼在 #71；若建立失敗而 `get_chats` 能救回，另開 issue 決定是否在 `loadChat` 加 `loadChats` [after: 2.2]（略過：維護者於 2026-11-17 決定不做這次實跑；它需要真實的 Telegram 帳號，未執行，所以「是否還需要 `loadChats`」沒有實測結果）
 
 ## 5. 驗證後的修正
 
