@@ -29,10 +29,11 @@ DESIRED_VERSION="0.9.0"
 # sha256 equals SHA256_PIN; the pin counts only while SHA256_PIN_VERSION equals
 # DESIRED_VERSION. A release sets both after its build (RELEASING.md); a version
 # bump clears them. 0.9.0 was released before the wrappers had pins; its pin
-# is the sha256 in the release's .sha256 file for this binary, which equals
-# the digest GitHub lists for the asset. With no pin that counts, nothing is
-# downloaded: the digest GitHub lists next to an asset would match a replaced
-# asset too.
+# is the sha256 its release build wrote (.build/dist/v0.9.0/<Binary>.sha256
+# on the build machine, a notarized Developer ID binary), which the release's
+# .sha256 file and the digest GitHub lists both equal. With no pin that
+# counts, nothing is downloaded: the digest GitHub lists next to an asset
+# would match a replaced asset too.
 SHA256_PIN_VERSION="0.9.0"
 SHA256_PIN="374633e1f78e366d4408878d0361afe33eed636271c7e2c86038d2b4a3235eb5"
 # The pinned release only, never releases/latest: a pin could not match it.
