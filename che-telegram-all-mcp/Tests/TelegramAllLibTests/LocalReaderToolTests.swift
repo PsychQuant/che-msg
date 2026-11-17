@@ -103,6 +103,7 @@ final class LocalReaderToolTests: XCTestCase {
     // MARK: - get_chat_history
 
     /// Scenario "Chat history from the local cache" with its example.
+    // spec-example: telegram-local-reader / one text message
     func testChatHistoryNewestFirstWithTheSpecExample() throws {
         let result = try reader().getChatHistory(chatId: 777)
         XCTAssertEqual(try normalized(result.json), "[" + [forwardedMessage, helloThereMessage, specMessage].joined(separator: ",") + "]")
@@ -126,6 +127,7 @@ final class LocalReaderToolTests: XCTestCase {
                        [forwarded, helloThere, hello], "a cursor above the newest starts at the newest")
     }
 
+    // spec-example: telegram-local-reader / paging with the lowest id returned
     func testPagingWithTheLowestIdReturnsEachMessageOnce() throws {
         let reader = try reader()
         var seen: [Int64] = [], cursor: Int64 = 0
