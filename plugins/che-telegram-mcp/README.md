@@ -385,7 +385,7 @@ This plugin requires:
 
 ## Version
 
-Plugin version: 1.8.0 (currently pins `che-telegram-all-mcp` v0.9.0 + `che-telegram-bot-mcp` v0.9.0 binaries; the wrapper upgrades a binary whose version record is older than the pin)
+Plugin version: 1.9.0 (currently pins `che-telegram-all-mcp` v0.9.0 + `che-telegram-bot-mcp` v0.9.0 binaries; the wrapper upgrades a binary whose version record is older than the pin)
 
 ### Changelog
 
