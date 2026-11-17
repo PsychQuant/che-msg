@@ -133,6 +133,28 @@ final class UnmappedMessageContentTests: XCTestCase {
         XCTAssertEqual(Set(fields.keys), ["content_type"])
     }
 
+    // MARK: Through messageContentFields, which messageToDict uses (#82)
+
+    /// `messageToDict` takes a message's content fields from `messageContentFields` since #82, so
+    /// that is where an unmapped message must get `content_type` and its kind's fields.
+    func testMessageContentFieldsCarryTheUnmappedFieldsWithTypeOther() {
+        let fields = messageContentFields(contact)
+        XCTAssertEqual(fields["type"] as? String, "other")
+        XCTAssertEqual(fields["content_type"] as? String, "messageContact")
+        XCTAssertEqual(fields["contact_name"] as? String, "Ann Lee")
+        XCTAssertEqual(messageContentFields(venue)["title"] as? String, "Cafe")
+        XCTAssertEqual(messageContentFields(.messageScreenshotTaken)["content_type"] as? String, "messageScreenshotTaken")
+    }
+
+    /// A mapped type keeps its own fields and gets no `content_type`.
+    func testMappedContentHasNoContentType() {
+        let text = MessageContent.messageText(MessageText(
+            linkPreview: nil, linkPreviewOptions: nil, text: FormattedText(entities: [], text: "hi")))
+        let fields = messageContentFields(text)
+        XCTAssertEqual(fields["type"] as? String, "text")
+        XCTAssertNil(fields["content_type"])
+    }
+
     /// The fields serialize as JSON, as `messageToDict`'s result must.
     func testFieldsAreValidJSON() {
         for content in [contact, dice, call, story, venue, animatedEmoji, pin, .messageUnsupported] {
