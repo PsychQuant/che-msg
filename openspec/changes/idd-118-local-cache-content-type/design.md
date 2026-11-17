@@ -35,7 +35,7 @@
 - **Interface / data shape**：`LocalMessage` 新增 `let contentType: String?`（預設 nil 的初始化參數，既有呼叫端不必改）；`LocalMessage.Kind` 新增 `audio`；`TDLibMessageDecoder.Record` 新增 `contentType: String?`；新增 `enum TDLibContentTypeNames { static func apiName(forContentType: Int32) -> String? }`。
 - **Failure modes**：表沒有值時安靜省略欄位（不是錯誤）。超過 85 的編號照舊讓解碼停在內容之前、類型為 `unknown`。
 - **Acceptance criteria**：`LocalReaderContentTypeTests` 對 0…85 每個編號斷言種類與名稱（含 12 個 nil、具名類型沒有名稱）；聯絡人、骰子、音訊的 JSON 物件與 spec Example 相同；快取 dump 寫出 `[audio]`；快取歸檔的音訊區塊與 `media_pending_local_cache`。全部在 `swift test --skip E2ETests` 下通過。
-- **Scope boundaries**：只改 `LocalReader/` 底下的解碼與模型、對應測試、README 與 CHANGELOG。不碰 `TDLibClient.messageToDict`（#117 的範圍）、`MarkdownExporter`、`ChatArchiver`。
+- **Scope boundaries**：只改 `LocalReader/` 底下的解碼與模型、對應測試、`archive_chat_to_markdown` 工具說明裡「音訊讀成 [other]」那句、README 與 CHANGELOG。不碰 `TDLibClient.messageToDict`（#117 的範圍）、`MarkdownExporter`、`ChatArchiver`。
 
 ## Risks / Trade-offs
 

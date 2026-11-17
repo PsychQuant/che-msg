@@ -15,4 +15,4 @@
 
 ## 3. 文件
 
-- [ ] 3.1 README 改寫說快取的音訊讀成 `[other]` 的句子，並寫出快取回答的 `other` 何時帶 `content_type`、哪 12 種內部類型不帶；CHANGELOG `## [Unreleased]` 記一筆（引用 #118）；以內容審閱確認 README 裡不再有「快取音訊是 `[other]`」的說法（`grep -n "audio" che-telegram-all-mcp/README.md`） [after: 2.2]
+- [x] 3.1 README 與 `archive_chat_to_markdown` 的工具說明（`che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Server.swift`）改寫說快取的音訊讀成 `[other]` 的句子，並寫出快取回答的 `other` 何時帶 `content_type`、哪 12 種內部類型不帶；CHANGELOG `## [Unreleased]` 記一筆（引用 #118）；以內容審閱確認 README 裡不再有「快取音訊是 `[other]`」的說法（`grep -rn "audio reads" che-telegram-all-mcp/README.md che-telegram-all-mcp/Sources` 沒有結果） [after: 2.2]

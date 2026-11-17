@@ -36,7 +36,7 @@ ASSUMPTION: 依內容決定 constructor 的 12 個編號省略 `content_type`，
 ## Impact
 
 - Affected code:
-  - Modified: che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/TDLibMessageDecoder.swift, che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/LocalMessage.swift, che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderMessageDecodingTests.swift, che-telegram-all-mcp/README.md, che-telegram-all-mcp/CHANGELOG.md
+  - Modified: che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/TDLibMessageDecoder.swift, che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/LocalMessage.swift, che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderMessageDecodingTests.swift, che-telegram-all-mcp/Sources/CheTelegramAllMCPCore/Server.swift（工具說明文字）, che-telegram-all-mcp/README.md, che-telegram-all-mcp/CHANGELOG.md
   - New: che-telegram-all-mcp/Sources/TelegramAllLib/LocalReader/TDLibContentTypeNames.swift, che-telegram-all-mcp/Tests/TelegramAllLibTests/LocalReaderContentTypeTests.swift
   - Removed: (none)
 - Affected specs: telegram-local-reader（修改 requirement「Reader answers five tools with the TDLib-mode JSON fields」）；telegram-chat-archive（修改 requirement「Archive from the local cache」：括號裡「讀取器給不出 `audio` 類型」不再成立，並加上快取音訊算待下載媒體的情境）
