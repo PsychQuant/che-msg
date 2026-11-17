@@ -8,7 +8,7 @@ import Foundation
 /// 1.8.60, a flag bit 1.8.60 does not define, or a disagreeing message id leaves
 /// only the table columns. After the prefix, the optional fields are skipped in
 /// `Message::parse` order up to the content, whose type and, for text messages,
-/// text are read. Fields the reader does not support (forward info, channel
+/// text are read; an `other` message keeps its TDLib constructor name when it has one. Fields the reader does not support (forward info, channel
 /// comment info, restriction reasons, thread drafts) stop decoding where they
 /// start: the message keeps its prefix fields and its type is `unknown`.
 ///
@@ -30,7 +30,8 @@ enum TDLibMessageDecoder {
                                 isOutgoing: nil, type: .unknown, text: nil)
         }
         return LocalMessage(id: messageId, chatId: chatId, date: record.date, sender: sender,
-                            isOutgoing: record.isOutgoing, type: record.kind ?? .unknown, text: record.text)
+                            isOutgoing: record.isOutgoing, type: record.kind ?? .unknown, text: record.text,
+                            contentType: record.contentType)
     }
 
     /// What decoding `messages.data` reached; a field is nil when decoding
@@ -46,6 +47,8 @@ enum TDLibMessageDecoder {
         /// Nil when decoding stopped before the content.
         var kind: LocalMessage.Kind?
         var text: String?
+        /// For `other`, the TDLib API constructor name when the reader can name it (#118).
+        var contentType: String?
     }
 
     /// Decodes as far as the data allows. A record whose prefix cannot be read
@@ -132,8 +135,13 @@ enum TDLibMessageDecoder {
         if isSet(f2, 23) { _ = try r.int32() }                    // interaction_info_update_date
         if isSet(f2, 24) { _ = try r.string() }                   // send_emoji
 
-        guard let kind = kind(forContentType: try r.int32()) else { throw Stop() }
-        guard kind == .text else { record.kind = kind; return }
+        let contentType = try r.int32()
+        guard let kind = kind(forContentType: contentType) else { throw Stop() }
+        guard kind == .text else {
+            record.kind = kind
+            if kind == .other { record.contentType = TDLibContentTypeNames.apiName(forContentType: contentType) }
+            return
+        }
         if p.version >= addMessageTextFlags { _ = try r.uint32() }
         guard let text = String(bytes: try r.string(), encoding: .utf8) else { throw Stop() }
         record.kind = .text
@@ -142,11 +150,13 @@ enum TDLibMessageDecoder {
 
     /// The TDLib-mode `type` name for a `MessageContentType` value (the names
     /// `TDLibClient.messageToDict` uses; live locations are `messageLocation`
-    /// in the TDLib API). Nil for a value TDLib 1.8.60 does not define.
+    /// in the TDLib API). Nil for a value TDLib 1.8.60 does not define. An
+    /// `other` message names its content through `TDLibContentTypeNames` (#118).
     static func kind(forContentType type: Int32) -> LocalMessage.Kind? {
         switch type {
         case 0: return .text
         case 1: return .animation
+        case 2: return .audio
         case 3: return .document
         case 4: return .photo
         case 5: return .sticker

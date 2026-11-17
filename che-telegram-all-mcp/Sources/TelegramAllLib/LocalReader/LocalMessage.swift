@@ -6,7 +6,7 @@ struct LocalMessage: Equatable {
     }
 
     enum Kind: String {
-        case text, photo, video, document, sticker, animation, location, poll, other, unknown
+        case text, photo, video, document, sticker, animation, audio, location, poll, other, unknown
         case voiceNote = "voice_note"
         case videoNote = "video_note"
     }
@@ -18,6 +18,21 @@ struct LocalMessage: Equatable {
     let isOutgoing: Bool?
     let type: Kind
     let text: String?
+    /// For `other`, the TDLib API constructor name of the content when the
+    /// reader can name it (`TDLibContentTypeNames`; #118); nil otherwise.
+    let contentType: String?
+
+    init(id: Int64, chatId: Int64, date: Int32?, sender: Sender?, isOutgoing: Bool?, type: Kind,
+         text: String?, contentType: String? = nil) {
+        self.id = id
+        self.chatId = chatId
+        self.date = date
+        self.sender = sender
+        self.isOutgoing = isOutgoing
+        self.type = type
+        self.text = text
+        self.contentType = contentType
+    }
 
     /// The TDLib-mode JSON object (`TDLibClient.messageToDict`); fields the
     /// reader could not determine are omitted.
@@ -31,6 +46,7 @@ struct LocalMessage: Equatable {
         }
         if let isOutgoing { result["is_outgoing"] = isOutgoing }
         if let text { result["text"] = text }
+        if let contentType { result["content_type"] = contentType }
         return result
     }
 }

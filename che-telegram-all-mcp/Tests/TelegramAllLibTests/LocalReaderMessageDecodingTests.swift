@@ -154,7 +154,7 @@ final class LocalReaderMessageDecodingTests: XCTestCase {
 
     func testContentTypesMapToTheTDLibModeNames() {
         let expected: [(Int32, LocalMessage.Kind)] = [
-            (1, .animation), (2, .other), (3, .document), (5, .sticker), (6, .video), (7, .voiceNote),
+            (1, .animation), (2, .audio), (3, .document), (5, .sticker), (6, .video), (7, .voiceNote),
             (9, .location), (16, .other), (31, .videoNote), (35, .location), (40, .poll), (85, .other),
         ]
         for (contentType, kind) in expected {
